@@ -72,18 +72,11 @@ function collectRenderedText(node: ReactNode): string {
   if (node === null || node === undefined || typeof node === "boolean") return "";
   if (typeof node === "string" || typeof node === "number" || typeof node === "bigint") return String(node);
   if (Array.isArray(node)) return node.map(collectRenderedText).join(" ");
-  if (isValidElement<{ children?: ReactNode; value?: unknown; exercises?: unknown }>(node)) {
+  if (isValidElement<{ children?: ReactNode; value?: unknown }>(node)) {
     if (node.type === "input" && node.props.value !== undefined) {
       return `${String(node.props.value)} ${collectRenderedText(node.props.children)}`;
     }
-    // Exercises render inside the SortableDayExercises client component, which the
-    // tree walk doesn't expand — pull their text from the `exercises` prop.
-    const exercisesText = Array.isArray(node.props.exercises)
-      ? (node.props.exercises as { name?: unknown; category?: unknown; progression_type?: unknown }[])
-          .map((e) => `${e.name ?? ""} ${e.category ?? ""} ${e.progression_type ?? ""}`)
-          .join(" ")
-      : "";
-    return `${exercisesText} ${collectRenderedText(node.props.children)}`;
+    return collectRenderedText(node.props.children);
   }
   return "";
 }
@@ -129,14 +122,9 @@ function collectExerciseInitialNames(node: ReactNode): string[] {
   if (node === null || node === undefined || typeof node === "boolean") return [];
   if (typeof node === "string" || typeof node === "number" || typeof node === "bigint") return [];
   if (Array.isArray(node)) return node.flatMap(collectExerciseInitialNames);
-  if (isValidElement<{ children?: ReactNode; initialName?: unknown; exercises?: unknown }>(node)) {
+  if (isValidElement<{ children?: ReactNode; initialName?: unknown }>(node)) {
     const names = typeof node.props.initialName === "string" ? [node.props.initialName] : [];
-    const propNames = Array.isArray(node.props.exercises)
-      ? (node.props.exercises as { name?: unknown }[])
-          .filter((e) => typeof e.name === "string")
-          .map((e) => e.name as string)
-      : [];
-    return [...names, ...propNames, ...collectExerciseInitialNames(node.props.children)];
+    return [...names, ...collectExerciseInitialNames(node.props.children)];
   }
   return [];
 }
@@ -145,14 +133,9 @@ function collectExerciseTrainingMaxes(node: ReactNode): number[] {
   if (node === null || node === undefined || typeof node === "boolean") return [];
   if (typeof node === "string" || typeof node === "number" || typeof node === "bigint") return [];
   if (Array.isArray(node)) return node.flatMap(collectExerciseTrainingMaxes);
-  if (isValidElement<{ children?: ReactNode; initialValue?: unknown; exercises?: unknown }>(node)) {
+  if (isValidElement<{ children?: ReactNode; initialValue?: unknown }>(node)) {
     const values = typeof node.props.initialValue === "number" ? [node.props.initialValue] : [];
-    const propValues = Array.isArray(node.props.exercises)
-      ? (node.props.exercises as { training_max?: unknown }[])
-          .filter((e) => typeof e.training_max === "number")
-          .map((e) => e.training_max as number)
-      : [];
-    return [...values, ...propValues, ...collectExerciseTrainingMaxes(node.props.children)];
+    return [...values, ...collectExerciseTrainingMaxes(node.props.children)];
   }
   return [];
 }

@@ -3,10 +3,12 @@ import { notFound, redirect } from "next/navigation";
 import { AddDayForm } from "@/components/AddDayForm";
 import { AddExerciseForm } from "@/components/AddExerciseForm";
 import { DeleteButton } from "@/components/DeleteButton";
+import { ExerciseNameEditor } from "@/components/ExerciseNameEditor";
 import { ProgramActiveToggle } from "@/components/ProgramActiveToggle";
 import { ProgramScheduleForm } from "@/components/ProgramScheduleForm";
 import { ReorderButton } from "@/components/ReorderButton";
-import { SortableDayExercises } from "@/components/SortableDayExercises";
+import { SupersetLink } from "@/components/SupersetLink";
+import { TrainingMaxEditor } from "@/components/TrainingMaxEditor";
 import { getProgramDetailForUser } from "@/features/programs/program-service";
 import { requireUser } from "@/lib/auth";
 
@@ -126,7 +128,98 @@ export default async function ProgramPage({ params }: PageProps) {
                     </div>
                   </div>
 
-                  <SortableDayExercises dayId={day.id} exercises={day.exercises} />
+                  {day.exercises.length > 0 ? (
+                    <div className="mt-3 flex flex-col gap-2">
+                      {day.exercises.map((exercise, index) => {
+                        const nextExercise = day.exercises[index + 1] ?? null;
+                        const isSupersetStart =
+                          exercise.superset_group !== null &&
+                          (index === 0 || day.exercises[index - 1]?.superset_group !== exercise.superset_group);
+
+                        return (
+                          <div key={exercise.id}>
+                            {isSupersetStart ? (
+                              <div className="mb-2 ml-2 border-l-2 border-line pl-3">
+                                <span className="text-xs font-medium text-faint">
+                                  Superset
+                                </span>
+                                {day.exercises
+                                  .filter((ex) => ex.superset_group === exercise.superset_group)
+                                  .map((ex, si) => (
+                                    <div
+                                      key={ex.id}
+                                      className={`rounded-xl bg-surface-muted p-3 ${si > 0 ? "mt-2" : "mt-1"}`}
+                                    >
+                                      <div className="flex items-start justify-between gap-3">
+                                        <div>
+                                          <ExerciseNameEditor
+                                            exerciseId={ex.id}
+                                            initialName={ex.name}
+                                          />
+                                          <p className="mt-1 text-sm text-muted">
+                                            <span className="capitalize">{ex.category}</span> · {ex.progression_type}
+                                          </p>
+                                          <div className="mt-1.5 flex items-center gap-1.5 text-xs font-semibold text-faint">
+                                            TM
+                                            <TrainingMaxEditor exerciseId={ex.id} initialValue={ex.training_max} />
+                                          </div>
+                                        </div>
+                                        <div className="flex items-center gap-1">
+                                          <ReorderButton endpoint={`/api/exercises/${ex.id}`} direction="up" label={ex.name} />
+                                          <ReorderButton endpoint={`/api/exercises/${ex.id}`} direction="down" label={ex.name} />
+                                          {si === 0 ? (
+                                            <SupersetLink
+                                              exerciseId={ex.id}
+                                              linkExerciseId={
+                                                day.exercises.find(
+                                                  (e) => e.superset_group === ex.superset_group && e.id !== ex.id,
+                                                )?.id ?? null
+                                              }
+                                              supersetGroup={ex.superset_group}
+                                            />
+                                          ) : null}
+                                          <DeleteButton endpoint={`/api/exercises/${ex.id}`} label="exercise" />
+                                        </div>
+                                      </div>
+                                    </div>
+                                  ))}
+                              </div>
+                            ) : exercise.superset_group === null || isSupersetStart ? (
+                              !exercise.superset_group ? (
+                                <div className="rounded-xl bg-surface-muted p-3">
+                                  <div className="flex items-start justify-between gap-3">
+                                    <div>
+                                      <ExerciseNameEditor exerciseId={exercise.id} initialName={exercise.name} />
+                                      <p className="mt-1 text-sm text-muted">
+                                        <span className="capitalize">{exercise.category}</span> · {exercise.progression_type}
+                                      </p>
+                                      <div className="mt-1.5 flex items-center gap-1.5 text-xs font-semibold text-faint">
+                                        TM
+                                        <TrainingMaxEditor exerciseId={exercise.id} initialValue={exercise.training_max} />
+                                      </div>
+                                    </div>
+                                    <div className="flex items-center gap-1">
+                                      <ReorderButton endpoint={`/api/exercises/${exercise.id}`} direction="up" label={exercise.name} />
+                                      <ReorderButton endpoint={`/api/exercises/${exercise.id}`} direction="down" label={exercise.name} />
+                                      <SupersetLink
+                                        exerciseId={exercise.id}
+                                        linkExerciseId={nextExercise?.id ?? null}
+                                        linkName={nextExercise?.name ?? null}
+                                        supersetGroup={exercise.superset_group}
+                                      />
+                                      <DeleteButton endpoint={`/api/exercises/${exercise.id}`} label="exercise" />
+                                    </div>
+                                  </div>
+                                </div>
+                              ) : null
+                            ) : null}
+                          </div>
+                        );
+                      })}
+                    </div>
+                  ) : (
+                    <p className="mt-3 text-sm text-muted">No exercises yet.</p>
+                  )}
 
                   <AddExerciseForm dayId={day.id} />
                 </div>
