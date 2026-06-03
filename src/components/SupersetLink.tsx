@@ -1,5 +1,6 @@
 "use client";
 
+import { Link2, Unlink2 } from "lucide-react";
 import { useRouter } from "next/navigation";
 import { useState } from "react";
 
@@ -40,40 +41,38 @@ export function SupersetLink({
     }
   }
 
-  // A superset links an exercise with the one below it; the last exercise has
-  // nothing to link to, so no control is shown.
-  if (!linkExerciseId) return null;
+  const base =
+    "touch-target inline-flex items-center justify-center rounded-xl border px-2 transition-colors active:bg-surface-muted disabled:opacity-50";
 
+  // A member of a superset → can be unlinked.
   if (supersetGroup) {
     return (
       <button
         type="button"
         disabled={saving}
         onClick={toggle}
-        aria-label={failed ? "Unlink superset — failed, tap to retry" : "Unlink superset"}
-        title={failed ? "Couldn't unlink — tap to retry" : undefined}
-        className={`touch-target rounded-lg border px-2 py-1 text-xs font-semibold transition-colors active:bg-surface-muted ${
-          failed ? "border-danger-line text-danger-ink" : "border-line bg-surface text-muted"
-        }`}
+        aria-label={failed ? "Unlink superset — failed, tap to retry" : "Unlink from superset"}
+        title={failed ? "Couldn't unlink — tap to retry" : "Unlink from superset"}
+        className={`${base} ${failed ? "border-danger-line text-danger-ink" : "border-line bg-surface text-muted"}`}
       >
-        Unlink
+        <Unlink2 aria-hidden="true" size={15} />
       </button>
     );
   }
 
-  const link = linkName ? `Superset with ${linkName}` : "Superset with the next exercise";
+  // Standalone exercise with a neighbour below → can be supersetted with it.
+  if (!linkExerciseId) return null;
+  const label = linkName ? `Superset with ${linkName}` : "Superset with the next exercise";
   return (
     <button
       type="button"
       disabled={saving}
       onClick={toggle}
-      aria-label={failed ? `${link} — failed, tap to retry` : link}
-      title={failed ? "Couldn't link — tap to retry" : link}
-      className={`touch-target rounded-md border px-2 py-1 text-xs font-semibold transition-colors active:bg-surface-muted ${
-        failed ? "border-danger-line text-danger-ink" : "border-brand-line bg-brand-soft text-brand-strong"
-      }`}
+      aria-label={failed ? `${label} — failed, tap to retry` : label}
+      title={failed ? "Couldn't link — tap to retry" : label}
+      className={`${base} ${failed ? "border-danger-line text-danger-ink" : "border-brand-line bg-brand-soft text-brand-strong"}`}
     >
-      SS +
+      <Link2 aria-hidden="true" size={15} />
     </button>
   );
 }
