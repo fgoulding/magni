@@ -4,6 +4,7 @@ import { Check, Circle } from "lucide-react";
 import { useState } from "react";
 import { AddSessionExerciseForm } from "@/components/AddSessionExerciseForm";
 import { ErrorBanner } from "@/components/ErrorBanner";
+import { WorkoutTmEditor, type TmUpdatedSet } from "@/components/WorkoutTmEditor";
 import {
   buildGroups,
   buildSummaryRows,
@@ -87,6 +88,26 @@ export function WorkoutCard({
     } finally {
       setSubmitting(false);
     }
+  }
+
+  function applyTmUpdate(updated: TmUpdatedSet[]) {
+    const byId = new Map(updated.map((s) => [s.id, s]));
+    setSession((prev) =>
+      prev
+        ? {
+            ...prev,
+            sets: prev.sets.map((s) =>
+              byId.has(s.id)
+                ? {
+                    ...s,
+                    training_max: byId.get(s.id)!.training_max,
+                    calculated_weight: byId.get(s.id)!.calculated_weight,
+                  }
+                : s,
+            ),
+          }
+        : prev,
+    );
   }
 
   async function logSet() {
@@ -313,9 +334,13 @@ export function WorkoutCard({
                     </h3>
                   </div>
                   {!currentGroup.supersetGroup && currentGroup.sets[0].training_max ? (
-                    <span className="ml-auto mt-1 shrink-0 rounded-full bg-surface/80 px-2.5 py-1 font-display text-xs tracking-tight text-muted">
-                      TM {currentGroup.sets[0].training_max}
-                    </span>
+                    <WorkoutTmEditor
+                      key={currentGroup.sets[0].exercise_name}
+                      sessionId={session.id}
+                      exerciseName={currentGroup.sets[0].exercise_name}
+                      value={currentGroup.sets[0].training_max}
+                      onUpdated={applyTmUpdate}
+                    />
                   ) : null}
                 </div>
 
