@@ -1,4 +1,5 @@
 import Link from "next/link";
+import { Trash2 } from "lucide-react";
 import { notFound, redirect } from "next/navigation";
 import { AddDayForm } from "@/components/AddDayForm";
 import { AddExerciseForm } from "@/components/AddExerciseForm";
@@ -63,47 +64,33 @@ export default async function ProgramPage({ params }: PageProps) {
         </div>
       </header>
 
-      <nav className="grid grid-cols-3 gap-2 text-sm font-medium">
-        <a href="#run-setup" className="touch-target inline-flex items-center justify-center rounded-xl bg-foreground px-3 text-white">
-          Run Setup
-        </a>
-        <a href="#definition" className="touch-target inline-flex items-center justify-center rounded-xl border border-line bg-surface px-3">
-          Definition
-        </a>
-        <a href="#sharing" className="touch-target inline-flex items-center justify-center rounded-xl border border-line bg-surface px-3">
-          Sharing
-        </a>
-      </nav>
-
-      <section id="run-setup" className="flex flex-col gap-3 scroll-mt-5">
-        <div>
-          <h2 className="display text-xl">Run Setup</h2>
-          <p className="mt-0.5 text-sm text-muted">Personal schedule, current cursor, and tracking state.</p>
-        </div>
-
-        <div className="rounded-xl border border-line bg-surface p-3 flex items-center justify-between">
-          <div>
-            <p className="text-sm font-medium">Program tracking</p>
-            <p className="text-xs text-muted">
-              {program.is_active
-                ? "Showing on Today tab"
-                : "Hidden from Today tab"}
-            </p>
+      <details className="card p-4">
+        <summary className="display cursor-pointer list-none text-lg">
+          Schedule &amp; tracking
+        </summary>
+        <div className="mt-3 flex flex-col gap-3">
+          <div className="rounded-xl border border-line bg-surface p-3 flex items-center justify-between">
+            <div>
+              <p className="text-sm font-medium">Show on Today</p>
+              <p className="text-xs text-muted">
+                {program.is_active ? "This program appears on your Today tab" : "Hidden from Today"}
+              </p>
+            </div>
+            <ProgramActiveToggle programId={program.id} isActive={!!program.is_active} />
           </div>
-          <ProgramActiveToggle programId={program.id} isActive={!!program.is_active} />
+
+          <ProgramScheduleForm
+            programId={program.id}
+            initialScheduleWeekdays={parseScheduleWeekdays(program.schedule_weekdays)}
+            dayCount={daysWithExercises.length}
+          />
         </div>
+      </details>
 
-        <ProgramScheduleForm
-          programId={program.id}
-          initialScheduleWeekdays={parseScheduleWeekdays(program.schedule_weekdays)}
-          dayCount={daysWithExercises.length}
-        />
-      </section>
-
-      <section id="definition" className="flex flex-col gap-3 scroll-mt-5">
+      <section className="flex flex-col gap-3">
         <div>
-          <h2 className="display text-xl">Definition</h2>
-          <p className="mt-0.5 text-sm text-muted">Reusable days, exercises, order, and progression templates.</p>
+          <h2 className="display text-xl">Exercises</h2>
+          <p className="mt-0.5 text-sm text-muted">Your training days, exercises, and progression.</p>
         </div>
 
         <AddDayForm programId={program.id} />
@@ -124,7 +111,14 @@ export default async function ProgramPage({ params }: PageProps) {
                     <div className="flex items-center gap-1">
                       <ReorderButton endpoint={`/api/days/${day.id}`} direction="up" label={day.name} />
                       <ReorderButton endpoint={`/api/days/${day.id}`} direction="down" label={day.name} />
-                      <DeleteButton endpoint={`/api/days/${day.id}`} label="day" />
+                      <DeleteButton
+                        endpoint={`/api/days/${day.id}`}
+                        label="day"
+                        align="center"
+                        triggerClassName="touch-target inline-flex items-center justify-center rounded-xl border border-line px-2 text-danger-ink transition-colors active:bg-danger-soft"
+                      >
+                        <Trash2 aria-hidden="true" size={15} />
+                      </DeleteButton>
                     </div>
                   </div>
 
@@ -178,7 +172,14 @@ export default async function ProgramPage({ params }: PageProps) {
                                               supersetGroup={ex.superset_group}
                                             />
                                           ) : null}
-                                          <DeleteButton endpoint={`/api/exercises/${ex.id}`} label="exercise" />
+                                          <DeleteButton
+                                            endpoint={`/api/exercises/${ex.id}`}
+                                            label="exercise"
+                                            align="center"
+                                            triggerClassName="touch-target inline-flex items-center justify-center rounded-xl border border-line px-2 text-danger-ink transition-colors active:bg-danger-soft"
+                                          >
+                                            <Trash2 aria-hidden="true" size={15} />
+                                          </DeleteButton>
                                         </div>
                                       </div>
                                     </div>
@@ -207,7 +208,14 @@ export default async function ProgramPage({ params }: PageProps) {
                                         linkName={nextExercise?.name ?? null}
                                         supersetGroup={exercise.superset_group}
                                       />
-                                      <DeleteButton endpoint={`/api/exercises/${exercise.id}`} label="exercise" />
+                                      <DeleteButton
+                                        endpoint={`/api/exercises/${exercise.id}`}
+                                        label="exercise"
+                                        align="center"
+                                        triggerClassName="touch-target inline-flex items-center justify-center rounded-xl border border-line px-2 text-danger-ink transition-colors active:bg-danger-soft"
+                                      >
+                                        <Trash2 aria-hidden="true" size={15} />
+                                      </DeleteButton>
                                     </div>
                                   </div>
                                 </div>
@@ -227,13 +235,6 @@ export default async function ProgramPage({ params }: PageProps) {
             </div>
           )}
         </section>
-      </section>
-
-      <section id="sharing" className="scroll-mt-5 rounded-xl border border-line bg-surface p-4 shadow-sm">
-        <h2 className="text-lg font-semibold">Sharing</h2>
-        <p className="mt-2 text-sm leading-6 text-muted">
-          Private definition
-        </p>
       </section>
     </div>
   );
