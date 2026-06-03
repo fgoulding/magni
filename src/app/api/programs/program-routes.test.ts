@@ -759,7 +759,7 @@ describe("program APIs", () => {
     }
   });
 
-  it("splits programs into active runs and library with schedule labels", async () => {
+  it("lists every program once with schedule labels and source", async () => {
     const userId = createUser("program-management@example.com");
     authenticate(userId);
 
@@ -782,11 +782,11 @@ describe("program APIs", () => {
     const rendered = await programsPage.default();
     const text = collectRenderedText(rendered);
 
-    expect(text).toContain("Active Runs");
-    expect(text).toContain("Library");
-    expect(text.indexOf("Active Runs")).toBeLessThan(text.indexOf("Scheduled Active"));
-    expect(text.indexOf("Scheduled Active")).toBeLessThan(text.indexOf("Library"));
-    expect(text.indexOf("Library")).toBeLessThan(text.indexOf("Custom Inactive"));
+    expect(text).toContain("Your programs");
+    // One unified list — each program appears exactly once (no run/definition split).
+    expect(text).toContain("Scheduled Active");
+    expect(text).toContain("Unscheduled Active");
+    expect(text).toContain("Custom Inactive");
     expect(text).toContain("Sun");
     expect(text).toContain("Tue");
     expect(text).toContain("Thu");
