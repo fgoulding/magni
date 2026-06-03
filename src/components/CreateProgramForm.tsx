@@ -262,6 +262,8 @@ export function CreateProgramForm({
                       });
                     }}
                     min={1}
+                    step={0.1}
+                    inputMode="decimal"
                     placeholder="Weight"
                     className="w-24 touch-target rounded-xl border border-line bg-surface px-2 text-sm outline-none focus:border-brand"
                   />

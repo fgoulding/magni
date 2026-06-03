@@ -56,6 +56,8 @@ export function AddExerciseForm({ dayId }: { dayId: number }) {
           value={trainingMax}
           onChange={(event) => setTrainingMax(Number(event.target.value))}
           min={1}
+          step={0.1}
+          inputMode="decimal"
           className="touch-target rounded-xl border border-line bg-surface px-3 text-base outline-none transition-colors focus:border-brand"
           aria-label="Training max"
         />

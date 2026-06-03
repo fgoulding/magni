@@ -15,12 +15,16 @@ export function TrainingMaxEditor({
   const router = useRouter();
 
   async function save() {
-    const next = Number(value);
-    if (!Number.isFinite(next) || next <= 0) {
+    const parsed = Number(value);
+    if (!Number.isFinite(parsed) || parsed <= 0) {
       setValue(String(initialValue));
       return;
     }
-    if (next === initialValue) return;
+    const next = Math.round(parsed * 10) / 10; // 1 decimal place
+    if (next === initialValue) {
+      setValue(String(next));
+      return;
+    }
 
     setSaving(true);
     try {
@@ -44,8 +48,9 @@ export function TrainingMaxEditor({
   return (
     <input
       type="number"
-      inputMode="numeric"
+      inputMode="decimal"
       min={1}
+      step={0.1}
       value={value}
       onChange={(event) => setValue(event.target.value)}
       onBlur={save}
@@ -61,7 +66,7 @@ export function TrainingMaxEditor({
       }}
       disabled={saving}
       aria-label="Training max"
-      className="w-12 rounded-md border border-line bg-surface px-1 py-0.5 text-center font-display text-sm tracking-tight text-foreground outline-none transition-colors focus:border-brand"
+      className="w-16 rounded-md border border-line bg-surface px-1 py-0.5 text-center font-display text-sm tracking-tight text-foreground outline-none transition-colors focus:border-brand"
     />
   );
 }
