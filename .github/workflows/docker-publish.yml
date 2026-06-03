@@ -1,0 +1,46 @@
+# Phase 2: build the image in CI and push it to GitHub Container Registry (GHCR).
+#
+# This does NOT run on every push — trigger it manually or by pushing a v* tag,
+# so you opt in to publishing. Once you're using this, switch docker-compose.yml
+# from `build: .` to `image: ghcr.io/OWNER/REPO:latest` and deploy with
+# `docker compose pull && docker compose up -d`.
+name: Publish image
+
+on:
+  workflow_dispatch: {}
+  push:
+    tags:
+      - "v*"
+
+jobs:
+  build-and-push:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Image metadata
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ghcr.io/${{ github.repository }}
+          tags: |
+            type=ref,event=tag
+            type=raw,value=latest,enable={{is_default_branch}}
+
+      - name: Build and push
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}

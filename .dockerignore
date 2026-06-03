@@ -1,0 +1,42 @@
+# Keep the build context small AND keep secrets/data out of the image.
+node_modules
+.next
+out
+build
+coverage
+
+# NEVER ship the local database into the image (privacy + size).
+data
+*.db
+*.db-wal
+*.db-shm
+*.sqlite*
+
+# Secrets
+.env
+.env.*
+!.env.example
+
+# Tests / tooling output
+test-results*
+playwright-report
+.playwright
+blob-report
+.stale-test-results-*
+.stale-playwright-report-*
+
+# VCS + editor + agent config
+.git
+.gitignore
+.claude
+.agents
+.codex-plugins
+.worktrees
+.vscode
+.idea
+.DS_Store
+
+# Docs aren't needed at build time
+docs
+*.md
+!README.md

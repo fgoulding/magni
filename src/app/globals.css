@@ -1,0 +1,154 @@
+@import "tailwindcss" source(none);
+@source "../**/*.{ts,tsx}";
+
+:root {
+  /* iOS computes dvh/env(safe-area-*) lazily on first paint, so AppHeight freezes
+     the real values into these vars on mount. These are the SSR/pre-JS fallbacks. */
+  --app-height: 100dvh;
+  --safe-top: env(safe-area-inset-top);
+  --safe-bottom: env(safe-area-inset-bottom);
+
+  /* Surfaces */
+  --background: #faf9f7;
+  --surface: #ffffff;
+  --surface-muted: #f5f4f1;
+  --foreground: #1c1917;
+  --muted: #57534e;
+  --faint: #a8a29e;
+  --line: #e7e5e4;
+
+  /* Brand — energy orange */
+  --brand: #ea580c;
+  --brand-strong: #c2410c;
+  --brand-soft: #fff3ea;
+  --brand-line: #fcd9bd;
+
+  /* Success — training green */
+  --success: #16a34a;
+  --success-ink: #15803d;
+  --success-soft: #effaf1;
+  --success-line: #c7ecd1;
+
+  /* Warning — hold amber */
+  --warn-ink: #b45309;
+  --warn-soft: #fffaeb;
+  --warn-line: #fbe3bd;
+
+  /* Danger */
+  --danger-ink: #b91c1c;
+  --danger-soft: #fef2f2;
+  --danger-line: #fbcfcf;
+}
+
+@theme inline {
+  --color-background: var(--background);
+  --color-surface: var(--surface);
+  --color-surface-muted: var(--surface-muted);
+  --color-foreground: var(--foreground);
+  --color-muted: var(--muted);
+  --color-faint: var(--faint);
+  --color-line: var(--line);
+
+  --color-brand: var(--brand);
+  --color-brand-strong: var(--brand-strong);
+  --color-brand-soft: var(--brand-soft);
+  --color-brand-line: var(--brand-line);
+
+  --color-success: var(--success);
+  --color-success-ink: var(--success-ink);
+  --color-success-soft: var(--success-soft);
+  --color-success-line: var(--success-line);
+
+  --color-warn-ink: var(--warn-ink);
+  --color-warn-soft: var(--warn-soft);
+  --color-warn-line: var(--warn-line);
+
+  --color-danger-ink: var(--danger-ink);
+  --color-danger-soft: var(--danger-soft);
+  --color-danger-line: var(--danger-line);
+
+  --font-sans: var(--font-barlow), ui-sans-serif, system-ui, -apple-system, sans-serif;
+  --font-display: var(--font-barlow-condensed), var(--font-barlow), ui-sans-serif, sans-serif;
+}
+
+body {
+  background: var(--background);
+  color: var(--foreground);
+  font-family: var(--font-barlow), ui-sans-serif, system-ui, -apple-system, sans-serif;
+  overscroll-behavior: none;
+  -webkit-font-smoothing: antialiased;
+  -webkit-overflow-scrolling: touch;
+}
+
+button,
+a,
+input,
+select,
+textarea {
+  touch-action: manipulation;
+}
+
+input,
+select,
+textarea {
+  font-size: 16px;
+}
+
+.safe-x {
+  padding-left: max(1rem, env(safe-area-inset-left));
+  padding-right: max(1rem, env(safe-area-inset-right));
+}
+
+/* Reserve space for the iPhone status bar / Dynamic Island when running as an
+   installed PWA (standalone). Uses the frozen --safe-top var (see AppHeight) so it
+   doesn't flicker as iOS re-evaluates env() on navigation. */
+.safe-top {
+  padding-top: var(--safe-top);
+}
+
+.safe-bottom {
+  padding-bottom: max(0.75rem, var(--safe-bottom));
+}
+
+.touch-target {
+  min-height: 44px;
+  min-width: 44px;
+}
+
+@layer components {
+  /* Condensed uppercase section label */
+  .eyebrow {
+    font-family: var(--font-barlow-condensed), sans-serif;
+    text-transform: uppercase;
+    letter-spacing: 0.11em;
+    font-weight: 600;
+    line-height: 1;
+  }
+
+  /* Condensed display heading */
+  .display {
+    font-family: var(--font-barlow-condensed), sans-serif;
+    font-weight: 700;
+    letter-spacing: -0.005em;
+    line-height: 1.03;
+  }
+
+  /* Standard elevated card */
+  .card {
+    border-radius: 1rem;
+    background: var(--surface);
+    border: 1px solid var(--line);
+    box-shadow:
+      0 1px 2px rgb(28 25 23 / 0.04),
+      0 6px 16px -10px rgb(28 25 23 / 0.12);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.001ms !important;
+    transition-duration: 0.001ms !important;
+  }
+}

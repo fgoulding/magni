@@ -1,0 +1,402 @@
+import { parseDateKey, toLocalDateKey } from "@/lib/date-key";
+import { db } from "@/lib/db";
+
+export type StatSetRow = Readonly<{
+  date: string;
+  exercise: string;
+  category: string;
+  reps: number;
+  weight: number;
+}>;
+
+export type LiftStat = Readonly<{
+  name: string;
+  maxWeight: number;
+  bestE1rm: number;
+  bestReps: number;
+  bestWeight: number;
+  trend: number[];
+  lastDate: string | null;
+}>;
+
+export type WeeklyPoint = Readonly<{ weekStart: string; value: number }>;
+
+export type CategorySlice = Readonly<{ category: string; volume: number; pct: number }>;
+
+export type TrainingStats = Readonly<{
+  hasData: boolean;
+  totals: { sessions: number; sets: number; reps: number; volume: number };
+  bigThree: LiftStat[];
+  weeklyVolume: WeeklyPoint[];
+  frequency: {
+    thisWeek: number;
+    streakWeeks: number;
+    avgPerWeek: number;
+    weeks: WeeklyPoint[];
+  };
+  categorySplit: CategorySlice[];
+}>;
+
+const BIG_THREE = [
+  { label: "Squat", match: (name: string) => /squat/.test(name) },
+  { label: "Bench", match: (name: string) => /bench/.test(name) },
+  { label: "Deadlift", match: (name: string) => /dead\s*lift|deadlift/.test(name) },
+] as const;
+
+// --- pure helpers (unit-tested) ---
+
+/** Epley estimated one-rep max. Reps of 1 returns the weight itself. */
+export function epleyE1rm(weight: number, reps: number): number {
+  if (weight <= 0 || reps <= 0) return 0;
+  return weight * (1 + reps / 30);
+}
+
+/** Non-null date-key parse for internally-generated keys (always valid). */
+function requireDate(key: string): Date {
+  return parseDateKey(key) ?? new Date(Number.NaN);
+}
+
+/** Sunday-start week key (YYYY-MM-DD) for the week containing `dateKey`. */
+export function weekStartKey(dateKey: string): string {
+  const date = requireDate(dateKey);
+  date.setDate(date.getDate() - date.getDay());
+  return toLocalDateKey(date);
+}
+
+function shiftWeeks(weekStart: string, deltaWeeks: number): string {
+  const date = requireDate(weekStart);
+  date.setDate(date.getDate() + deltaWeeks * 7);
+  return toLocalDateKey(date);
+}
+
+/** N consecutive Sunday week keys ending at (and including) `currentWeekStart`. */
+export function recentWeekKeys(currentWeekStart: string, count: number): string[] {
+  const keys: string[] = [];
+  for (let i = count - 1; i >= 0; i -= 1) keys.push(shiftWeeks(currentWeekStart, -i));
+  return keys;
+}
+
+/** Consecutive weeks with >=1 session counting back from the current week. */
+export function computeStreakWeeks(weekKeysWithSessions: ReadonlySet<string>, currentWeekStart: string): number {
+  let streak = 0;
+  let cursor = currentWeekStart;
+  while (weekKeysWithSessions.has(cursor)) {
+    streak += 1;
+    cursor = shiftWeeks(cursor, -1);
+  }
+  return streak;
+}
+
+function round(value: number): number {
+  return Math.round(value);
+}
+
+/** Pick the Squat / Bench / Deadlift lifts; fall back to top lifts by volume. */
+export function selectFeaturedLifts(perLift: ReadonlyMap<string, LiftStat>, volumeByLift: ReadonlyMap<string, number>): LiftStat[] {
+  const featured: LiftStat[] = [];
+  const used = new Set<string>();
+
+  for (const { match } of BIG_THREE) {
+    let best: LiftStat | null = null;
+    let bestVolume = -1;
+    for (const [name, stat] of perLift) {
+      if (used.has(name) || !match(name.toLowerCase())) continue;
+      const volume = volumeByLift.get(name) ?? 0;
+      if (volume > bestVolume) {
+        best = stat;
+        bestVolume = volume;
+      }
+    }
+    if (best) {
+      featured.push(best);
+      used.add(best.name);
+    }
+  }
+
+  if (featured.length === 0) {
+    return [...perLift.values()]
+      .sort((a, b) => (volumeByLift.get(b.name) ?? 0) - (volumeByLift.get(a.name) ?? 0))
+      .slice(0, 3);
+  }
+
+  return featured;
+}
+
+/** Build the full stats object from raw completed-set rows + completed-session dates. */
+export function buildTrainingStats(
+  setRows: readonly StatSetRow[],
+  sessionDates: readonly string[],
+  now: Date,
+): TrainingStats {
+  const currentWeekStart = weekStartKey(toLocalDateKey(now));
+
+  // Totals
+  const totals = { sessions: sessionDates.length, sets: setRows.length, reps: 0, volume: 0 };
+  for (const row of setRows) {
+    totals.reps += row.reps;
+    totals.volume += row.reps * row.weight;
+  }
+
+  // Per-lift aggregation
+  const perLift = new Map<string, LiftStat>();
+  const volumeByLift = new Map<string, number>();
+  const trendByLift = new Map<string, Map<string, number>>(); // lift -> (date -> best e1rm)
+
+  for (const row of setRows) {
+    if (row.weight <= 0 || row.reps <= 0) continue;
+    const name = row.exercise.trim();
+    if (!name) continue;
+    const e1rm = epleyE1rm(row.weight, row.reps);
+
+    volumeByLift.set(name, (volumeByLift.get(name) ?? 0) + row.reps * row.weight);
+
+    const existing = perLift.get(name);
+    if (!existing || e1rm > existing.bestE1rm) {
+      perLift.set(name, {
+        name,
+        maxWeight: Math.max(existing?.maxWeight ?? 0, row.weight),
+        bestE1rm: Math.max(existing?.bestE1rm ?? 0, e1rm),
+        bestReps: e1rm >= (existing?.bestE1rm ?? 0) ? row.reps : (existing?.bestReps ?? row.reps),
+        bestWeight: e1rm >= (existing?.bestE1rm ?? 0) ? row.weight : (existing?.bestWeight ?? row.weight),
+        trend: [],
+        lastDate: existing?.lastDate ?? null,
+      });
+    } else {
+      perLift.set(name, { ...existing, maxWeight: Math.max(existing.maxWeight, row.weight) });
+    }
+
+    const dates = trendByLift.get(name) ?? new Map<string, number>();
+    dates.set(row.date, Math.max(dates.get(row.date) ?? 0, e1rm));
+    trendByLift.set(name, dates);
+  }
+
+  // Attach trend series + lastDate
+  for (const [name, stat] of perLift) {
+    const dateMap = trendByLift.get(name) ?? new Map<string, number>();
+    const sortedDates = [...dateMap.keys()].sort();
+    const trend = sortedDates.slice(-10).map((d) => round(dateMap.get(d) ?? 0));
+    perLift.set(name, { ...stat, trend, lastDate: sortedDates.at(-1) ?? null });
+  }
+
+  const bigThree = selectFeaturedLifts(perLift, volumeByLift).map((lift) => ({
+    ...lift,
+    maxWeight: round(lift.maxWeight),
+    bestE1rm: round(lift.bestE1rm),
+    bestWeight: round(lift.bestWeight),
+  }));
+
+  // Weekly volume (last 10 weeks, zero-filled)
+  const volumeByWeek = new Map<string, number>();
+  for (const row of setRows) {
+    const week = weekStartKey(row.date);
+    volumeByWeek.set(week, (volumeByWeek.get(week) ?? 0) + row.reps * row.weight);
+  }
+  const weeklyVolume: WeeklyPoint[] = recentWeekKeys(currentWeekStart, 10).map((weekStart) => ({
+    weekStart,
+    value: round(volumeByWeek.get(weekStart) ?? 0),
+  }));
+
+  // Frequency
+  const sessionsByWeek = new Map<string, number>();
+  for (const date of sessionDates) {
+    const week = weekStartKey(date);
+    sessionsByWeek.set(week, (sessionsByWeek.get(week) ?? 0) + 1);
+  }
+  const weeksWithSessions = new Set(sessionsByWeek.keys());
+  const freqWeeks: WeeklyPoint[] = recentWeekKeys(currentWeekStart, 8).map((weekStart) => ({
+    weekStart,
+    value: sessionsByWeek.get(weekStart) ?? 0,
+  }));
+  const firstWeek = [...weeksWithSessions].sort()[0];
+  const weekSpan =
+    firstWeek !== undefined
+      ? Math.max(1, Math.round((requireDate(currentWeekStart).getTime() - requireDate(firstWeek).getTime()) / (7 * 86_400_000)) + 1)
+      : 1;
+  const frequency = {
+    thisWeek: sessionsByWeek.get(currentWeekStart) ?? 0,
+    streakWeeks: computeStreakWeeks(weeksWithSessions, currentWeekStart),
+    avgPerWeek: Math.round((totals.sessions / weekSpan) * 10) / 10,
+    weeks: freqWeeks,
+  };
+
+  // Category split
+  const volumeByCategory = new Map<string, number>();
+  for (const row of setRows) {
+    volumeByCategory.set(row.category, (volumeByCategory.get(row.category) ?? 0) + row.reps * row.weight);
+  }
+  const categoryOrder = ["main", "aux", "accessory"];
+  const categorySplit: CategorySlice[] = categoryOrder
+    .map((category) => ({ category, volume: round(volumeByCategory.get(category) ?? 0) }))
+    .filter((slice) => slice.volume > 0)
+    .map((slice) => ({ ...slice, pct: totals.volume > 0 ? Math.round((slice.volume / totals.volume) * 100) : 0 }));
+
+  return {
+    hasData: totals.sessions > 0 && totals.sets > 0,
+    totals: { ...totals, reps: round(totals.reps), volume: round(totals.volume) },
+    bigThree,
+    weeklyVolume,
+    frequency,
+    categorySplit,
+  };
+}
+
+// --- Per-lift detail ---
+
+export type LiftSession = Readonly<{
+  date: string;
+  topWeight: number;
+  bestE1rm: number;
+  bestReps: number;
+  bestWeight: number;
+  sets: number;
+  volume: number;
+}>;
+
+export type LiftPr = Readonly<{ date: string; e1rm: number; weight: number; reps: number }>;
+
+export type LiftDetail = Readonly<{
+  name: string;
+  hasData: boolean;
+  maxWeight: number;
+  bestE1rm: number;
+  bestE1rmDate: string | null;
+  totalVolume: number;
+  sessionCount: number;
+  trend: number[];
+  sessions: LiftSession[];
+  prTimeline: LiftPr[];
+}>;
+
+/** Build a single lift's detail (full trend, per-session top sets, PR timeline). */
+export function buildLiftDetail(rows: readonly StatSetRow[], name: string): LiftDetail {
+  const target = name.trim().toLowerCase();
+  const byDate = new Map<string, { topWeight: number; bestE1rm: number; bestReps: number; bestWeight: number; sets: number; volume: number }>();
+
+  for (const row of rows) {
+    if (row.weight <= 0 || row.reps <= 0) continue;
+    if (row.exercise.trim().toLowerCase() !== target) continue;
+    const e1rm = epleyE1rm(row.weight, row.reps);
+    const existing = byDate.get(row.date);
+    if (!existing) {
+      byDate.set(row.date, {
+        topWeight: row.weight,
+        bestE1rm: e1rm,
+        bestReps: row.reps,
+        bestWeight: row.weight,
+        sets: 1,
+        volume: row.reps * row.weight,
+      });
+    } else {
+      existing.topWeight = Math.max(existing.topWeight, row.weight);
+      existing.sets += 1;
+      existing.volume += row.reps * row.weight;
+      if (e1rm > existing.bestE1rm) {
+        existing.bestE1rm = e1rm;
+        existing.bestReps = row.reps;
+        existing.bestWeight = row.weight;
+      }
+    }
+  }
+
+  const ascDates = [...byDate.keys()].sort();
+  const sessionsAsc: LiftSession[] = ascDates.map((date) => {
+    const agg = byDate.get(date)!;
+    return {
+      date,
+      topWeight: round(agg.topWeight),
+      bestE1rm: round(agg.bestE1rm),
+      bestReps: agg.bestReps,
+      bestWeight: round(agg.bestWeight),
+      sets: agg.sets,
+      volume: round(agg.volume),
+    };
+  });
+
+  const prTimeline: LiftPr[] = [];
+  let runningMax = 0;
+  for (const session of sessionsAsc) {
+    if (session.bestE1rm > runningMax) {
+      runningMax = session.bestE1rm;
+      prTimeline.push({
+        date: session.date,
+        e1rm: session.bestE1rm,
+        weight: session.bestWeight,
+        reps: session.bestReps,
+      });
+    }
+  }
+
+  let maxWeight = 0;
+  let bestE1rm = 0;
+  let bestE1rmDate: string | null = null;
+  let totalVolume = 0;
+  for (const session of sessionsAsc) {
+    maxWeight = Math.max(maxWeight, session.topWeight);
+    totalVolume += session.volume;
+    if (session.bestE1rm > bestE1rm) {
+      bestE1rm = session.bestE1rm;
+      bestE1rmDate = session.date;
+    }
+  }
+
+  return {
+    name,
+    hasData: sessionsAsc.length > 0,
+    maxWeight,
+    bestE1rm,
+    bestE1rmDate,
+    totalVolume,
+    sessionCount: sessionsAsc.length,
+    trend: sessionsAsc.map((s) => s.bestE1rm),
+    sessions: [...sessionsAsc].reverse(),
+    prTimeline: [...prTimeline].reverse(),
+  };
+}
+
+// --- DB entry points ---
+
+export function getUserLiftDetail(userId: number, name: string): LiftDetail {
+  const rows = db
+    .prepare(
+      `
+        SELECT
+          s.date AS date,
+          ss.exercise_name AS exercise,
+          ss.category AS category,
+          COALESCE(ss.actual_reps, ss.reps) AS reps,
+          COALESCE(ss.actual_weight, ss.calculated_weight, 0) AS weight
+        FROM session_sets ss
+        JOIN sessions s ON s.id = ss.session_id
+        WHERE s.user_id = ? AND s.status = 'completed' AND ss.exercise_name = ? COLLATE NOCASE
+      `,
+    )
+    .all(userId, name) as StatSetRow[];
+
+  return buildLiftDetail(rows, name);
+}
+
+export function getUserTrainingStats(userId: number, now: Date = new Date()): TrainingStats {
+  const setRows = db
+    .prepare(
+      `
+        SELECT
+          s.date AS date,
+          ss.exercise_name AS exercise,
+          ss.category AS category,
+          COALESCE(ss.actual_reps, ss.reps) AS reps,
+          COALESCE(ss.actual_weight, ss.calculated_weight, 0) AS weight
+        FROM session_sets ss
+        JOIN sessions s ON s.id = ss.session_id
+        WHERE s.user_id = ? AND s.status = 'completed'
+      `,
+    )
+    .all(userId) as StatSetRow[];
+
+  const sessionDates = (
+    db
+      .prepare(`SELECT s.date AS date FROM sessions s WHERE s.user_id = ? AND s.status = 'completed'`)
+      .all(userId) as { date: string }[]
+  ).map((row) => row.date);
+
+  return buildTrainingStats(setRows, sessionDates, now);
+}

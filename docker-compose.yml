@@ -1,0 +1,34 @@
+# Run the app FROM SOURCE — for local use, trying it out, or contributing.
+# It builds the image locally and serves plain HTTP on http://localhost:3000.
+#
+# For a real internet-facing deployment (HTTPS, a published image, your domain),
+# do NOT use this file. Copy the deploy/ folder into a private deploy repo —
+# see deploy/README.md and docs/deployment.md.
+
+services:
+  app:
+    build: .
+    restart: unless-stopped
+    environment:
+      NODE_ENV: production
+      DB_PATH: /data/workouts.db
+      # Optional: lock down sign-ups even locally. Set in a .env file next to
+      # this compose, or export it in your shell.
+      REGISTER_ALLOWLIST: ${REGISTER_ALLOWLIST:-}
+    ports:
+      - "3000:3000"
+    volumes:
+      - app_data:/data # history persists across `up --build`; survives `down` (not `down -v`)
+    healthcheck:
+      test:
+        - CMD
+        - node
+        - -e
+        - "fetch('http://127.0.0.1:3000/api/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 20s
+
+volumes:
+  app_data:

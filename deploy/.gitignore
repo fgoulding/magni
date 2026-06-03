@@ -1,0 +1,6 @@
+# Secrets and data never get committed to the deploy repo.
+.env
+backups/
+*.db
+*.db-wal
+*.db-shm

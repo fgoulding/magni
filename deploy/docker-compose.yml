@@ -1,0 +1,49 @@
+# Production deployment — runs a PUBLISHED image (no source on the server).
+# This file belongs in your PRIVATE deploy repo, not the public app repo.
+#
+# The database lives in the `app_data` volume, not the image, so it survives
+# every redeploy. Pin IMAGE to a tag for reproducible, rollback-able deploys.
+
+services:
+  app:
+    image: ${IMAGE} # e.g. ghcr.io/OWNER/REPO:v1.0.0 — private package, run `docker login ghcr.io`
+    restart: unless-stopped
+    environment:
+      NODE_ENV: production
+      DB_PATH: /data/workouts.db
+      REGISTER_ALLOWLIST: ${REGISTER_ALLOWLIST}
+    volumes:
+      - app_data:/data
+    expose:
+      - "3000" # internal only; Caddy is the public edge
+    healthcheck:
+      test:
+        - CMD
+        - node
+        - -e
+        - "fetch('http://127.0.0.1:3000/api/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 20s
+
+  caddy:
+    image: caddy:2
+    restart: unless-stopped
+    depends_on:
+      - app
+    ports:
+      - "80:80"
+      - "443:443"
+      - "443:443/udp"
+    environment:
+      DOMAIN: ${DOMAIN}
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data # ACME certs — persist so you don't re-issue on restart
+      - caddy_config:/config
+
+volumes:
+  app_data: # <-- your workout history. Back it up. Never `down -v` without a backup.
+  caddy_data:
+  caddy_config:
