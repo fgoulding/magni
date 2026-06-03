@@ -83,17 +83,7 @@ function renderProgramCard(program: ProgramLibraryItem) {
         ) : null}
       </div>
 
-      <div
-        className={`grid ${active ? "grid-cols-3" : "grid-cols-2"} border-t border-line text-sm font-semibold text-muted`}
-      >
-        {active ? (
-          <Link
-            href="/today"
-            className="touch-target inline-flex items-center justify-center gap-1.5 border-r border-line text-brand-strong transition-colors active:bg-surface-muted"
-          >
-            Today
-          </Link>
-        ) : null}
+      <div className="grid grid-cols-2 border-t border-line text-sm font-semibold text-muted">
         <Link
           href={`/programs/${program.id}`}
           className="touch-target inline-flex items-center justify-center gap-1.5 border-r border-line transition-colors active:bg-surface-muted"
