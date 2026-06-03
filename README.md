@@ -42,11 +42,9 @@ npm run dev
 
 Open [http://localhost:3000](http://localhost:3000).
 
-The app creates a local SQLite database. Set `DB_PATH` to point at a custom database file:
-
-```bash
-DB_PATH=./data/workout.db npm run dev
-```
+See **[docs/setup.md](docs/setup.md)** for the full setup guide — prerequisites,
+environment variables (`DB_PATH`, `REGISTER_ALLOWLIST`, `DEV_ORIGIN`), testing on
+your iPhone over the LAN, and seeding demo data.
 
 ## Deployment
 
