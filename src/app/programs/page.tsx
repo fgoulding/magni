@@ -1,5 +1,5 @@
 import Link from "next/link";
-import { Activity, CalendarDays, Copy, Dumbbell, Library, Plus, Share2 } from "lucide-react";
+import { Activity, CalendarDays, Dumbbell, Library, Plus, Trash2 } from "lucide-react";
 import { redirect } from "next/navigation";
 import { DeleteButton } from "@/components/DeleteButton";
 import { ProgramActiveToggle } from "@/components/ProgramActiveToggle";
@@ -115,30 +115,23 @@ function renderDefinitionCard(program: ProgramLibraryItem) {
           </span>
         </div>
       </Link>
-      <div className="grid grid-cols-3 border-t border-line text-xs font-semibold text-muted">
+      <div className="grid grid-cols-2 border-t border-line text-xs font-semibold text-muted">
         <Link
           href={`/programs/${program.id}`}
-          className="touch-target inline-flex items-center justify-center gap-1.5 transition-colors active:bg-surface-muted"
+          className="touch-target inline-flex items-center justify-center gap-1.5 border-r border-line transition-colors active:bg-surface-muted"
         >
           <Dumbbell aria-hidden="true" size={14} className="text-brand-strong" />
           Edit
         </Link>
-        <button
-          type="button"
-          disabled
-          className="touch-target inline-flex items-center justify-center gap-1.5 border-x border-line opacity-45"
+        <DeleteButton
+          endpoint={`/api/programs/${program.id}`}
+          label="program"
+          align="center"
+          triggerClassName="touch-target inline-flex items-center justify-center gap-1.5 text-danger-ink transition-colors active:bg-danger-soft"
         >
-          <Copy aria-hidden="true" size={14} />
-          Duplicate
-        </button>
-        <button
-          type="button"
-          disabled
-          className="touch-target inline-flex items-center justify-center gap-1.5 opacity-45"
-        >
-          <Share2 aria-hidden="true" size={14} />
-          Share
-        </button>
+          <Trash2 aria-hidden="true" size={14} />
+          Delete
+        </DeleteButton>
       </div>
     </article>
   );
@@ -206,14 +199,7 @@ export default async function ProgramsPage() {
                 {library.definitions.length}
               </span>
             </div>
-            {library.definitions.map((program) => (
-              <div key={program.id} className="flex flex-col gap-2">
-                {renderDefinitionCard(program)}
-                <div className="flex justify-end">
-                  <DeleteButton endpoint={`/api/programs/${program.id}`} label="program" />
-                </div>
-              </div>
-            ))}
+            {library.definitions.map((program) => renderDefinitionCard(program))}
           </section>
         </>
       )}
