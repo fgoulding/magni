@@ -3,6 +3,7 @@
 import { useRouter } from "next/navigation";
 import { useState } from "react";
 import { ErrorBanner } from "@/components/ErrorBanner";
+import { Select } from "@/components/Select";
 import { listTrainingTemplates } from "@/features/training-templates/registry";
 
 const trainingTemplates = listTrainingTemplates();
@@ -58,22 +59,21 @@ export function AddExerciseForm({ dayId }: { dayId: number }) {
           className="touch-target rounded-xl border border-line bg-surface px-3 text-base outline-none transition-colors focus:border-brand"
           aria-label="Training max"
         />
-        <select
+        <Select
           value={category}
           onChange={(event) => setCategory(event.target.value)}
-          className="touch-target rounded-xl border border-line bg-surface px-3 text-base outline-none transition-colors focus:border-brand"
           aria-label="Category"
         >
           <option value="main">Main</option>
           <option value="aux">Aux</option>
           <option value="accessory">Accessory</option>
-        </select>
+        </Select>
       </div>
       <div className="flex gap-2">
-        <select
+        <Select
           value={progressionType}
           onChange={(event) => setProgressionType(event.target.value)}
-          className="touch-target min-w-0 flex-1 rounded-xl border border-line bg-surface px-3 text-base outline-none transition-colors focus:border-brand"
+          wrapperClassName="min-w-0 flex-1"
           aria-label="Progression"
         >
           {trainingTemplates.map((template) => (
@@ -81,7 +81,7 @@ export function AddExerciseForm({ dayId }: { dayId: number }) {
               {template.name}
             </option>
           ))}
-        </select>
+        </Select>
         <button
           type="submit"
           disabled={submitting}

@@ -2,6 +2,7 @@
 
 import { useState } from "react";
 import { ErrorBanner } from "@/components/ErrorBanner";
+import { Select } from "@/components/Select";
 
 export function SettingsForm({ initialRounding }: { initialRounding: number }) {
   const [rounding, setRounding] = useState(initialRounding);
@@ -37,16 +38,17 @@ export function SettingsForm({ initialRounding }: { initialRounding: number }) {
       {message ? <p className="text-sm font-semibold text-success-ink">{message}</p> : null}
       <label className="flex flex-col gap-1.5 text-sm font-semibold">
         Weight rounding
-        <select
+        <Select
           value={rounding}
           onChange={(event) => setRounding(Number(event.target.value))}
-          className="touch-target rounded-xl border border-line bg-surface px-3 text-base font-normal outline-none transition-colors focus:border-brand"
+          className="font-normal"
+          aria-label="Weight rounding"
         >
           <option value={1}>1 lb</option>
           <option value={2.5}>2.5 lb</option>
           <option value={5}>5 lb</option>
           <option value={10}>10 lb</option>
-        </select>
+        </Select>
       </label>
       <button
         type="submit"
