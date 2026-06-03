@@ -42,9 +42,12 @@ const nextConfig: NextConfig = {
   // Keep the native SQLite addon out of the bundle; it's required from
   // node_modules at runtime and traced into the standalone output.
   serverExternalPackages: ["better-sqlite3"],
-  // On-device dev: set DEV_ORIGIN to your computer's LAN IP (e.g. 192.168.1.20)
-  // so `next dev` accepts asset requests from your phone on the same network.
-  allowedDevOrigins: process.env.DEV_ORIGIN ? [process.env.DEV_ORIGIN] : [],
+  // On-device dev: set DEV_ORIGIN to your computer's LAN IP(s), comma-separated
+  // (e.g. 192.168.1.20), so `next dev` accepts asset/HMR requests from your phone
+  // on the same network. Without it, the phone loads HTML but no JS hydrates.
+  allowedDevOrigins: process.env.DEV_ORIGIN
+    ? process.env.DEV_ORIGIN.split(",").map((origin) => origin.trim()).filter(Boolean)
+    : [],
   devIndicators: false,
   async headers() {
     return [{ source: "/:path*", headers: securityHeaders }];
