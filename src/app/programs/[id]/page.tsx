@@ -204,6 +204,7 @@ export default async function ProgramPage({ params }: PageProps) {
                                       <SupersetLink
                                         exerciseId={exercise.id}
                                         linkExerciseId={nextExercise?.id ?? null}
+                                        linkName={nextExercise?.name ?? null}
                                         supersetGroup={exercise.superset_group}
                                       />
                                       <DeleteButton endpoint={`/api/exercises/${exercise.id}`} label="exercise" />

@@ -96,6 +96,17 @@ export function CreateProgramForm({
         throw new Error("Choose a program default to publish");
       }
 
+      if (submitMode === "create-program") {
+        if (!name.trim()) {
+          throw new Error("Enter a program name.");
+        }
+        if (!Number.isInteger(numWeeks) || numWeeks < 1 || numWeeks > 104) {
+          throw new Error("Weeks must be a whole number between 1 and 104.");
+        }
+        // Blank training maxes are allowed (they default to 100 server-side), but
+        // the form warns about that visibly — see the Training Maxes fieldset.
+      }
+
       const maxesPayload: Record<string, number> | undefined = (() => {
         const entries = Object.entries(expectedMaxes)
           .filter(([, v]) => typeof v === "number")
@@ -135,7 +146,7 @@ export function CreateProgramForm({
   }
 
   return (
-    <form onSubmit={submit} className="flex flex-col gap-4">
+    <form onSubmit={submit} noValidate className="flex flex-col gap-4">
       <ErrorBanner message={error} />
 
       <fieldset className="flex flex-col gap-2">
@@ -181,6 +192,13 @@ export function CreateProgramForm({
         </div>
       ) : null}
 
+      {submitMode === "create-program" && !selectedSnapshot ? (
+        <p className="rounded-xl border border-line bg-surface-muted px-3 py-2.5 text-xs leading-5 text-muted">
+          A blank program starts empty. After you create it, you&rsquo;ll add training days and
+          exercises in the editor.
+        </p>
+      ) : null}
+
       <label className="flex flex-col gap-1 text-sm font-medium">
         Program name
         <input
@@ -210,6 +228,11 @@ export function CreateProgramForm({
           {Object.values(expectedMaxes).some((value) => typeof value === "number") ? (
             <p className="-mt-1 text-xs text-muted">
               Pre-filled from your latest maxes where we recognized the lift — edit any.
+            </p>
+          ) : null}
+          {Object.values(expectedMaxes).some((value) => typeof value !== "number" || value <= 0) ? (
+            <p className="rounded-lg border border-warn-line bg-warn-soft px-2.5 py-1.5 text-xs leading-5 text-warn-ink">
+              Lifts left blank will use a default training max of 100 — fill them in for accurate weights.
             </p>
           ) : null}
           {selectedSnapshot.days.map((day) => (
