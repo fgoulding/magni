@@ -1,12 +1,17 @@
-# Production deployment — runs a PUBLISHED image (no source on the server).
+# Production deployment — runs a PUBLISHED image.
 # This file belongs in your PRIVATE deploy repo, not the public app repo.
 #
-# The database lives in the `app_data` volume, not the image, so it survives
-# every redeploy. Pin IMAGE to a tag for reproducible, rollback-able deploys.
+# Reachability:  Cloudflare Tunnel (cloudflared) — NO inbound ports are opened,
+#   so this never collides with anything else already on the host (80/443/etc).
+#   Cloudflare terminates TLS at its edge; the tunnel is an OUTBOUND connection.
+# Updates:       Watchtower watches ONLY the labelled `app` container and pulls a
+#   new image automatically when CI publishes one. Other containers are ignored.
+# Persistence:   the database lives in the `app_data` volume, NOT the image, so
+#   it survives every redeploy, pull, reboot, and image swap.
 
 services:
   app:
-    image: ${IMAGE} # e.g. ghcr.io/OWNER/REPO:v1.0.0 — private package, run `docker login ghcr.io`
+    image: ${IMAGE:-ghcr.io/fgoulding/magni:latest} # private package — `docker login ghcr.io` first
     restart: unless-stopped
     environment:
       NODE_ENV: production
@@ -14,8 +19,11 @@ services:
       REGISTER_ALLOWLIST: ${REGISTER_ALLOWLIST}
     volumes:
       - app_data:/data
+    labels:
+      # Opt THIS container (and only this one) into Watchtower auto-updates.
+      com.centurylinklabs.watchtower.enable: "true"
     expose:
-      - "3000" # internal only; Caddy is the public edge
+      - "3000" # internal only; the tunnel reaches it as http://app:3000
     healthcheck:
       test:
         - CMD
@@ -27,23 +35,37 @@ services:
       retries: 3
       start_period: 20s
 
-  caddy:
-    image: caddy:2
+  # Cloudflare Tunnel: publishes magni.tylergould.ing without opening a port.
+  # Token-based ("remotely managed") tunnel — the public-hostname → service
+  # mapping (magni.tylergould.ing -> http://app:3000) is set in the Cloudflare
+  # Zero Trust dashboard. The container shares this network so `app` resolves.
+  cloudflared:
+    image: cloudflare/cloudflared:latest
     restart: unless-stopped
+    command: tunnel --no-autoupdate run
+    environment:
+      TUNNEL_TOKEN: ${TUNNEL_TOKEN}
     depends_on:
       - app
-    ports:
-      - "80:80"
-      - "443:443"
-      - "443:443/udp"
+
+  # Watchtower: every WATCHTOWER_POLL_INTERVAL seconds it checks GHCR for a new
+  # image of the labelled container, pulls it, and recreates the container with
+  # the SAME volume — so history is preserved. LABEL_ENABLE means it touches
+  # nothing it isn't told to (every other container on the host is safe).
+  watchtower:
+    image: containrrr/watchtower:latest
+    restart: unless-stopped
     environment:
-      DOMAIN: ${DOMAIN}
+      WATCHTOWER_LABEL_ENABLE: "true"
+      WATCHTOWER_CLEANUP: "true" # prune the old image after a successful update
+      WATCHTOWER_POLL_INTERVAL: "180" # check every 3 minutes
+      WATCHTOWER_INCLUDE_RESTARTING: "true"
     volumes:
-      - ./Caddyfile:/etc/caddy/Caddyfile:ro
-      - caddy_data:/data # ACME certs — persist so you don't re-issue on restart
-      - caddy_config:/config
+      - /var/run/docker.sock:/var/run/docker.sock
+      # GHCR credentials for pulling the PRIVATE image. Created by `docker login
+      # ghcr.io` on the host (see README). Override DOCKER_CONFIG_DIR if you
+      # logged in as a non-root user (e.g. /home/youruser/.docker).
+      - ${DOCKER_CONFIG_DIR:-/root/.docker}/config.json:/config.json:ro
 
 volumes:
   app_data: # <-- your workout history. Back it up. Never `down -v` without a backup.
-  caddy_data:
-  caddy_config:

@@ -1,14 +1,17 @@
-# Phase 2: build the image in CI and push it to GitHub Container Registry (GHCR).
+# Build the image in CI and push it to GitHub Container Registry (GHCR).
 #
-# This does NOT run on every push — trigger it manually or by pushing a v* tag,
-# so you opt in to publishing. Once you're using this, switch docker-compose.yml
-# from `build: .` to `image: ghcr.io/OWNER/REPO:latest` and deploy with
-# `docker compose pull && docker compose up -d`.
+#   push to main  -> publishes :latest  (Watchtower on the server auto-redeploys)
+#   push a v* tag -> publishes :vX.Y.Z   (a pinned, rollback-able release)
+#
+# The deploy stack runs `image: ghcr.io/OWNER/REPO:latest`; Watchtower pulls new
+# :latest images automatically. See deploy/README.md.
 name: Publish image
 
 on:
   workflow_dispatch: {}
   push:
+    branches:
+      - main
     tags:
       - "v*"
 
