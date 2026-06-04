@@ -29,6 +29,10 @@ describe("proxy auth boundary", () => {
     expect(proxy(request("/sw.js")).status).toBe(200);
   });
 
+  it("allows the health probe without a token", () => {
+    expect(proxy(request("/api/health")).status).toBe(200);
+  });
+
   it("allows protected pages when a token cookie exists", () => {
     expect(proxy(request("/history", "abc")).status).toBe(200);
   });

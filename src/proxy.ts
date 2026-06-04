@@ -7,6 +7,7 @@ export function proxy(request: NextRequest) {
   const token = request.cookies.get("auth_token")?.value;
 
   if (
+    pathname === "/api/health" ||
     pathname.startsWith("/api/auth/") ||
     pathname.startsWith("/_next/") ||
     pathname === "/manifest.json" ||
