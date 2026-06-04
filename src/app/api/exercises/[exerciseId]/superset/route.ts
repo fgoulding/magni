@@ -31,11 +31,32 @@ export async function PUT(request: Request, context: RouteContext) {
           id: number;
           day_id: number;
           sort_order: number;
+          superset_group: string | null;
           shared_exercise_key: string | null;
           program_definition_id: number | null;
         }
       | undefined;
     if (!exercise) return jsonError("Exercise not found", 404);
+
+    // Clear one exercise's superset membership, mirroring to the program
+    // definition so the change sticks across program syncs.
+    const clearMembership = (memberId: number, sharedKey: string | null) => {
+      db.prepare("UPDATE exercises SET superset_group = NULL WHERE id = ?").run(memberId);
+      if (exercise.program_definition_id && sharedKey) {
+        db.prepare(
+          `
+            UPDATE program_definition_exercises
+            SET superset_group = NULL
+            WHERE stable_key = ?
+              AND program_definition_day_id IN (
+                SELECT id
+                FROM program_definition_days
+                WHERE program_definition_id = ?
+              )
+          `,
+        ).run(sharedKey, exercise.program_definition_id);
+      }
+    };
 
     const body = (await request.json()) as SupersetBody;
     const linkExerciseId =
@@ -48,21 +69,21 @@ export async function PUT(request: Request, context: RouteContext) {
     }
 
     if (linkExerciseId === null) {
+      const group = exercise.superset_group;
       db.transaction(() => {
-        db.prepare("UPDATE exercises SET superset_group = NULL WHERE id = ?").run(id);
-        if (exercise.program_definition_id && exercise.shared_exercise_key) {
-          db.prepare(
-            `
-              UPDATE program_definition_exercises
-              SET superset_group = NULL
-              WHERE stable_key = ?
-                AND program_definition_day_id IN (
-                  SELECT id
-                  FROM program_definition_days
-                  WHERE program_definition_id = ?
-                )
-            `,
-          ).run(exercise.shared_exercise_key, exercise.program_definition_id);
+        clearMembership(id, exercise.shared_exercise_key);
+        // A superset of one is meaningless and has no UI affordance to dissolve
+        // it, so if removing this exercise leaves a single member behind, clear
+        // that lone member too.
+        if (group) {
+          const remaining = db
+            .prepare(
+              "SELECT id, shared_exercise_key FROM exercises WHERE superset_group = ? AND archived_at IS NULL",
+            )
+            .all(group) as { id: number; shared_exercise_key: string | null }[];
+          if (remaining.length === 1) {
+            clearMembership(remaining[0].id, remaining[0].shared_exercise_key);
+          }
         }
       })();
       return NextResponse.json({ success: true });
