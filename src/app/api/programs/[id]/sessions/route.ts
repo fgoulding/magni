@@ -351,7 +351,7 @@ export async function POST(request: Request, context: RouteContext) {
           weekSetting.rep_out_target,
           calculateWeight(weekSetting.training_max, weekSetting.intensity_pct, rounding),
           weekSetting.training_max,
-          weekSetting.progression_type === "custom" ? 0 : 1,
+          weekSetting.progression_type === "custom" || weekSetting.progression_type === "bodyweight" ? 0 : 1,
         );
       }
 

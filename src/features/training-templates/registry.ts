@@ -1,3 +1,4 @@
+import { bodyweightTemplate } from "@/features/training-templates/templates/bodyweight";
 import { customTemplate } from "@/features/training-templates/templates/custom";
 import { doubleTemplate } from "@/features/training-templates/templates/double";
 import { linearTemplate } from "@/features/training-templates/templates/linear";
@@ -9,6 +10,7 @@ const EXERCISE_CATEGORIES = ["main", "aux", "accessory"] as const satisfies read
 
 const TRAINING_TEMPLATES = [
   customTemplate,
+  bodyweightTemplate,
   linearTemplate,
   doubleTemplate,
   sbsTemplate,

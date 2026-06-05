@@ -19,6 +19,7 @@ export function AddExerciseForm({ dayId }: { dayId: number }) {
   const [submitting, setSubmitting] = useState(false);
   const router = useRouter();
   const selectedTemplate = trainingTemplates.find((template) => template.id === progressionType);
+  const isBodyweight = progressionType === "bodyweight";
 
   async function submit(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -29,7 +30,9 @@ export function AddExerciseForm({ dayId }: { dayId: number }) {
       const response = await fetch(`/api/days/${dayId}/exercises`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ name, trainingMax, category, progressionType }),
+        // Bodyweight has no training max; send a nominal placeholder (the column
+        // is NOT NULL CHECK(> 0)). The UI shows "BW" instead.
+        body: JSON.stringify({ name, trainingMax: isBodyweight ? 1 : trainingMax, category, progressionType }),
       });
       const body = (await response.json()) as { error?: string };
       if (!response.ok) throw new Error(body.error ?? "Could not add exercise");
@@ -75,17 +78,19 @@ export function AddExerciseForm({ dayId }: { dayId: number }) {
         placeholder="Squat"
         className="touch-target rounded-xl border border-line bg-surface px-3 text-base outline-none transition-colors focus:border-brand"
       />
-      <div className="grid grid-cols-2 gap-2">
-        <input
-          type="number"
-          value={trainingMax}
-          onChange={(event) => setTrainingMax(Number(event.target.value))}
-          min={1}
-          step={0.1}
-          inputMode="decimal"
-          className="touch-target rounded-xl border border-line bg-surface px-3 text-base outline-none transition-colors focus:border-brand"
-          aria-label="Training max"
-        />
+      <div className={isBodyweight ? "" : "grid grid-cols-2 gap-2"}>
+        {!isBodyweight ? (
+          <input
+            type="number"
+            value={trainingMax}
+            onChange={(event) => setTrainingMax(Number(event.target.value))}
+            min={1}
+            step={0.1}
+            inputMode="decimal"
+            className="touch-target rounded-xl border border-line bg-surface px-3 text-base outline-none transition-colors focus:border-brand"
+            aria-label="Training max"
+          />
+        ) : null}
         <Select
           value={category}
           onChange={(event) => setCategory(event.target.value)}

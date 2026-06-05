@@ -10,7 +10,13 @@ export type WorkoutSet = {
   actual_weight: number | null;
   superset_group: string | null;
   training_max?: number | null;
+  progression_type?: string;
 };
+
+/** Bodyweight exercises carry no training max; weight is an optional added load. */
+export function isBodyweight(set: WorkoutSet): boolean {
+  return set.progression_type === "bodyweight";
+}
 
 export type WorkoutGroup = {
   index: number;
@@ -84,13 +90,16 @@ export function buildSummaryRows(
 
     const key = set.exercise_name;
     const reps = values[set.id] ?? set.actual_reps ?? set.rep_out_target;
+    const bw = isBodyweight(set);
+    // Bodyweight: no displayed load (shows "N reps"); tonnage counts only added weight.
+    const setWeight = bw ? (set.actual_weight ?? 0) : set.calculated_weight;
     const existing = rows.get(key);
     rows.set(key, {
       key,
       exerciseName: set.exercise_name,
       reps: (existing?.reps ?? 0) + reps,
-      weight: existing && existing.weight !== set.calculated_weight ? null : set.calculated_weight,
-      tonnage: (existing?.tonnage ?? 0) + reps * set.calculated_weight,
+      weight: bw ? null : existing && existing.weight !== set.calculated_weight ? null : set.calculated_weight,
+      tonnage: (existing?.tonnage ?? 0) + reps * setWeight,
     });
   }
 

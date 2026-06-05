@@ -10,6 +10,7 @@ import {
   buildSummaryRows,
   formatTonnage,
   groupExerciseNames,
+  isBodyweight,
   isFlatSingle,
   lastGroupIndex,
   summaryDetail,
@@ -56,6 +57,8 @@ export function WorkoutCard({
   const [session, setSession] = useState<SessionResponse | null>(null);
   const [currentGroupIdx, setCurrentGroupIdx] = useState(0);
   const [values, setValues] = useState<Record<number, number>>({});
+  // Optional added weight per set for bodyweight exercises (keyed by set id).
+  const [added, setAdded] = useState<Record<number, number>>({});
   const [completedSetIds, setCompletedSetIds] = useState<Set<number>>(new Set());
   const [error, setError] = useState("");
   const [submitting, setSubmitting] = useState(false);
@@ -129,13 +132,23 @@ export function WorkoutCard({
     setError("");
     setSaving(true);
 
+    // A flat bodyweight group shares one added-weight value (entered once) across
+    // all its sets; per-set groups use each set's own value.
+    const flatBwAdded =
+      isFlatSingle(currentGroup) && isBodyweight(currentGroup.sets[0])
+        ? (added[currentGroup.sets[0].id] ?? 0)
+        : null;
+
     try {
       for (const set of currentGroup.sets) {
         const setReps = values[set.id] ?? set.rep_out_target;
+        const actualWeight = isBodyweight(set)
+          ? (flatBwAdded ?? added[set.id] ?? 0)
+          : set.calculated_weight;
         const response = await fetch(`/api/sessions/${session.id}/sets`, {
           method: "PUT",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ setId: set.id, actualReps: setReps, actualWeight: set.calculated_weight }),
+          body: JSON.stringify({ setId: set.id, actualReps: setReps, actualWeight }),
         });
         if (!response.ok) {
           const body = (await response.json()) as { error?: string };
@@ -426,7 +439,9 @@ export function WorkoutCard({
                       {groupExerciseNames(currentGroup).join(" + ")}
                     </h3>
                   </div>
-                  {!currentGroup.supersetGroup && currentGroup.sets[0].training_max ? (
+                  {!currentGroup.supersetGroup &&
+                  currentGroup.sets[0].training_max &&
+                  !isBodyweight(currentGroup.sets[0]) ? (
                     <WorkoutTmEditor
                       key={currentGroup.sets[0].exercise_name}
                       sessionId={session.id}
@@ -440,28 +455,59 @@ export function WorkoutCard({
                 {isFlatSingle(currentGroup) ? (
                   <>
                     <div className="mt-2.5 flex items-end gap-2.5">
-                      <span className="display text-5xl leading-none">
-                        {currentGroup.sets[0].calculated_weight}
-                      </span>
-                      <span className="mb-1 text-sm font-semibold text-muted">lb</span>
+                      {isBodyweight(currentGroup.sets[0]) ? (
+                        <span className="display text-5xl leading-none">
+                          BW
+                          {added[currentGroup.sets[0].id] ? (
+                            <span className="text-3xl text-muted"> +{added[currentGroup.sets[0].id]}</span>
+                          ) : null}
+                        </span>
+                      ) : (
+                        <>
+                          <span className="display text-5xl leading-none">
+                            {currentGroup.sets[0].calculated_weight}
+                          </span>
+                          <span className="mb-1 text-sm font-semibold text-muted">lb</span>
+                        </>
+                      )}
                       <span className="mb-1 ml-auto rounded-full bg-surface/80 px-2.5 py-1 font-display text-sm tracking-tight">
                         {currentGroup.sets.length} × {currentGroup.sets[0].reps}
                       </span>
                     </div>
 
                     {!allSetsInGroupLogged(currentGroup) ? (
-                      <label className="mt-4 flex flex-col gap-1.5">
-                        <span className="eyebrow text-[10px] text-muted">Reps</span>
-                        <input
-                          type="number"
-                          value={values[currentSet.id] ?? currentSet.rep_out_target}
-                          onChange={(event) =>
-                            setValues({ ...values, [currentSet.id]: Number(event.target.value) })
-                          }
-                          min={0}
-                          className="touch-target w-full rounded-xl border border-line bg-surface px-3 py-3 text-center font-display text-3xl tracking-tight outline-none transition-colors focus:border-brand"
-                        />
-                      </label>
+                      <div className="mt-4 flex items-end gap-2.5">
+                        <label className="flex flex-1 flex-col gap-1.5">
+                          <span className="eyebrow text-[10px] text-muted">Reps</span>
+                          <input
+                            type="number"
+                            value={values[currentSet.id] ?? currentSet.rep_out_target}
+                            onChange={(event) =>
+                              setValues({ ...values, [currentSet.id]: Number(event.target.value) })
+                            }
+                            min={0}
+                            className="touch-target w-full rounded-xl border border-line bg-surface px-3 py-3 text-center font-display text-3xl tracking-tight outline-none transition-colors focus:border-brand"
+                          />
+                        </label>
+                        {isBodyweight(currentGroup.sets[0]) ? (
+                          <label className="flex w-28 flex-col gap-1.5">
+                            <span className="eyebrow text-[10px] text-muted">+ Weight</span>
+                            <input
+                              type="number"
+                              inputMode="decimal"
+                              min={0}
+                              step={0.5}
+                              placeholder="0"
+                              value={added[currentGroup.sets[0].id] ?? ""}
+                              onChange={(event) =>
+                                setAdded({ ...added, [currentGroup.sets[0].id]: Number(event.target.value) })
+                              }
+                              aria-label="Added weight"
+                              className="touch-target w-full rounded-xl border border-line bg-surface px-3 py-3 text-center font-display text-3xl tracking-tight outline-none transition-colors focus:border-brand"
+                            />
+                          </label>
+                        ) : null}
+                      </div>
                     ) : null}
                   </>
                 ) : (
@@ -474,25 +520,43 @@ export function WorkoutCard({
                           </p>
                           <p className="font-display text-xs tracking-tight text-muted">
                             {set.sets > 1 ? `${set.sets} × ` : ""}
-                            {set.reps} @ {set.calculated_weight} lb
+                            {set.reps} @{" "}
+                            {isBodyweight(set) ? `BW${added[set.id] ? ` +${added[set.id]}` : ""}` : `${set.calculated_weight} lb`}
                           </p>
                         </div>
                         {allSetsInGroupLogged(currentGroup) ? (
                           <Check aria-hidden="true" size={18} className="shrink-0 text-success" strokeWidth={3} />
                         ) : (
-                          <label className="flex shrink-0 items-center gap-1.5">
-                            <input
-                              type="number"
-                              min={0}
-                              value={values[set.id] ?? set.rep_out_target}
-                              onChange={(event) =>
-                                setValues({ ...values, [set.id]: Number(event.target.value) })
-                              }
-                              aria-label={`${set.exercise_name} reps`}
-                              className="touch-target w-16 rounded-xl border border-line bg-surface px-2 py-2 text-center font-display text-xl tracking-tight outline-none transition-colors focus:border-brand"
-                            />
-                            <span className="text-xs text-faint">reps</span>
-                          </label>
+                          <div className="flex shrink-0 items-center gap-1.5">
+                            {isBodyweight(set) ? (
+                              <label className="flex items-center gap-1">
+                                <input
+                                  type="number"
+                                  min={0}
+                                  step={0.5}
+                                  placeholder="0"
+                                  value={added[set.id] ?? ""}
+                                  onChange={(event) => setAdded({ ...added, [set.id]: Number(event.target.value) })}
+                                  aria-label={`${set.exercise_name} added weight`}
+                                  className="touch-target w-14 rounded-xl border border-line bg-surface px-2 py-2 text-center font-display text-xl tracking-tight outline-none transition-colors focus:border-brand"
+                                />
+                                <span className="text-xs text-faint">+lb</span>
+                              </label>
+                            ) : null}
+                            <label className="flex items-center gap-1.5">
+                              <input
+                                type="number"
+                                min={0}
+                                value={values[set.id] ?? set.rep_out_target}
+                                onChange={(event) =>
+                                  setValues({ ...values, [set.id]: Number(event.target.value) })
+                                }
+                                aria-label={`${set.exercise_name} reps`}
+                                className="touch-target w-16 rounded-xl border border-line bg-surface px-2 py-2 text-center font-display text-xl tracking-tight outline-none transition-colors focus:border-brand"
+                              />
+                              <span className="text-xs text-faint">reps</span>
+                            </label>
+                          </div>
                         )}
                       </div>
                     ))}

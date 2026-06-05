@@ -32,6 +32,7 @@ describe("training template registry", () => {
     const templates = listTrainingTemplates();
     expect(templates.map((template) => template.id)).toEqual([
       "custom",
+      "bodyweight",
       "linear",
       "double",
       "sbs",
