@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server";
+import { assertSameOrigin } from "@/lib/api";
 import { db } from "@/lib/db";
 import { createSession, hashPassword, setSessionCookie } from "@/lib/auth";
 import { isEmailAllowedToRegister } from "@/lib/registration";
@@ -18,6 +19,7 @@ function normalizeEmail(email: unknown): string | null {
 
 export async function POST(request: Request) {
   try {
+    assertSameOrigin(request);
     const limited = enforceAuthRateLimit(request, "register");
     if (limited) return limited;
 
@@ -33,8 +35,8 @@ export async function POST(request: Request) {
       return NextResponse.json({ error: "Registration is not open for this email" }, { status: 403 });
     }
 
-    if (typeof body.password !== "string" || body.password.length < 6) {
-      return NextResponse.json({ error: "Password must be at least 6 characters" }, { status: 400 });
+    if (typeof body.password !== "string" || body.password.length < 8) {
+      return NextResponse.json({ error: "Password must be at least 8 characters" }, { status: 400 });
     }
 
     const existing = db.prepare("SELECT id FROM users WHERE email = ?").get(email);
@@ -55,7 +57,10 @@ export async function POST(request: Request) {
     await setSessionCookie(token, expiresAt, request);
 
     return NextResponse.json({ id: userId, email }, { status: 201 });
-  } catch {
+  } catch (error) {
+    if (error instanceof Error && error.message === "Forbidden cross-origin request") {
+      return NextResponse.json({ error: error.message }, { status: 403 });
+    }
     return NextResponse.json({ error: "Registration failed" }, { status: 500 });
   }
 }

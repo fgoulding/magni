@@ -29,8 +29,8 @@ export async function POST(request: Request) {
     const currentPassword = typeof body.currentPassword === "string" ? body.currentPassword : "";
     const newPassword = typeof body.newPassword === "string" ? body.newPassword : "";
 
-    if (newPassword.length < 6) {
-      return jsonError("New password must be at least 6 characters", 400);
+    if (newPassword.length < 8) {
+      return jsonError("New password must be at least 8 characters", 400);
     }
 
     const row = db.prepare("SELECT password_hash FROM users WHERE id = ?").get(user.id) as

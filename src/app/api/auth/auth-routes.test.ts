@@ -173,7 +173,7 @@ describe("auth routes", () => {
     await expect(meResponse.json()).resolves.toMatchObject({ email: "me@example.com" });
 
     const token = cookieMock.store.get("auth_token");
-    const logoutResponse = await logoutRoute.POST();
+    const logoutResponse = await logoutRoute.POST(jsonRequest({}));
 
     expect(logoutResponse.status).toBe(200);
     expect(cookieMock.store.get("auth_token")).toBeUndefined();

@@ -1,19 +1,24 @@
 import type { NextConfig } from "next";
 
-// App-level security headers. TLS-dependent HSTS is added at the Caddy edge
-// (see Caddyfile) since the app itself runs HTTP behind the proxy.
-// React Refresh uses eval() in `next dev`; production builds don't, so only the
-// dev CSP allows 'unsafe-eval'. Everything else stays strict in both.
-const scriptSrc =
-  process.env.NODE_ENV === "production"
-    ? "script-src 'self' 'unsafe-inline'"
-    : "script-src 'self' 'unsafe-inline' 'unsafe-eval'";
+// App-level security headers. The public edge is Cloudflare (Tunnel), which
+// terminates TLS; Cloudflare's HSTS is OFF by default, so we emit HSTS from the
+// app itself (harmless when proxied over HTTPS). React Refresh uses eval() in
+// `next dev`; production builds don't, so only the dev CSP allows 'unsafe-eval'.
+const isProd = process.env.NODE_ENV === "production";
+const scriptSrc = isProd
+  ? "script-src 'self' 'unsafe-inline'"
+  : "script-src 'self' 'unsafe-inline' 'unsafe-eval'";
 
 const securityHeaders = [
   { key: "X-Content-Type-Options", value: "nosniff" },
   { key: "X-Frame-Options", value: "DENY" },
   { key: "Referrer-Policy", value: "strict-origin-when-cross-origin" },
   { key: "Permissions-Policy", value: "camera=(), microphone=(), geolocation=()" },
+  // Force HTTPS for two years. No `preload` (that's an apex-domain commitment);
+  // includeSubDomains is safe for this subdomain host. Only emitted in prod.
+  ...(isProd
+    ? [{ key: "Strict-Transport-Security", value: "max-age=63072000; includeSubDomains" }]
+    : []),
   {
     // Self-hosted only; no third-party scripts/styles. 'unsafe-inline' is
     // required for Next's hydration bootstrap + inline styles (nonce-based CSP

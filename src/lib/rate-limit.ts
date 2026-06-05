@@ -35,8 +35,16 @@ export function hitRateLimit(key: string, { limit, windowMs, now = Date.now() }:
   return { ok: true, retryAfter: 0 };
 }
 
-/** Best-effort client IP from the reverse proxy. Caddy/nginx set x-forwarded-for. */
+/**
+ * Trusted client IP. Behind Cloudflare, `CF-Connecting-IP` is set by the edge and
+ * is NOT client-spoofable — prefer it. `x-forwarded-for`'s leftmost hop is
+ * attacker-controlled (a client can send their own XFF), so only fall back to it
+ * when there is no Cloudflare header (local dev / other proxies). Using XFF first
+ * would let an attacker rotate the header and bypass the per-IP limit entirely.
+ */
 export function clientIp(request: Request): string {
+  const cf = request.headers.get("cf-connecting-ip");
+  if (cf) return cf.trim();
   const forwarded = request.headers.get("x-forwarded-for");
   if (forwarded) return forwarded.split(",")[0]!.trim();
   const real = request.headers.get("x-real-ip");

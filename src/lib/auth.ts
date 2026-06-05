@@ -20,8 +20,13 @@ export type AuthUser = {
   email: string;
 };
 
+// Pinned argon2id work factors (OWASP minimum: 19 MiB, t=2, p=1) so the cost is
+// explicit and immune to a future library default change. Params are embedded in
+// the hash, so existing hashes keep verifying.
+const ARGON2_OPTIONS = { type: argon2.argon2id, memoryCost: 19456, timeCost: 2, parallelism: 1 } as const;
+
 export async function hashPassword(password: string): Promise<string> {
-  return argon2.hash(password, { type: argon2.argon2id });
+  return argon2.hash(password, ARGON2_OPTIONS);
 }
 
 export async function verifyPassword(password: string, hash: string): Promise<boolean> {

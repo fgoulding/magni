@@ -28,7 +28,14 @@ describe("hitRateLimit", () => {
 });
 
 describe("clientIp", () => {
-  it("uses the first x-forwarded-for hop", () => {
+  it("prefers CF-Connecting-IP over spoofable x-forwarded-for", () => {
+    const req = new Request("http://x", {
+      headers: { "cf-connecting-ip": "9.9.9.9", "x-forwarded-for": "1.2.3.4" },
+    });
+    expect(clientIp(req)).toBe("9.9.9.9");
+  });
+
+  it("uses the first x-forwarded-for hop when no Cloudflare header", () => {
     const req = new Request("http://x", { headers: { "x-forwarded-for": "1.2.3.4, 10.0.0.1" } });
     expect(clientIp(req)).toBe("1.2.3.4");
   });

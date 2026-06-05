@@ -7,9 +7,9 @@
  * REGISTER_ALLOWLIST is a comma/space/newline-separated list of emails, e.g.
  *   REGISTER_ALLOWLIST="me@example.com, partner@example.com"
  *
- * If the var is unset or empty, registration is OPEN (convenient for local dev
- * and the test suite). In production you should always set it — see the
- * deployment guide.
+ * If the var is unset or empty, registration is OPEN in dev/test but FAILS CLOSED
+ * in production — a public instance must never silently allow strangers to
+ * register just because the owner forgot to set the allowlist. See the guide.
  */
 export function parseAllowlist(raw: string | undefined): Set<string> {
   if (!raw) return new Set();
@@ -24,7 +24,8 @@ export function parseAllowlist(raw: string | undefined): Set<string> {
 /** Whether `email` (already normalized to lowercase) may register. */
 export function isEmailAllowedToRegister(email: string, raw = process.env.REGISTER_ALLOWLIST): boolean {
   const allowlist = parseAllowlist(raw);
-  // Empty allowlist => open registration (dev/test). Set it to lock down prod.
-  if (allowlist.size === 0) return true;
+  // Empty allowlist => open in dev/test, but fail closed in production so an
+  // unset REGISTER_ALLOWLIST can't expose public sign-ups by accident.
+  if (allowlist.size === 0) return process.env.NODE_ENV !== "production";
   return allowlist.has(email.trim().toLowerCase());
 }

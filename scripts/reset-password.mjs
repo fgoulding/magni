@@ -44,13 +44,19 @@ const user = db
   .get(emailArg.trim());
 
 if (!user) {
-  console.error(`No user with email "${emailArg}".`);
-  const others = db.prepare("SELECT email FROM users ORDER BY email").all();
-  if (others.length) console.error("Known accounts: " + others.map((u) => u.email).join(", "));
+  // Don't print the account list — it would leak every registered email if this
+  // output is ever captured into logs. Show the count only.
+  const total = db.prepare("SELECT COUNT(*) AS n FROM users").get().n;
+  console.error(`No user with email "${emailArg}". (${total} account(s) exist.)`);
   process.exit(1);
 }
 
-const passwordHash = await argon2.hash(password, { type: argon2.argon2id });
+const passwordHash = await argon2.hash(password, {
+  type: argon2.argon2id,
+  memoryCost: 19456,
+  timeCost: 2,
+  parallelism: 1,
+});
 
 db.transaction(() => {
   db.prepare("UPDATE users SET password_hash = ? WHERE id = ?").run(passwordHash, user.id);
