@@ -1,4 +1,3 @@
-import { btmTemplate } from "@/features/training-templates/templates/btm";
 import { customTemplate } from "@/features/training-templates/templates/custom";
 import { doubleTemplate } from "@/features/training-templates/templates/double";
 import { linearTemplate } from "@/features/training-templates/templates/linear";
@@ -14,7 +13,6 @@ const TRAINING_TEMPLATES = [
   doubleTemplate,
   sbsTemplate,
   madcowTemplate,
-  btmTemplate,
 ] as const satisfies readonly TrainingTemplate[];
 
 function copyWeeks(weeks: readonly TemplateWeek[] | undefined): readonly TemplateWeek[] {

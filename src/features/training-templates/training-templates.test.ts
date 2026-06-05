@@ -5,7 +5,6 @@ import {
   isTrainingTemplateId,
   listTrainingTemplates,
 } from "@/features/training-templates/registry";
-import { btmTemplate } from "@/features/training-templates/templates/btm";
 import { customTemplate } from "@/features/training-templates/templates/custom";
 import { madcowTemplate } from "@/features/training-templates/templates/madcow";
 import { sbsTemplate } from "@/features/training-templates/templates/sbs";
@@ -19,15 +18,14 @@ type DirectTemplateWeekArraysAreReadonly = [
   Assert<IsReadonlyArray<typeof sbsTemplate.weeksByCategory.main>>,
   Assert<IsReadonlyArray<typeof sbsTemplate.weeksByCategory.aux>>,
   Assert<IsReadonlyArray<typeof madcowTemplate.weeksByCategory.main>>,
-  Assert<IsReadonlyArray<typeof btmTemplate.weeksByCategory.main>>,
 ];
 
 describe("training template registry", () => {
   it("types direct built-in template week arrays as readonly", () => {
     const directTemplateWeekArraysAreReadonly: DirectTemplateWeekArraysAreReadonly = [
-      true, true, true, true, true,
+      true, true, true, true,
     ];
-    expect(directTemplateWeekArraysAreReadonly).toHaveLength(5);
+    expect(directTemplateWeekArraysAreReadonly).toHaveLength(4);
   });
 
   it("lists templates with unique ids and contributor-facing metadata", () => {
@@ -38,7 +36,6 @@ describe("training template registry", () => {
       "double",
       "sbs",
       "madcow",
-      "btm",
     ]);
     expect(new Set(templates.map((template) => template.id)).size).toBe(templates.length);
     expect(templates.every((template) => template.name && template.description)).toBe(true);
@@ -59,9 +56,6 @@ describe("training template registry", () => {
     const madcowMain = getTemplateWeeks("madcow", "main");
     expect(madcowMain).toHaveLength(1);
     expect(madcowMain[0].ramp![4]).toEqual({ setNumber: 5, intensityPct: 1.0, reps: 5, repOutTarget: 5 });
-
-    const btmMain = getTemplateWeeks("btm", "main");
-    expect(btmMain[0].ramp![0]).toEqual({ setNumber: 1, intensityPct: 0.7, reps: 5, repOutTarget: 7 });
 
     const linearMain = getTemplateWeeks("linear", "main");
     expect(linearMain[0].ramp).toHaveLength(3);

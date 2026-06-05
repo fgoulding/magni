@@ -13,7 +13,7 @@ function flatRamp(sets: number, reps: number, intensityPct: number, repOutTarget
 export const linearTemplate = defineTrainingTemplate({
   id: "linear",
   name: "Linear",
-  description: "Flat sets with fixed weight increases on completion.",
+  description: "Add a fixed amount each time you complete all your reps.",
   supportedCategories: ["main", "aux", "accessory"],
   autoProgression: true,
   weeksByCategory: {

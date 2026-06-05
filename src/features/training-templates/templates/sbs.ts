@@ -32,8 +32,8 @@ const SBS_AUX_RAMP = [
 
 export const sbsTemplate = defineTrainingTemplate({
   id: "sbs",
-  name: "SBS",
-  description: "AMRAP-based strength progression with main and auxiliary loading.",
+  name: "SBS (reps to failure)",
+  description: "Last set is AMRAP; your training max adjusts to how far you beat the rep target.",
   supportedCategories: ["main", "aux"],
   autoProgression: true,
   weeksByCategory: {

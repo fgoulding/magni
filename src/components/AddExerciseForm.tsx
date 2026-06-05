@@ -16,6 +16,7 @@ export function AddExerciseForm({ dayId }: { dayId: number }) {
   const [error, setError] = useState("");
   const [submitting, setSubmitting] = useState(false);
   const router = useRouter();
+  const selectedTemplate = trainingTemplates.find((template) => template.id === progressionType);
 
   async function submit(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -92,6 +93,9 @@ export function AddExerciseForm({ dayId }: { dayId: number }) {
           Add
         </button>
       </div>
+      {selectedTemplate ? (
+        <p className="-mt-1 text-xs leading-5 text-muted">{selectedTemplate.description}</p>
+      ) : null}
     </form>
   );
 }

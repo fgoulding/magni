@@ -68,6 +68,27 @@ describe("template progression rules", () => {
     ).toBe(5);
   });
 
+  it("advances madcow only on hitting reps and never drops on a miss", () => {
+    expect(
+      calculateTemplateTrainingMaxDelta({
+        templateId: "madcow",
+        actualReps: 5,
+        repOutTarget: 5,
+        category: "main",
+        currentTrainingMax: 300,
+      }),
+    ).toBe(5);
+    expect(
+      calculateTemplateTrainingMaxDelta({
+        templateId: "madcow",
+        actualReps: 3,
+        repOutTarget: 5,
+        category: "main",
+        currentTrainingMax: 300,
+      }),
+    ).toBe(0);
+  });
+
   it("falls back to category progression for unknown stored template ids", () => {
     expect(
       calculateTemplateTrainingMaxDelta({

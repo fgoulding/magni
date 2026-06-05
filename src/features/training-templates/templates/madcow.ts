@@ -3,10 +3,16 @@ import type { TrainingTemplate } from "@/features/training-templates/types";
 
 export const madcowTemplate = defineTrainingTemplate({
   id: "madcow",
-  name: "Madcow",
-  description: "Ramp sets with heavy-light-medium progression. Top set increases weekly.",
+  name: "Madcow 5×5",
+  description: "Ramps to a heavy top set; the weight goes up only when you hit all your reps.",
   supportedCategories: ["main"],
   autoProgression: true,
+  progression: {
+    // Only advance when the top set hits its rep target — never drop the weight
+    // on a miss (matches Linear's behaviour).
+    calculateTrainingMaxDelta: (context) =>
+      context.actualReps >= context.repOutTarget ? 5 : 0,
+  },
   weeksByCategory: {
     main: [
       {
