@@ -478,6 +478,46 @@ export function getProgramDetailForUser(legacyProgramId: number, userId: number)
         if (ex.superset_group) supersetCounts.set(ex.superset_group, (supersetCounts.get(ex.superset_group) ?? 0) + 1);
       }
 
+      // Fetch every exercise's week settings for this day in one query (was an
+      // N+1: one query per exercise), then group by exercise id in JS.
+      type WeekSettingRow = {
+        id: number;
+        exercise_id: number;
+        week_number: number;
+        set_number: number;
+        intensity_pct: number;
+        reps: number;
+        sets: number;
+        rep_out_target: number;
+      };
+      const weekSettingsByExercise = new Map<number, WeekSettingRow[]>();
+      if (exercises.length > 0) {
+        const placeholders = exercises.map(() => "?").join(",");
+        const allWeekSettings = db
+          .prepare(
+            `
+              SELECT
+                id,
+                program_definition_exercise_id AS exercise_id,
+                week_number,
+                set_number,
+                intensity_pct,
+                reps,
+                sets,
+                rep_out_target
+              FROM program_definition_week_settings
+              WHERE program_definition_exercise_id IN (${placeholders})
+              ORDER BY program_definition_exercise_id, week_number, set_number
+            `,
+          )
+          .all(...exercises.map((ex) => ex.definition_exercise_id)) as WeekSettingRow[];
+        for (const setting of allWeekSettings) {
+          const list = weekSettingsByExercise.get(setting.exercise_id);
+          if (list) list.push(setting);
+          else weekSettingsByExercise.set(setting.exercise_id, [setting]);
+        }
+      }
+
       return {
         id: day.legacy_day_id ?? day.definition_day_id,
         name: day.name,
@@ -486,33 +526,7 @@ export function getProgramDetailForUser(legacyProgramId: number, userId: number)
         shared_day_key: day.stable_key,
         exercises: exercises.map((exercise) => {
           const trainingMax = exercise.expected_max ?? 100;
-          const weekSettings = db
-            .prepare(
-              `
-                SELECT
-                  id,
-                  program_definition_exercise_id AS exercise_id,
-                  week_number,
-                  set_number,
-                  intensity_pct,
-                  reps,
-                  sets,
-                  rep_out_target
-                FROM program_definition_week_settings
-                WHERE program_definition_exercise_id = ?
-                ORDER BY week_number, set_number
-              `,
-            )
-            .all(exercise.definition_exercise_id) as {
-            id: number;
-            exercise_id: number;
-            week_number: number;
-            set_number: number;
-            intensity_pct: number;
-            reps: number;
-            sets: number;
-            rep_out_target: number;
-          }[];
+          const weekSettings = weekSettingsByExercise.get(exercise.definition_exercise_id) ?? [];
 
           return {
             id: exercise.legacy_exercise_id ?? exercise.definition_exercise_id,
@@ -779,37 +793,6 @@ export function getProgramRunHoldsForRange({
   return rows.map(mapProgramRunHold);
 }
 
-export function getCurrentOrUpcomingProgramRunHold(userId: number, legacyProgramId: number, today = new Date()): ProgramRunHold | null {
-  const context = assertProgramContext(legacyProgramId, userId);
-  const todayKey = toLocalDateKey(today);
-  const row = db
-    .prepare(
-      `
-        SELECT id, program_run_id, user_id, start_date, end_date, reason, canceled_at
-        FROM program_run_holds
-        WHERE user_id = ?
-          AND program_run_id = ?
-          AND canceled_at IS NULL
-          AND end_date >= ?
-        ORDER BY start_date, id
-        LIMIT 1
-      `,
-    )
-    .get(userId, context.runId, todayKey) as
-    | {
-        id: number;
-        program_run_id: number;
-        user_id: number;
-        start_date: string;
-        end_date: string;
-        reason: string;
-        canceled_at: string | null;
-      }
-    | undefined;
-
-  return row ? mapProgramRunHold(row) : null;
-}
-
 export const createProgramRunHold = db.transaction(
   ({
     userId,
@@ -1026,10 +1009,6 @@ export function getProgramLibrary(userId: number): ProgramLibrary {
     activeRuns: rows.filter((row) => row.is_active === 1),
     definitions: rows,
   };
-}
-
-export function getProgramRunOverview(userId: number, legacyProgramId: number): ProgramDetail | null {
-  return getProgramDetailForUser(legacyProgramId, userId);
 }
 
 export const createProgramRun = db.transaction(

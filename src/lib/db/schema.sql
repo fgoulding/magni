@@ -293,3 +293,5 @@ CREATE INDEX IF NOT EXISTS idx_week_settings_exercise_week ON week_settings(exer
 CREATE INDEX IF NOT EXISTS idx_shared_program_members_user ON shared_program_members(user_id);
 CREATE INDEX IF NOT EXISTS idx_program_definitions_owner ON program_definitions(owner_user_id);
 CREATE INDEX IF NOT EXISTS idx_program_runs_user_status ON program_runs(user_id, status);
+CREATE INDEX IF NOT EXISTS idx_pde_day ON program_definition_exercises(program_definition_day_id, archived_at);
+CREATE INDEX IF NOT EXISTS idx_pdd_definition ON program_definition_days(program_definition_id, archived_at);

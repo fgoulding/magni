@@ -132,19 +132,11 @@ export function WorkoutCard({
     setError("");
     setSaving(true);
 
-    // A flat bodyweight group shares one added-weight value (entered once) across
-    // all its sets; per-set groups use each set's own value.
-    const flatBwAdded =
-      isFlatSingle(currentGroup) && isBodyweight(currentGroup.sets[0])
-        ? (added[currentGroup.sets[0].id] ?? 0)
-        : null;
-
     try {
       for (const set of currentGroup.sets) {
         const setReps = values[set.id] ?? set.rep_out_target;
-        const actualWeight = isBodyweight(set)
-          ? (flatBwAdded ?? added[set.id] ?? 0)
-          : set.calculated_weight;
+        // Bodyweight renders per-set (never flat-single), so each set has its own added weight.
+        const actualWeight = isBodyweight(set) ? (added[set.id] ?? 0) : set.calculated_weight;
         const response = await fetch(`/api/sessions/${session.id}/sets`, {
           method: "PUT",
           headers: { "Content-Type": "application/json" },
@@ -455,59 +447,28 @@ export function WorkoutCard({
                 {isFlatSingle(currentGroup) ? (
                   <>
                     <div className="mt-2.5 flex items-end gap-2.5">
-                      {isBodyweight(currentGroup.sets[0]) ? (
-                        <span className="display text-5xl leading-none">
-                          BW
-                          {added[currentGroup.sets[0].id] ? (
-                            <span className="text-3xl text-muted"> +{added[currentGroup.sets[0].id]}</span>
-                          ) : null}
-                        </span>
-                      ) : (
-                        <>
-                          <span className="display text-5xl leading-none">
-                            {currentGroup.sets[0].calculated_weight}
-                          </span>
-                          <span className="mb-1 text-sm font-semibold text-muted">lb</span>
-                        </>
-                      )}
+                      <span className="display text-5xl leading-none">
+                        {currentGroup.sets[0].calculated_weight}
+                      </span>
+                      <span className="mb-1 text-sm font-semibold text-muted">lb</span>
                       <span className="mb-1 ml-auto rounded-full bg-surface/80 px-2.5 py-1 font-display text-sm tracking-tight">
                         {currentGroup.sets.length} × {currentGroup.sets[0].reps}
                       </span>
                     </div>
 
                     {!allSetsInGroupLogged(currentGroup) ? (
-                      <div className="mt-4 flex items-end gap-2.5">
-                        <label className="flex flex-1 flex-col gap-1.5">
-                          <span className="eyebrow text-[10px] text-muted">Reps</span>
-                          <input
-                            type="number"
-                            value={values[currentSet.id] ?? currentSet.rep_out_target}
-                            onChange={(event) =>
-                              setValues({ ...values, [currentSet.id]: Number(event.target.value) })
-                            }
-                            min={0}
-                            className="touch-target w-full rounded-xl border border-line bg-surface px-3 py-3 text-center font-display text-3xl tracking-tight outline-none transition-colors focus:border-brand"
-                          />
-                        </label>
-                        {isBodyweight(currentGroup.sets[0]) ? (
-                          <label className="flex w-28 flex-col gap-1.5">
-                            <span className="eyebrow text-[10px] text-muted">+ Weight</span>
-                            <input
-                              type="number"
-                              inputMode="decimal"
-                              min={0}
-                              step={0.5}
-                              placeholder="0"
-                              value={added[currentGroup.sets[0].id] ?? ""}
-                              onChange={(event) =>
-                                setAdded({ ...added, [currentGroup.sets[0].id]: Number(event.target.value) })
-                              }
-                              aria-label="Added weight"
-                              className="touch-target w-full rounded-xl border border-line bg-surface px-3 py-3 text-center font-display text-3xl tracking-tight outline-none transition-colors focus:border-brand"
-                            />
-                          </label>
-                        ) : null}
-                      </div>
+                      <label className="mt-4 flex flex-col gap-1.5">
+                        <span className="eyebrow text-[10px] text-muted">Reps</span>
+                        <input
+                          type="number"
+                          value={values[currentSet.id] ?? currentSet.rep_out_target}
+                          onChange={(event) =>
+                            setValues({ ...values, [currentSet.id]: Number(event.target.value) })
+                          }
+                          min={0}
+                          className="touch-target w-full rounded-xl border border-line bg-surface px-3 py-3 text-center font-display text-3xl tracking-tight outline-none transition-colors focus:border-brand"
+                        />
+                      </label>
                     ) : null}
                   </>
                 ) : (
