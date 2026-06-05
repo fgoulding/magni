@@ -282,6 +282,45 @@ describe("program service", () => {
     expect(dashboard.scheduledToday).toEqual([]);
   });
 
+  it("does not shift the schedule across a pause — each weekday keeps its own workout", () => {
+    const userId = createUser("service-hold-noshift@example.com");
+    const created = service.createProgramRun({ userId, name: "No Shift", numWeeks: 4 });
+    // 3 days, scheduled Mon/Tue/Wed → Day 1 = Mon, Day 2 = Tue, Day 3 = Wed.
+    for (const name of ["Mon Day", "Tue Day", "Wed Day"]) {
+      const day = service.addDefinitionDayForRun({ userId, legacyProgramId: created.legacyProgramId, name });
+      service.addDefinitionExerciseForDay({
+        userId,
+        legacyDayId: day.legacyDayId,
+        name: `${name} Squat`,
+        trainingMax: 200,
+        category: "main",
+        progressionType: "linear",
+      });
+    }
+    service.updateProgramRun({ userId, legacyProgramId: created.legacyProgramId, scheduleWeekdays: [1, 2, 3] });
+
+    // Pause Monday only (2026-06-01 is a Monday).
+    service.createProgramRunHold({
+      userId,
+      legacyProgramId: created.legacyProgramId,
+      startDate: "2026-06-01",
+      endDate: "2026-06-01",
+    });
+
+    // Monday's workout is suppressed (paused) and not nagged as missed.
+    const monday = service.getTodayWorkoutDashboard(userId, new Date("2026-06-01T12:00:00-07:00"));
+    expect(monday.scheduledToday).toEqual([]);
+
+    // Tuesday shows TUESDAY's workout (Day 2), at the SAME week — Monday's Day 1
+    // does NOT shift onto Tuesday, and Monday isn't counted as missed.
+    const tuesday = service.getTodayWorkoutDashboard(userId, new Date("2026-06-02T12:00:00-07:00"));
+    expect(tuesday.scheduledToday).toHaveLength(1);
+    expect(tuesday.scheduledToday[0].day_number).toBe(2);
+    expect(tuesday.scheduledToday[0].day_name).toBe("Tue Day");
+    expect(tuesday.scheduledToday[0].current_week).toBe(1);
+    expect(tuesday.missedWorkouts).toEqual([]);
+  });
+
   it("builds a Today dashboard with scheduled workout preview and last session", () => {
     const userId = createUser("service-today@example.com");
     const created = service.createProgramRun({ userId, name: "Dashboard Strength", numWeeks: 4 });
