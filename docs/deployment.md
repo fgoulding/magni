@@ -11,21 +11,23 @@ the open code from your running instance.
 ```
  PUBLIC app repo (this one)            PRIVATE deploy repo (your server)
  ─────────────────────────            ────────────────────────────────
- source, Dockerfile, CI               docker-compose.yml + .env + Caddyfile
+ source, Dockerfile, CI               docker-compose.yml + .env
         │                                        ▲
-        │ tag v1.2.3 → CI builds                 │ docker login + pull, then up -d
+        │ push main → CI builds :latest          │ Watchtower auto-pulls + redeploys
         ▼                                        │
-   ghcr.io/OWNER/REPO:v1.2.3  ───────────────────┘   (private image)
+   ghcr.io/OWNER/REPO  ──────────────────────────┘   (private image)
                                                  │
-                              Caddy (TLS) ──► app ──► /data/workouts.db  (named volume)
+                cloudflared (outbound tunnel) ──► app ──► /data/workouts.db (volume)
 ```
 
 - **Public repo** = source + `Dockerfile` + CI that publishes a private image to
   GHCR. No domain, no secrets, no deploy state. Also ships a from-source
   `docker-compose.yml` so anyone can try it locally.
-- **Private deploy repo** = the `deploy/` folder, copied out. Holds your domain,
-  allowlist, and Caddy config; runs the published image. Your server never
-  clones the public source. Full setup: [`deploy/README.md`](../deploy/README.md).
+- **Private deploy repo** = the `deploy/` folder, copied out. Holds your tunnel
+  token and allowlist; runs the published image. Your server never clones the
+  public source. Full setup: [`deploy/README.md`](../deploy/README.md).
+- **Edge** = a **Cloudflare Tunnel** (`cloudflared`) makes an *outbound* connection
+  and Cloudflare terminates TLS — so no inbound ports are opened on the host.
 
 ---
 
@@ -69,11 +71,12 @@ Nothing secret is in the public repo:
 
 See [`deploy/README.md`](../deploy/README.md) for the full walkthrough. In short:
 
-1. Copy `deploy/` into a **private** repo (e.g. `workouts-deploy`).
-2. On the server: `cp .env.example .env`, set `IMAGE`, `DOMAIN`, `REGISTER_ALLOWLIST`.
-3. `docker login ghcr.io` with a `read:packages` PAT (image is private).
-4. Point DNS at the box, open 80/443, then `docker compose pull && docker compose up -d`.
-5. Register your account at `https://DOMAIN/register` (allowlisted emails only).
+1. Copy `deploy/` into a **private** repo (e.g. `magni-deploy`).
+2. On the server: `cp .env.example .env`, set `IMAGE`, `TUNNEL_TOKEN`, `REGISTER_ALLOWLIST`.
+3. `docker login ghcr.io` with a `read:packages` PAT (only if the image is private).
+4. Create the Cloudflare Tunnel + public hostname → `http://app:3000` (no router
+   ports needed), then `docker compose pull && docker compose up -d`.
+5. Register your account at `https://YOUR_HOST/register` (allowlisted emails only).
 
 ---
 
@@ -81,15 +84,16 @@ See [`deploy/README.md`](../deploy/README.md) for the full walkthrough. In short
 
 ```
 edit code → PR → merge to main (public repo)
-        → git tag vX.Y.Z && git push --tags     # CI builds + pushes the image
-        → on server: bump IMAGE in .env, docker compose pull && up -d
+        → CI builds + pushes ghcr.io/OWNER/REPO:latest
+        → Watchtower on the server auto-pulls it and redeploys (~minutes)
 ```
 
-The `app_data` volume carries history forward; migrations apply on boot. Roll
-back by pointing `IMAGE` at an older tag and re-running (migrations are
-forward-only — restore a DB backup if a migration changed the schema).
+Tag `vX.Y.Z` as well when you want a pinned, rollback-able release. The
+`app_data` volume carries history forward; migrations apply on boot. Roll back
+by pinning `IMAGE` to an older tag (and pausing Watchtower) — migrations are
+forward-only, so restore a DB backup if one changed the schema.
 
-**Try changes from source locally** (no registry, no Caddy) with the root
+**Try changes from source locally** (no registry, no tunnel) with the root
 compose: `docker compose up -d --build` → http://localhost:3000.
 
 ---
@@ -118,8 +122,8 @@ once so you trust your backups.
 
 | Control | Where |
 |---|---|
-| HTTPS + auto-renew, HSTS, server header stripped | Caddy / `deploy/Caddyfile` |
-| Security headers (CSP, `X-Frame-Options: DENY`, `nosniff`, referrer, permissions) | `next.config.ts` |
+| HTTPS / TLS termination at the edge (no inbound ports) | Cloudflare Tunnel (`cloudflared`) |
+| HSTS + security headers (CSP, `X-Frame-Options: DENY`, `nosniff`, referrer, permissions) | `next.config.ts` |
 | Registration allowlist — you control who signs up | `REGISTER_ALLOWLIST` |
 | Brute-force rate limiting on `/login` + `/register` (prod only) | `src/lib/rate-limit.ts` |
 | argon2id hashing, server-side opaque sessions | `src/lib/auth.ts` |

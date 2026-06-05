@@ -1,3 +1,4 @@
+import { Download } from "lucide-react";
 import { redirect } from "next/navigation";
 import { ChangePasswordForm } from "@/components/ChangePasswordForm";
 import { LogoutButton } from "@/components/LogoutButton";
@@ -35,6 +36,21 @@ export default async function SettingsPage() {
         <div className="mt-4">
           <ChangePasswordForm />
         </div>
+      </details>
+
+      <details className="card p-4">
+        <summary className="display cursor-pointer list-none text-lg">Your data</summary>
+        <p className="mt-1 text-sm text-muted">
+          Download your full logged history as a CSV spreadsheet — one row per set.
+        </p>
+        <a
+          href="/api/export"
+          download
+          className="touch-target mt-4 inline-flex items-center justify-center gap-2 rounded-xl border border-line bg-surface px-4 text-sm font-semibold text-foreground transition-colors active:bg-surface-muted"
+        >
+          <Download aria-hidden="true" size={16} />
+          Export history (CSV)
+        </a>
       </details>
     </div>
   );
