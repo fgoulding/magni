@@ -25,6 +25,7 @@ import { useState } from "react";
 import { DeleteButton } from "@/components/DeleteButton";
 import { ExerciseNameEditor } from "@/components/ExerciseNameEditor";
 import { ExerciseTypeEditor } from "@/components/ExerciseTypeEditor";
+import { ManualWeeklyWeights } from "@/components/ManualWeeklyWeights";
 import { TrainingMaxEditor } from "@/components/TrainingMaxEditor";
 
 export type EditableExercise = {
@@ -510,6 +511,7 @@ function ExerciseRow({
   const [editing, setEditing] = useState(false);
   const progression = PROGRESSION_SHORT[exercise.progression_type] ?? titleCase(exercise.progression_type);
   const isBw = exercise.progression_type === "bodyweight";
+  const isCustom = exercise.progression_type === "custom";
 
   return (
     <>
@@ -554,7 +556,7 @@ function ExerciseRow({
 
       <p className="mt-1 pl-[22px] text-xs text-muted">
         {titleCase(exercise.category)} · {progression}
-        {isBw ? null : (
+        {isBw || isCustom ? null : (
           <>
             {" · "}
             <span className="font-display tracking-tight">TM {exercise.training_max}</span>
@@ -569,12 +571,13 @@ function ExerciseRow({
             category={exercise.category}
             progressionType={exercise.progression_type}
           />
-          {isBw ? null : (
+          {isBw || isCustom ? null : (
             <div className="mt-2 flex items-center gap-1.5 text-xs font-semibold text-faint">
               TM
               <TrainingMaxEditor exerciseId={exercise.id} initialValue={exercise.training_max} />
             </div>
           )}
+          {isCustom ? <ManualWeeklyWeights exerciseId={exercise.id} /> : null}
         </div>
       ) : null}
     </>

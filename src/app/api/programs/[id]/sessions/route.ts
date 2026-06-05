@@ -222,6 +222,7 @@ export async function POST(request: Request, context: RouteContext) {
               pdws.reps,
               pdws.sets,
               pdws.rep_out_target,
+              pdws.weight,
               COALESCE(prx.expected_max, 100) AS training_max
             FROM program_definition_days pdd
             JOIN program_definition_exercises pde
@@ -268,6 +269,7 @@ export async function POST(request: Request, context: RouteContext) {
         reps: number;
         sets: number;
         rep_out_target: number;
+        weight: number | null;
         training_max: number;
       }[];
       if (weekSettings.length === 0) {
@@ -349,7 +351,7 @@ export async function POST(request: Request, context: RouteContext) {
           weekSetting.reps,
           weekSetting.sets,
           weekSetting.rep_out_target,
-          calculateWeight(weekSetting.training_max, weekSetting.intensity_pct, rounding),
+          weekSetting.weight ?? calculateWeight(weekSetting.training_max, weekSetting.intensity_pct, rounding),
           weekSetting.training_max,
           weekSetting.progression_type === "custom" || weekSetting.progression_type === "bodyweight" ? 0 : 1,
         );

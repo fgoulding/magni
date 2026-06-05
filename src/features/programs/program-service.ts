@@ -326,9 +326,12 @@ function syncScheduleDays(runId: number, scheduleWeekdays: readonly number[] | u
 }
 
 function templateWeekFor(weeks: readonly TemplateWeek[], week: number): TemplateWeek {
+  // Manual (custom) lifts have no template weeks, so they fall back to this:
+  // intensity 1.0 means the weight equals the entered number (no 0.7 scaling),
+  // which doubles as the editable per-week starting recommendation.
   return weeks.length > 0
     ? weeks[(week - 1) % weeks.length]
-    : { weekNumber: 1, intensityPct: 0.7, reps: 5, sets: 5, repOutTarget: 10 };
+    : { weekNumber: 1, intensityPct: 1, reps: 5, sets: 5, repOutTarget: 10 };
 }
 
 export function getProgramDetailForUser(legacyProgramId: number, userId: number): ProgramDetail | null {
@@ -489,6 +492,7 @@ export function getProgramDetailForUser(legacyProgramId: number, userId: number)
         reps: number;
         sets: number;
         rep_out_target: number;
+        weight: number | null;
       };
       const weekSettingsByExercise = new Map<number, WeekSettingRow[]>();
       if (exercises.length > 0) {
@@ -504,7 +508,8 @@ export function getProgramDetailForUser(legacyProgramId: number, userId: number)
                 intensity_pct,
                 reps,
                 sets,
-                rep_out_target
+                rep_out_target,
+                weight
               FROM program_definition_week_settings
               WHERE program_definition_exercise_id IN (${placeholders})
               ORDER BY program_definition_exercise_id, week_number, set_number
@@ -544,7 +549,8 @@ export function getProgramDetailForUser(legacyProgramId: number, userId: number)
                 : null,
             weekSettings: weekSettings.map((setting) => ({
               ...setting,
-              calculated_weight: calculateWeight(trainingMax, setting.intensity_pct, rounding),
+              calculated_weight:
+                setting.weight ?? calculateWeight(trainingMax, setting.intensity_pct, rounding),
             })),
           };
         }),

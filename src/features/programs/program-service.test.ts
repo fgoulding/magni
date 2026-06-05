@@ -277,6 +277,26 @@ describe("program service", () => {
     ]);
   });
 
+  it("materialises a manual (custom) exercise at full intensity so weight equals the entered number", () => {
+    const userId = createUser("service-manual@example.com");
+    const created = service.createProgramRun({ userId, name: "Manual", numWeeks: 4 });
+    const day = service.addDefinitionDayForRun({ userId, legacyProgramId: created.legacyProgramId, name: "Day" });
+    service.addDefinitionExerciseForDay({
+      userId,
+      legacyDayId: day.legacyDayId,
+      name: "Press",
+      trainingMax: 135,
+      category: "accessory",
+      progressionType: "custom",
+    });
+
+    const detail = service.getProgramDetailForUser(created.legacyProgramId, userId);
+    const press = detail!.days[0].exercises.find((exercise) => exercise.name === "Press")!;
+    // No 0.7 scaling: a manual lift's weight is the number entered, every week.
+    expect(press.weekSettings.length).toBeGreaterThan(0);
+    expect(press.weekSettings.every((week) => week.calculated_weight === 135)).toBe(true);
+  });
+
   it("creates and cancels dated holds for one owned run", () => {
     const userId = createUser("service-hold@example.com");
     const first = service.createProgramRun({ userId, name: "Rack Program", numWeeks: 7 });

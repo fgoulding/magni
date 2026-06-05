@@ -984,6 +984,9 @@ export function runMigrations(db: Database.Database): void {
   addColumn(db, "sessions", "skip_reason TEXT NOT NULL DEFAULT ''");
   addColumn(db, "sessions", "shared_program_version_id INTEGER REFERENCES shared_program_versions(id)");
   addColumn(db, "sessions", "scheduled_date TEXT");
+  // Per-week absolute weight override for manual exercises. NULL = derive from
+  // training_max × intensity_pct (the default for auto-progressing templates).
+  addColumn(db, "program_definition_week_settings", "weight REAL");
   ensureSessionsUseDurableContext(db);
   ensureSessionSetsUseNativeSnapshots(db);
   db.exec(`
