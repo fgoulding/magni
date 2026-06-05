@@ -1144,6 +1144,8 @@ export const addDefinitionExerciseForDay = db.transaction(
     trainingMax,
     category,
     progressionType,
+    setCount,
+    repCount,
   }: {
     userId: number;
     legacyDayId: number;
@@ -1151,6 +1153,9 @@ export const addDefinitionExerciseForDay = db.transaction(
     trainingMax: number;
     category: ExerciseCategory;
     progressionType?: string;
+    /** For manual templates (e.g. bodyweight): materialise N individual sets of repCount. */
+    setCount?: number;
+    repCount?: number;
   }): CreatedDefinitionExercise => {
     const context = assertDayContext(legacyDayId, userId);
     const templateId = normalizeTemplateId(progressionType);
@@ -1246,25 +1251,40 @@ export const addDefinitionExerciseForDay = db.transaction(
       `,
     );
 
+    // A manual template (empty weeks) with explicit set/rep counts (bodyweight)
+    // materialises as N individual sets so each is loggable.
+    const manualSets =
+      templateWeeks.length === 0 && setCount && setCount > 0
+        ? Array.from({ length: Math.min(setCount, 20) }, (_, i) => ({
+            setNumber: i + 1,
+            intensityPct: 0,
+            reps: repCount && repCount > 0 ? repCount : 10,
+            sets: 1,
+            repOutTarget: repCount && repCount > 0 ? repCount : 10,
+          }))
+        : null;
+
     for (let week = 1; week <= context.numWeeks; week++) {
       const templateWeek = templateWeekFor(templateWeeks, week);
-      const sets = templateWeek.ramp && templateWeek.ramp.length > 0
-        ? templateWeek.ramp.map((rampSet) => ({
-            setNumber: rampSet.setNumber,
-            intensityPct: rampSet.intensityPct,
-            reps: rampSet.reps,
-            sets: 1,
-            repOutTarget: rampSet.repOutTarget,
-          }))
-        : [
-            {
-              setNumber: 1,
-              intensityPct: templateWeek.intensityPct,
-              reps: templateWeek.reps,
-              sets: templateWeek.sets,
-              repOutTarget: templateWeek.repOutTarget,
-            },
-          ];
+      const sets =
+        manualSets ??
+        (templateWeek.ramp && templateWeek.ramp.length > 0
+          ? templateWeek.ramp.map((rampSet) => ({
+              setNumber: rampSet.setNumber,
+              intensityPct: rampSet.intensityPct,
+              reps: rampSet.reps,
+              sets: 1,
+              repOutTarget: rampSet.repOutTarget,
+            }))
+          : [
+              {
+                setNumber: 1,
+                intensityPct: templateWeek.intensityPct,
+                reps: templateWeek.reps,
+                sets: templateWeek.sets,
+                repOutTarget: templateWeek.repOutTarget,
+              },
+            ]);
 
       for (const set of sets) {
         insertDefinitionWeek.run(

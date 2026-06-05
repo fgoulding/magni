@@ -250,6 +250,33 @@ describe("program service", () => {
     expect(countWeekSettings()).toEqual({ n: 12, weeks: 4 });
   });
 
+  it("materialises a bodyweight exercise as N individual sets of the given reps", () => {
+    const userId = createUser("service-bodyweight@example.com");
+    const created = service.createProgramRun({ userId, name: "BW", numWeeks: 4 });
+    const day = service.addDefinitionDayForRun({ userId, legacyProgramId: created.legacyProgramId, name: "Day" });
+    const exercise = service.addDefinitionExerciseForDay({
+      userId,
+      legacyDayId: day.legacyDayId,
+      name: "Pull-Up",
+      trainingMax: 1,
+      category: "accessory",
+      progressionType: "bodyweight",
+      setCount: 3,
+      repCount: 12,
+    });
+
+    const week1 = dbModule.db
+      .prepare(
+        "SELECT set_number, sets, reps, rep_out_target FROM week_settings WHERE exercise_id = ? AND week_number = 1 ORDER BY set_number",
+      )
+      .all(exercise.legacyExerciseId);
+    expect(week1).toEqual([
+      { set_number: 1, sets: 1, reps: 12, rep_out_target: 12 },
+      { set_number: 2, sets: 1, reps: 12, rep_out_target: 12 },
+      { set_number: 3, sets: 1, reps: 12, rep_out_target: 12 },
+    ]);
+  });
+
   it("creates and cancels dated holds for one owned run", () => {
     const userId = createUser("service-hold@example.com");
     const first = service.createProgramRun({ userId, name: "Rack Program", numWeeks: 7 });

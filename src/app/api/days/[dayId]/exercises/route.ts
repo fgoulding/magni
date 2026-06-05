@@ -13,7 +13,14 @@ type ExerciseCreateBody = {
   trainingMax?: unknown;
   category?: unknown;
   progressionType?: unknown;
+  sets?: unknown;
+  reps?: unknown;
 };
+
+function positiveInt(value: unknown): number | undefined {
+  const n = Number(value);
+  return Number.isInteger(n) && n > 0 ? n : undefined;
+}
 
 function validCategory(category: unknown): ExerciseCategory | null {
   if (category === undefined) return "main";
@@ -57,6 +64,8 @@ export async function POST(request: Request, context: RouteContext) {
       trainingMax,
       category,
       progressionType: templateId,
+      setCount: positiveInt(body.sets),
+      repCount: positiveInt(body.reps),
     });
 
     return NextResponse.json({ id: exercise.legacyExerciseId, name: exerciseName, trainingMax, category }, { status: 201 });

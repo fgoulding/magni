@@ -509,6 +509,7 @@ function ExerciseRow({
 }) {
   const [editing, setEditing] = useState(false);
   const progression = PROGRESSION_SHORT[exercise.progression_type] ?? titleCase(exercise.progression_type);
+  const isBw = exercise.progression_type === "bodyweight";
 
   return (
     <>
@@ -552,8 +553,13 @@ function ExerciseRow({
       </div>
 
       <p className="mt-1 pl-[22px] text-xs text-muted">
-        {titleCase(exercise.category)} · {progression} ·{" "}
-        <span className="font-display tracking-tight">TM {exercise.training_max}</span>
+        {titleCase(exercise.category)} · {progression}
+        {isBw ? null : (
+          <>
+            {" · "}
+            <span className="font-display tracking-tight">TM {exercise.training_max}</span>
+          </>
+        )}
       </p>
 
       {editing ? (
@@ -563,10 +569,12 @@ function ExerciseRow({
             category={exercise.category}
             progressionType={exercise.progression_type}
           />
-          <div className="mt-2 flex items-center gap-1.5 text-xs font-semibold text-faint">
-            TM
-            <TrainingMaxEditor exerciseId={exercise.id} initialValue={exercise.training_max} />
-          </div>
+          {isBw ? null : (
+            <div className="mt-2 flex items-center gap-1.5 text-xs font-semibold text-faint">
+              TM
+              <TrainingMaxEditor exerciseId={exercise.id} initialValue={exercise.training_max} />
+            </div>
+          )}
         </div>
       ) : null}
     </>

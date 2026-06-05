@@ -71,9 +71,11 @@ export function groupExerciseNames(group: WorkoutGroup): string[] {
   return [...new Set(group.sets.map((s) => s.exercise_name))];
 }
 
-/** A flat single-lift group has one exercise and identical weight/reps across its sets. */
+/** A flat single-lift group has one exercise and identical weight/reps across its sets.
+ *  Bodyweight is excluded so each set logs its own (usually dropping) rep count. */
 export function isFlatSingle(group: WorkoutGroup): boolean {
   if (group.supersetGroup || groupExerciseNames(group).length !== 1) return false;
+  if (isBodyweight(group.sets[0])) return false;
   const first = group.sets[0];
   return group.sets.every((s) => s.calculated_weight === first.calculated_weight && s.reps === first.reps);
 }

@@ -13,6 +13,8 @@ export function AddExerciseForm({ dayId }: { dayId: number }) {
   const [open, setOpen] = useState(false);
   const [name, setName] = useState("");
   const [trainingMax, setTrainingMax] = useState(100);
+  const [bwSets, setBwSets] = useState(3);
+  const [bwReps, setBwReps] = useState(10);
   const [category, setCategory] = useState("main");
   const [progressionType, setProgressionType] = useState("custom");
   const [error, setError] = useState("");
@@ -31,8 +33,14 @@ export function AddExerciseForm({ dayId }: { dayId: number }) {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         // Bodyweight has no training max; send a nominal placeholder (the column
-        // is NOT NULL CHECK(> 0)). The UI shows "BW" instead.
-        body: JSON.stringify({ name, trainingMax: isBodyweight ? 1 : trainingMax, category, progressionType }),
+        // is NOT NULL CHECK(> 0)) plus its configured sets × reps. UI shows "BW".
+        body: JSON.stringify({
+          name,
+          trainingMax: isBodyweight ? 1 : trainingMax,
+          category,
+          progressionType,
+          ...(isBodyweight ? { sets: bwSets, reps: bwReps } : {}),
+        }),
       });
       const body = (await response.json()) as { error?: string };
       if (!response.ok) throw new Error(body.error ?? "Could not add exercise");
@@ -78,8 +86,45 @@ export function AddExerciseForm({ dayId }: { dayId: number }) {
         placeholder="Squat"
         className="touch-target rounded-xl border border-line bg-surface px-3 text-base outline-none transition-colors focus:border-brand"
       />
-      <div className={isBodyweight ? "" : "grid grid-cols-2 gap-2"}>
-        {!isBodyweight ? (
+      {isBodyweight ? (
+        <div className="grid grid-cols-3 gap-2">
+          <label className="flex flex-col gap-1 text-[10px] font-semibold uppercase tracking-wide text-faint">
+            Sets
+            <input
+              type="number"
+              min={1}
+              value={bwSets}
+              onChange={(event) => setBwSets(Number(event.target.value))}
+              className="touch-target rounded-xl border border-line bg-surface px-3 text-base text-foreground outline-none transition-colors focus:border-brand"
+              aria-label="Sets"
+            />
+          </label>
+          <label className="flex flex-col gap-1 text-[10px] font-semibold uppercase tracking-wide text-faint">
+            Reps
+            <input
+              type="number"
+              min={1}
+              value={bwReps}
+              onChange={(event) => setBwReps(Number(event.target.value))}
+              className="touch-target rounded-xl border border-line bg-surface px-3 text-base text-foreground outline-none transition-colors focus:border-brand"
+              aria-label="Reps"
+            />
+          </label>
+          <label className="flex flex-col gap-1 text-[10px] font-semibold uppercase tracking-wide text-faint">
+            Type
+            <Select
+              value={category}
+              onChange={(event) => setCategory(event.target.value)}
+              aria-label="Category"
+            >
+              <option value="main">Main</option>
+              <option value="aux">Aux</option>
+              <option value="accessory">Accessory</option>
+            </Select>
+          </label>
+        </div>
+      ) : (
+        <div className="grid grid-cols-2 gap-2">
           <input
             type="number"
             value={trainingMax}
@@ -90,17 +135,17 @@ export function AddExerciseForm({ dayId }: { dayId: number }) {
             className="touch-target rounded-xl border border-line bg-surface px-3 text-base outline-none transition-colors focus:border-brand"
             aria-label="Training max"
           />
-        ) : null}
-        <Select
-          value={category}
-          onChange={(event) => setCategory(event.target.value)}
-          aria-label="Category"
-        >
-          <option value="main">Main</option>
-          <option value="aux">Aux</option>
-          <option value="accessory">Accessory</option>
-        </Select>
-      </div>
+          <Select
+            value={category}
+            onChange={(event) => setCategory(event.target.value)}
+            aria-label="Category"
+          >
+            <option value="main">Main</option>
+            <option value="aux">Aux</option>
+            <option value="accessory">Accessory</option>
+          </Select>
+        </div>
+      )}
       <div className="flex gap-2">
         <Select
           value={progressionType}
