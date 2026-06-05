@@ -470,6 +470,13 @@ export function getProgramDetailForUser(legacyProgramId: number, userId: number)
         expected_max: number | null;
       }[];
 
+      // A superset needs ≥2 members; a token left on a single exercise (e.g. its
+      // partner was deleted) is meaningless, so don't surface it as a superset.
+      const supersetCounts = new Map<string, number>();
+      for (const ex of exercises) {
+        if (ex.superset_group) supersetCounts.set(ex.superset_group, (supersetCounts.get(ex.superset_group) ?? 0) + 1);
+      }
+
       return {
         id: day.legacy_day_id ?? day.definition_day_id,
         name: day.name,
@@ -516,7 +523,10 @@ export function getProgramDetailForUser(legacyProgramId: number, userId: number)
               exercise.legacy_auto_progression_enabled ?? (exercise.progression_type === "custom" ? 0 : 1),
             sort_order: exercise.sort_order,
             shared_exercise_key: exercise.stable_key,
-            superset_group: exercise.superset_group,
+            superset_group:
+              exercise.superset_group && (supersetCounts.get(exercise.superset_group) ?? 0) >= 2
+                ? exercise.superset_group
+                : null,
             weekSettings: weekSettings.map((setting) => ({
               ...setting,
               calculated_weight: calculateWeight(trainingMax, setting.intensity_pct, rounding),
