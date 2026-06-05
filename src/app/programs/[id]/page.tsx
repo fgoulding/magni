@@ -3,6 +3,7 @@ import { Trash2 } from "lucide-react";
 import { notFound, redirect } from "next/navigation";
 import { AddDayForm } from "@/components/AddDayForm";
 import { AddExerciseForm } from "@/components/AddExerciseForm";
+import { DaySection } from "@/components/DaySection";
 import { DeleteButton } from "@/components/DeleteButton";
 import { ProgramActiveToggle } from "@/components/ProgramActiveToggle";
 import { ProgramScheduleForm } from "@/components/ProgramScheduleForm";
@@ -101,28 +102,28 @@ export default async function ProgramPage({ params }: PageProps) {
             <div className="mt-3 flex flex-col divide-y divide-line">
               {daysWithExercises.map((day) => (
                 <div key={day.id} className="py-3">
-                  <div className="flex items-start justify-between gap-3">
-                    <div>
-                      <p className="font-medium">{day.name}</p>
-                      <p className="text-sm text-muted">Day {day.day_number}</p>
-                    </div>
-                    <div className="flex items-center gap-1">
-                      <ReorderButton endpoint={`/api/days/${day.id}`} direction="up" label={day.name} />
-                      <ReorderButton endpoint={`/api/days/${day.id}`} direction="down" label={day.name} />
-                      <DeleteButton
-                        endpoint={`/api/days/${day.id}`}
-                        label="day"
-                        align="center"
-                        triggerClassName="touch-target inline-flex items-center justify-center rounded-xl border border-line px-2 text-danger-ink transition-colors active:bg-danger-soft"
-                      >
-                        <Trash2 aria-hidden="true" size={15} />
-                      </DeleteButton>
-                    </div>
-                  </div>
-
-                  <SortableDayExercises dayId={day.id} exercises={day.exercises} />
-
-                  <AddExerciseForm dayId={day.id} />
+                  <DaySection
+                    name={day.name}
+                    dayNumber={day.day_number}
+                    liftCount={day.exercises.length}
+                    headerActions={
+                      <>
+                        <ReorderButton endpoint={`/api/days/${day.id}`} direction="up" label={day.name} />
+                        <ReorderButton endpoint={`/api/days/${day.id}`} direction="down" label={day.name} />
+                        <DeleteButton
+                          endpoint={`/api/days/${day.id}`}
+                          label="day"
+                          align="center"
+                          triggerClassName="touch-target inline-flex items-center justify-center rounded-xl border border-line px-2 text-danger-ink transition-colors active:bg-danger-soft"
+                        >
+                          <Trash2 aria-hidden="true" size={15} />
+                        </DeleteButton>
+                      </>
+                    }
+                  >
+                    <SortableDayExercises dayId={day.id} exercises={day.exercises} />
+                    <AddExerciseForm dayId={day.id} />
+                  </DaySection>
                 </div>
               ))}
             </div>

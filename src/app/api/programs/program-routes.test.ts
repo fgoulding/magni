@@ -72,7 +72,11 @@ function collectRenderedText(node: ReactNode): string {
   if (node === null || node === undefined || typeof node === "boolean") return "";
   if (typeof node === "string" || typeof node === "number" || typeof node === "bigint") return String(node);
   if (Array.isArray(node)) return node.map(collectRenderedText).join(" ");
-  if (isValidElement<{ children?: ReactNode; value?: unknown; exercises?: unknown }>(node)) {
+  if (
+    isValidElement<{ children?: ReactNode; value?: unknown; exercises?: unknown; name?: unknown; dayNumber?: unknown }>(
+      node,
+    )
+  ) {
     if (node.type === "input" && node.props.value !== undefined) {
       return `${String(node.props.value)} ${collectRenderedText(node.props.children)}`;
     }
@@ -83,7 +87,11 @@ function collectRenderedText(node: ReactNode): string {
           .map((e) => `${e.name ?? ""} ${e.category ?? ""} ${e.progression_type ?? ""}`)
           .join(" ")
       : "";
-    return `${exercisesText} ${collectRenderedText(node.props.children)}`;
+    // The day name is a prop on the DaySection client component (has `dayNumber`),
+    // not rendered text the walk can reach.
+    const dayName =
+      node.props.dayNumber !== undefined && typeof node.props.name === "string" ? node.props.name : "";
+    return `${exercisesText} ${dayName} ${collectRenderedText(node.props.children)}`;
   }
   return "";
 }

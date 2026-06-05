@@ -17,7 +17,7 @@ import {
   verticalListSortingStrategy,
 } from "@dnd-kit/sortable";
 import { CSS } from "@dnd-kit/utilities";
-import { GripVertical } from "lucide-react";
+import { GripVertical, SlidersHorizontal, Trash2 } from "lucide-react";
 import { useRouter } from "next/navigation";
 import { useState } from "react";
 import { DeleteButton } from "@/components/DeleteButton";
@@ -156,6 +156,18 @@ export function SortableDayExercises({
   );
 }
 
+const PROGRESSION_SHORT: Record<string, string> = {
+  custom: "Custom",
+  linear: "Linear",
+  double: "Double",
+  sbs: "SBS",
+  madcow: "Madcow",
+};
+
+function titleCase(value: string): string {
+  return value.charAt(0).toUpperCase() + value.slice(1);
+}
+
 function SortableExerciseRow({
   exercise,
   nextExerciseId,
@@ -170,51 +182,81 @@ function SortableExerciseRow({
   const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({
     id: exercise.id,
   });
+  const [editing, setEditing] = useState(false);
   const grouped = exercise.superset_group !== null;
   const style = {
     transform: CSS.Transform.toString(transform),
     transition,
     opacity: isDragging ? 0.6 : 1,
   };
+  const progression = PROGRESSION_SHORT[exercise.progression_type] ?? titleCase(exercise.progression_type);
 
   return (
     <div ref={setNodeRef} style={style} className={grouped ? "border-l-2 border-brand-line pl-3" : ""}>
       {groupStart ? <span className="mb-1 block text-xs font-medium text-faint">Superset</span> : null}
       <div className="rounded-xl bg-surface-muted p-3">
-        <div className="flex items-start justify-between gap-2">
-          <div className="flex min-w-0 items-start gap-1.5">
+        <div className="flex items-center justify-between gap-2">
+          <div className="flex min-w-0 flex-1 items-center gap-1.5">
             <button
               type="button"
               aria-label={`Drag ${exercise.name} to reorder`}
-              className="touch-target -ml-1 mt-0.5 inline-flex cursor-grab items-center text-faint active:cursor-grabbing"
+              className="touch-target -ml-1 inline-flex shrink-0 cursor-grab items-center text-faint active:cursor-grabbing"
               {...attributes}
               {...listeners}
             >
               <GripVertical aria-hidden="true" size={16} />
             </button>
-            <div className="min-w-0">
+            <div className="min-w-0 flex-1">
               <ExerciseNameEditor exerciseId={exercise.id} initialName={exercise.name} />
-              <ExerciseTypeEditor
-                exerciseId={exercise.id}
-                category={exercise.category}
-                progressionType={exercise.progression_type}
-              />
-              <div className="mt-1.5 flex items-center gap-1.5 text-xs font-semibold text-faint">
-                TM
-                <TrainingMaxEditor exerciseId={exercise.id} initialValue={exercise.training_max} />
-              </div>
             </div>
           </div>
-          <div className="flex items-center gap-1">
+          <div className="flex shrink-0 items-center gap-1">
             <SupersetLink
               exerciseId={exercise.id}
               linkExerciseId={nextExerciseId}
               linkName={nextExerciseName}
               supersetGroup={exercise.superset_group}
             />
-            <DeleteButton endpoint={`/api/exercises/${exercise.id}`} label="exercise" />
+            <button
+              type="button"
+              onClick={() => setEditing((value) => !value)}
+              aria-expanded={editing}
+              aria-label={`Edit ${exercise.name} type and training max`}
+              className={`touch-target inline-flex items-center justify-center rounded-xl border px-2 transition-colors active:bg-surface ${
+                editing ? "border-brand-line bg-brand-soft text-brand-strong" : "border-line bg-surface text-muted"
+              }`}
+            >
+              <SlidersHorizontal aria-hidden="true" size={15} />
+            </button>
+            <DeleteButton
+              endpoint={`/api/exercises/${exercise.id}`}
+              label="exercise"
+              align="center"
+              triggerClassName="touch-target inline-flex items-center justify-center rounded-xl border border-line px-2 text-danger-ink transition-colors active:bg-danger-soft"
+            >
+              <Trash2 aria-hidden="true" size={15} />
+            </DeleteButton>
           </div>
         </div>
+
+        <p className="mt-1 pl-[22px] text-xs text-muted">
+          {titleCase(exercise.category)} · {progression} ·{" "}
+          <span className="font-display tracking-tight">TM {exercise.training_max}</span>
+        </p>
+
+        {editing ? (
+          <div className="mt-2.5 border-t border-line pt-2.5">
+            <ExerciseTypeEditor
+              exerciseId={exercise.id}
+              category={exercise.category}
+              progressionType={exercise.progression_type}
+            />
+            <div className="mt-2 flex items-center gap-1.5 text-xs font-semibold text-faint">
+              TM
+              <TrainingMaxEditor exerciseId={exercise.id} initialValue={exercise.training_max} />
+            </div>
+          </div>
+        ) : null}
       </div>
     </div>
   );

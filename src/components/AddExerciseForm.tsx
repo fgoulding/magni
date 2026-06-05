@@ -1,5 +1,6 @@
 "use client";
 
+import { Plus } from "lucide-react";
 import { useRouter } from "next/navigation";
 import { useState } from "react";
 import { ErrorBanner } from "@/components/ErrorBanner";
@@ -9,6 +10,7 @@ import { listTrainingTemplates } from "@/features/training-templates/registry";
 const trainingTemplates = listTrainingTemplates();
 
 export function AddExerciseForm({ dayId }: { dayId: number }) {
+  const [open, setOpen] = useState(false);
   const [name, setName] = useState("");
   const [trainingMax, setTrainingMax] = useState(100);
   const [category, setCategory] = useState("main");
@@ -40,9 +42,31 @@ export function AddExerciseForm({ dayId }: { dayId: number }) {
     }
   }
 
+  if (!open) {
+    return (
+      <button
+        type="button"
+        onClick={() => setOpen(true)}
+        className="touch-target mt-3 flex w-full items-center justify-center gap-1.5 rounded-xl border border-dashed border-line bg-surface px-3 py-2.5 text-sm font-semibold text-muted transition-colors active:bg-surface-muted"
+      >
+        <Plus aria-hidden="true" size={16} />
+        Add exercise
+      </button>
+    );
+  }
+
   return (
     <form onSubmit={submit} className="mt-3 flex flex-col gap-3 rounded-xl bg-surface-muted p-3">
-      <h3 className="eyebrow text-[11px] text-brand-strong">Add exercise</h3>
+      <div className="flex items-center justify-between">
+        <h3 className="eyebrow text-[11px] text-brand-strong">Add exercise</h3>
+        <button
+          type="button"
+          onClick={() => setOpen(false)}
+          className="touch-target text-xs font-semibold text-faint transition-colors active:text-foreground"
+        >
+          Cancel
+        </button>
+      </div>
       <ErrorBanner message={error} />
       <input
         value={name}

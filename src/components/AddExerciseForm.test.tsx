@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 
 import "@testing-library/jest-dom/vitest";
-import { render, screen, within } from "@testing-library/react";
+import { fireEvent, render, screen, within } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { AddExerciseForm } from "@/components/AddExerciseForm";
 import { listTrainingTemplates } from "@/features/training-templates/registry";
@@ -21,6 +21,9 @@ afterEach(() => {
 describe("AddExerciseForm", () => {
   it("renders progression options from the training template registry", () => {
     render(<AddExerciseForm dayId={1} />);
+
+    // The form starts collapsed behind an "Add exercise" button.
+    fireEvent.click(screen.getByRole("button", { name: /add exercise/i }));
 
     const select = screen.getByLabelText("Progression");
     const optionLabels = within(select)

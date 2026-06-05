@@ -45,19 +45,27 @@ function renderProgramCard(program: ProgramLibraryItem) {
           <div className="min-w-0">
             <h3 className="display truncate text-2xl">{program.name}</h3>
             <p className="mt-1 text-sm text-muted">
-              {active ? `Week ${program.current_week} · Day ${program.current_day} · ` : ""}
               {program.day_count} day{program.day_count === 1 ? "" : "s"} · {program.lift_count} lifts
             </p>
           </div>
-          <span className="shrink-0 rounded-full bg-surface-muted px-2.5 py-1 text-xs font-semibold text-muted">
-            {sourceLabel(program)}
-          </span>
+          {program.source_type === "shared" || program.source_type === "default" ? (
+            <span className="shrink-0 rounded-full bg-surface-muted px-2.5 py-1 text-xs font-semibold text-muted">
+              {sourceLabel(program)}
+            </span>
+          ) : null}
         </div>
 
         <div className="mt-3 flex items-center justify-between gap-2">
-          <div className="flex min-w-0 items-center gap-2 rounded-xl bg-surface-muted px-3 py-2 text-sm text-muted">
-            <CalendarDays aria-hidden="true" size={16} className="shrink-0 text-faint" />
-            <span className="truncate font-medium">{active ? scheduleText(program) : "Not training"}</span>
+          <div className="flex min-w-0 items-center gap-2">
+            {active ? (
+              <span className="shrink-0 rounded-xl bg-surface-muted px-2.5 py-2 font-display text-sm tracking-tight text-foreground">
+                Wk {program.current_week} · Day {program.current_day}
+              </span>
+            ) : null}
+            <div className="flex min-w-0 items-center gap-2 rounded-xl bg-surface-muted px-3 py-2 text-sm text-muted">
+              <CalendarDays aria-hidden="true" size={16} className="shrink-0 text-faint" />
+              <span className="truncate font-medium">{active ? scheduleText(program) : "Not training"}</span>
+            </div>
           </div>
           <ProgramActiveToggle programId={program.id} isActive={active} variant="badge" />
         </div>
