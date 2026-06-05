@@ -2,7 +2,8 @@ import { Activity, ChevronRight, Dumbbell, Flame, TrendingUp } from "lucide-reac
 import Link from "next/link";
 import { redirect } from "next/navigation";
 import { DotGrid, MiniBars, Sparkline, SplitBar, splitColorClass } from "@/components/Charts";
-import { getUserTrainingStats } from "@/features/programs/training-stats";
+import { LiftDetailContent } from "@/components/LiftDetailContent";
+import { getUserLiftDetail, getUserTrainingStats } from "@/features/programs/training-stats";
 import { requireUser } from "@/lib/auth";
 
 function formatNumber(value: number): string {
@@ -20,7 +21,9 @@ const CATEGORY_LABELS: Record<string, string> = {
   accessory: "Accessory",
 };
 
-export default async function StatsPage() {
+type StatsPageProps = { searchParams: Promise<{ lift?: string }> };
+
+export default async function StatsPage({ searchParams }: StatsPageProps) {
   let user;
 
   try {
@@ -30,6 +33,8 @@ export default async function StatsPage() {
   }
 
   const stats = getUserTrainingStats(user.id);
+  const { lift } = await searchParams;
+  const liftDetail = lift ? getUserLiftDetail(user.id, decodeURIComponent(lift)) : null;
 
   const tiles = [
     { label: "Workouts", value: formatNumber(stats.totals.sessions) },
@@ -64,7 +69,25 @@ export default async function StatsPage() {
             ))}
           </section>
 
-          {/* Main lifts */}
+          {/* Strength snapshot — current estimated maxes */}
+          {stats.bigThree.length > 0 ? (
+            <section className="card p-4">
+              <div className="mb-3 flex items-center gap-2">
+                <TrendingUp aria-hidden="true" size={15} className="text-brand-strong" />
+                <h2 className="eyebrow text-[11px] text-brand-strong">Estimated maxes</h2>
+              </div>
+              <div className="grid grid-cols-3 gap-2.5">
+                {stats.bigThree.map((lift) => (
+                  <div key={lift.name} className="rounded-xl bg-surface-muted px-2 py-3 text-center">
+                    <p className="display text-2xl leading-none">{formatNumber(lift.bestE1rm)}</p>
+                    <p className="eyebrow mt-1.5 truncate text-[10px] text-faint">{lift.name}</p>
+                  </div>
+                ))}
+              </div>
+            </section>
+          ) : null}
+
+          {/* Main lifts — tap to open history, with progress at a glance */}
           {stats.bigThree.length > 0 ? (
             <section className="card p-4">
               <div className="mb-1 flex items-center gap-2">
@@ -72,32 +95,45 @@ export default async function StatsPage() {
                 <h2 className="eyebrow text-[11px] text-brand-strong">Main lifts</h2>
               </div>
               <div className="flex flex-col divide-y divide-line">
-                {stats.bigThree.map((lift) => (
-                  <Link
-                    key={lift.name}
-                    href={`/history/${encodeURIComponent(lift.name)}`}
-                    className="-mx-1 flex items-center gap-3 rounded-lg px-1 py-3 transition-colors active:bg-surface-muted"
-                  >
-                    <div className="min-w-0 flex-1">
-                      <h3 className="display truncate text-xl">{lift.name}</h3>
-                      <p className="mt-0.5 text-xs text-muted">
-                        <span className="font-display text-sm tracking-tight text-foreground">{formatNumber(lift.maxWeight)} lb</span>{" "}
-                        top set · e1RM{" "}
-                        <span className="font-semibold text-brand-strong">{formatNumber(lift.bestE1rm)}</span>
-                      </p>
-                    </div>
-                    <div className="w-20 shrink-0">
-                      {lift.trend.length > 1 ? (
-                        <Sparkline data={lift.trend} />
-                      ) : (
-                        <p className="text-right text-[10px] font-medium uppercase tracking-wide text-faint">
-                          1 session
+                {stats.bigThree.map((lift) => {
+                  const delta = lift.trend.length > 1 ? Math.round(lift.trend.at(-1)! - lift.trend[0]) : null;
+                  return (
+                    <Link
+                      key={lift.name}
+                      href={`/history?lift=${encodeURIComponent(lift.name)}`}
+                      className="-mx-1 flex items-center gap-3 rounded-lg px-1 py-3 transition-colors active:bg-surface-muted"
+                    >
+                      <div className="min-w-0 flex-1">
+                        <h3 className="display truncate text-xl">{lift.name}</h3>
+                        <p className="mt-0.5 text-xs text-muted">
+                          <span className="font-display text-sm tracking-tight text-foreground">{formatNumber(lift.maxWeight)} lb</span>{" "}
+                          top set · e1RM{" "}
+                          <span className="font-semibold text-brand-strong">{formatNumber(lift.bestE1rm)}</span>
                         </p>
-                      )}
-                    </div>
-                    <ChevronRight aria-hidden="true" size={18} className="shrink-0 text-faint" />
-                  </Link>
-                ))}
+                      </div>
+                      <div className="w-20 shrink-0">
+                        {lift.trend.length > 1 ? (
+                          <>
+                            <Sparkline data={lift.trend} />
+                            {delta !== null ? (
+                              <p
+                                className={`mt-0.5 text-right text-[11px] font-semibold ${
+                                  delta > 0 ? "text-success-ink" : delta < 0 ? "text-danger-ink" : "text-faint"
+                                }`}
+                              >
+                                {delta > 0 ? "+" : ""}
+                                {formatNumber(delta)} lb
+                              </p>
+                            ) : null}
+                          </>
+                        ) : (
+                          <p className="text-right text-[10px] font-medium uppercase tracking-wide text-faint">1 session</p>
+                        )}
+                      </div>
+                      <ChevronRight aria-hidden="true" size={18} className="shrink-0 text-faint" />
+                    </Link>
+                  );
+                })}
               </div>
             </section>
           ) : null}
@@ -162,6 +198,35 @@ export default async function StatsPage() {
           ) : null}
         </>
       )}
+
+      {/* Lift-history modal (URL-param, same pattern as the calendar) */}
+      {liftDetail ? (
+        <div className="fixed inset-0 z-[60] flex items-end justify-center bg-black/35 px-3 pt-[calc(0.75rem+env(safe-area-inset-top))] pb-[calc(5.5rem+env(safe-area-inset-bottom))] sm:items-center sm:py-3">
+          <div
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="lift-modal-title"
+            className="max-h-full w-full max-w-xl overflow-y-auto rounded-xl bg-surface shadow-xl"
+          >
+            <div className="flex items-start justify-between gap-3 border-b border-line px-4 py-3">
+              <div className="min-w-0">
+                <p className="eyebrow text-[11px] text-brand-strong">Lift history</p>
+                <h2 id="lift-modal-title" className="display mt-1 truncate text-2xl">{liftDetail.name}</h2>
+              </div>
+              <Link
+                href="/history"
+                aria-label="Close lift history"
+                className="touch-target inline-flex shrink-0 items-center justify-center rounded-xl border border-line px-3 text-sm font-medium text-muted transition-colors active:bg-surface-muted"
+              >
+                Close
+              </Link>
+            </div>
+            <div className="p-4">
+              <LiftDetailContent detail={liftDetail} />
+            </div>
+          </div>
+        </div>
+      ) : null}
     </div>
   );
 }
