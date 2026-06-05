@@ -17,13 +17,12 @@ import {
   verticalListSortingStrategy,
 } from "@dnd-kit/sortable";
 import { CSS } from "@dnd-kit/utilities";
-import { GripVertical, SlidersHorizontal, Trash2 } from "lucide-react";
+import { GripVertical, Link2, Plus, SlidersHorizontal, Trash2, Unlink2 } from "lucide-react";
 import { useRouter } from "next/navigation";
 import { useState } from "react";
 import { DeleteButton } from "@/components/DeleteButton";
 import { ExerciseNameEditor } from "@/components/ExerciseNameEditor";
 import { ExerciseTypeEditor } from "@/components/ExerciseTypeEditor";
-import { SupersetLink } from "@/components/SupersetLink";
 import { TrainingMaxEditor } from "@/components/TrainingMaxEditor";
 
 export type EditableExercise = {
@@ -35,24 +34,33 @@ export type EditableExercise = {
   superset_group: string | null;
 };
 
-/** Group index per row, derived from contiguity of the current superset tokens.
- *  A token broken apart by a drag yields separate indices (so it splits), and the
- *  API collapses any resulting singletons back to "no superset". */
-function groupIndices(order: EditableExercise[]): (number | null)[] {
-  const out: (number | null)[] = [];
-  let current = -1;
-  for (let i = 0; i < order.length; i += 1) {
+/** A top-level row in the editor: a standalone exercise, or a superset of ≥2. */
+type Unit = { key: string; ids: number[] };
+
+const sortIds = (ids: number[]) => [...ids].sort((a, b) => a - b);
+const unitKey = (ids: number[]) => `u-${sortIds(ids).join("-")}`;
+
+/** Build top-level units from the flat order by superset-token contiguity. */
+function buildUnits(order: EditableExercise[]): Unit[] {
+  const units: Unit[] = [];
+  let i = 0;
+  while (i < order.length) {
     const token = order[i].superset_group;
     if (!token) {
-      out.push(null);
-    } else if (i > 0 && order[i - 1].superset_group === token) {
-      out.push(current);
+      units.push({ key: unitKey([order[i].id]), ids: [order[i].id] });
+      i += 1;
     } else {
-      current += 1;
-      out.push(current);
+      const ids = [order[i].id];
+      let j = i + 1;
+      while (j < order.length && order[j].superset_group === token) {
+        ids.push(order[j].id);
+        j += 1;
+      }
+      units.push({ key: unitKey(ids), ids });
+      i = j;
     }
   }
-  return out;
+  return units;
 }
 
 export function SortableDayExercises({
@@ -64,11 +72,9 @@ export function SortableDayExercises({
 }) {
   const [order, setOrder] = useState(exercises);
   const [error, setError] = useState("");
+  const [busy, setBusy] = useState(false);
   const router = useRouter();
 
-  // Reset local order when the server data actually changes — React's "adjust
-  // state during render" pattern, so an optimistic reorder isn't fought by an
-  // effect that re-runs every render.
   const serverKey = exercises.map((e) => `${e.id}:${e.superset_group ?? ""}`).join(",");
   const [syncedKey, setSyncedKey] = useState(serverKey);
   if (serverKey !== syncedKey) {
@@ -81,9 +87,29 @@ export function SortableDayExercises({
     useSensor(KeyboardSensor, { coordinateGetter: sortableKeyboardCoordinates }),
   );
 
-  async function persist(next: EditableExercise[]) {
-    const groups = groupIndices(next);
-    const items = next.map((ex, i) => ({ id: ex.id, group: groups[i] }));
+  const byId = new Map(order.map((e) => [e.id, e]));
+  const units = buildUnits(order);
+
+  // Re-token the flat order from a new unit layout and persist it. Runs of ≥2
+  // become supersets; the server assigns real tokens and drops singletons.
+  function commit(nextUnits: Unit[]) {
+    const flat: EditableExercise[] = [];
+    const items: { id: number; group: number | null }[] = [];
+    nextUnits.forEach((unit, unitIndex) => {
+      const isBlock = unit.ids.length >= 2;
+      unit.ids.forEach((id) => {
+        const exercise = byId.get(id);
+        if (exercise) flat.push({ ...exercise, superset_group: isBlock ? `pending-${unitIndex}` : null });
+        items.push({ id, group: isBlock ? unitIndex : null });
+      });
+    });
+    setOrder(flat);
+    setError("");
+    setBusy(true);
+    void persist(items);
+  }
+
+  async function persist(items: { id: number; group: number | null }[]) {
     try {
       const response = await fetch(`/api/days/${dayId}/exercises/order`, {
         method: "PUT",
@@ -92,33 +118,58 @@ export function SortableDayExercises({
       });
       if (!response.ok) {
         setOrder(exercises);
-        setError("Couldn't save the new order — try again.");
+        setError("Couldn't save — try again.");
         return;
       }
       router.refresh();
     } catch {
       setOrder(exercises);
       setError("Couldn't save — check your connection.");
+    } finally {
+      setBusy(false);
     }
   }
 
-  function onDragEnd(event: DragEndEvent) {
+  function onUnitDragEnd(event: DragEndEvent) {
     const { active, over } = event;
     if (!over || active.id === over.id) return;
-    const oldIndex = order.findIndex((e) => e.id === active.id);
-    const newIndex = order.findIndex((e) => e.id === over.id);
-    if (oldIndex < 0 || newIndex < 0) return;
-    const next = arrayMove(order, oldIndex, newIndex);
-    setOrder(next);
-    setError("");
-    void persist(next);
+    const from = units.findIndex((u) => u.key === active.id);
+    const to = units.findIndex((u) => u.key === over.id);
+    if (from < 0 || to < 0) return;
+    commit(arrayMove(units, from, to));
+  }
+
+  function reorderMembers(unitIndex: number, activeId: number, overId: number) {
+    const ids = units[unitIndex].ids;
+    const from = ids.indexOf(activeId);
+    const to = ids.indexOf(overId);
+    if (from < 0 || to < 0 || from === to) return;
+    const next = units.map((u, i) => (i === unitIndex ? { ...u, ids: arrayMove(ids, from, to) } : u));
+    commit(next);
+  }
+
+  // Merge a unit with the one below it (wrap-with-next / add-next-to-block).
+  function mergeWithNext(unitIndex: number) {
+    if (unitIndex >= units.length - 1) return;
+    const merged: Unit = { key: "tmp", ids: [...units[unitIndex].ids, ...units[unitIndex + 1].ids] };
+    commit([...units.slice(0, unitIndex), merged, ...units.slice(unitIndex + 2)]);
+  }
+
+  function ungroup(unitIndex: number) {
+    const singles = units[unitIndex].ids.map((id) => ({ key: unitKey([id]), ids: [id] }));
+    commit([...units.slice(0, unitIndex), ...singles, ...units.slice(unitIndex + 1)]);
+  }
+
+  // Remove one exercise from a block; it lands as a standalone right after it.
+  function popOut(unitIndex: number, exId: number) {
+    const remaining = units[unitIndex].ids.filter((id) => id !== exId);
+    const replacement: Unit[] = [{ key: unitKey(remaining), ids: remaining }, { key: unitKey([exId]), ids: [exId] }];
+    commit([...units.slice(0, unitIndex), ...replacement, ...units.slice(unitIndex + 1)]);
   }
 
   if (order.length === 0) {
     return <p className="mt-3 text-sm text-muted">No exercises yet.</p>;
   }
-
-  const groups = groupIndices(order);
 
   return (
     <div className="mt-3">
@@ -127,31 +178,206 @@ export function SortableDayExercises({
           {error}
         </p>
       ) : null}
-      {/* Stable id keeps dnd-kit's a11y ids deterministic across SSR/hydration
-          (multiple days = multiple contexts, otherwise their counters drift). */}
       <DndContext
         id={`day-${dayId}`}
         sensors={sensors}
         collisionDetection={closestCenter}
-        onDragEnd={onDragEnd}
+        onDragEnd={onUnitDragEnd}
       >
-        <SortableContext items={order.map((e) => e.id)} strategy={verticalListSortingStrategy}>
-          <div className="flex flex-col gap-2">
-            {order.map((exercise, index) => {
-              const next = order[index + 1] ?? null;
+        <SortableContext items={units.map((u) => u.key)} strategy={verticalListSortingStrategy}>
+          <div className="flex flex-col gap-1.5">
+            {units.map((unit, unitIndex) => {
+              const hasNext = unitIndex < units.length - 1;
+              if (unit.ids.length === 1) {
+                const exercise = byId.get(unit.ids[0]);
+                if (!exercise) return null;
+                return (
+                  <StandaloneExercise
+                    key={unit.key}
+                    id={unit.key}
+                    exercise={exercise}
+                    canSuperset={hasNext}
+                    disabled={busy}
+                    onSuperset={() => mergeWithNext(unitIndex)}
+                  />
+                );
+              }
+              const members = unit.ids.map((id) => byId.get(id)).filter(Boolean) as EditableExercise[];
               return (
-                <SortableExerciseRow
-                  key={exercise.id}
-                  exercise={exercise}
-                  nextExerciseId={next?.id ?? null}
-                  nextExerciseName={next?.name ?? null}
-                  groupStart={exercise.superset_group !== null && groups[index] !== groups[index - 1]}
+                <SupersetBlock
+                  key={unit.key}
+                  id={unit.key}
+                  members={members}
+                  canAddNext={hasNext}
+                  disabled={busy}
+                  onUngroup={() => ungroup(unitIndex)}
+                  onAddNext={() => mergeWithNext(unitIndex)}
+                  onPopOut={(exId) => popOut(unitIndex, exId)}
+                  onReorder={(a, o) => reorderMembers(unitIndex, a, o)}
                 />
               );
             })}
           </div>
         </SortableContext>
       </DndContext>
+    </div>
+  );
+}
+
+function StandaloneExercise({
+  id,
+  exercise,
+  canSuperset,
+  disabled,
+  onSuperset,
+}: {
+  id: string;
+  exercise: EditableExercise;
+  canSuperset: boolean;
+  disabled: boolean;
+  onSuperset: () => void;
+}) {
+  const sortable = useSortable({ id });
+  return (
+    <div
+      ref={sortable.setNodeRef}
+      style={dragStyle(sortable)}
+      className="rounded-xl bg-surface-muted p-3"
+    >
+      <ExerciseRow
+        exercise={exercise}
+        gripRef={sortable.setActivatorNodeRef}
+        gripProps={{ ...sortable.attributes, ...sortable.listeners }}
+        leadingAction={
+          canSuperset ? (
+            <RowIconButton
+              onClick={onSuperset}
+              disabled={disabled}
+              label={`Superset ${exercise.name} with the next exercise`}
+            >
+              <Link2 aria-hidden="true" size={15} />
+            </RowIconButton>
+          ) : null
+        }
+      />
+    </div>
+  );
+}
+
+function SupersetBlock({
+  id,
+  members,
+  canAddNext,
+  disabled,
+  onUngroup,
+  onAddNext,
+  onPopOut,
+  onReorder,
+}: {
+  id: string;
+  members: EditableExercise[];
+  canAddNext: boolean;
+  disabled: boolean;
+  onUngroup: () => void;
+  onAddNext: () => void;
+  onPopOut: (exId: number) => void;
+  onReorder: (activeId: number, overId: number) => void;
+}) {
+  const sortable = useSortable({ id });
+  const sensors = useSensors(
+    useSensor(PointerSensor, { activationConstraint: { distance: 6 } }),
+    useSensor(KeyboardSensor, { coordinateGetter: sortableKeyboardCoordinates }),
+  );
+  return (
+    <div
+      ref={sortable.setNodeRef}
+      style={dragStyle(sortable)}
+      className="rounded-2xl border border-brand-line bg-brand-soft/40 p-2"
+    >
+      <div className="mb-1 flex items-center justify-between gap-2 px-1">
+        <div className="flex items-center gap-1.5">
+          <button
+            type="button"
+            ref={sortable.setActivatorNodeRef}
+            aria-label="Drag superset to reorder"
+            className="touch-target -ml-1 inline-flex cursor-grab items-center text-brand-strong/70 active:cursor-grabbing"
+            {...sortable.attributes}
+            {...sortable.listeners}
+          >
+            <GripVertical aria-hidden="true" size={16} />
+          </button>
+          <span className="eyebrow flex items-center gap-1 text-[11px] text-brand-strong">
+            <Link2 aria-hidden="true" size={12} />
+            Superset
+          </span>
+        </div>
+        <button
+          type="button"
+          onClick={onUngroup}
+          disabled={disabled}
+          className="touch-target text-xs font-semibold text-brand-strong transition-colors active:text-brand disabled:opacity-50"
+        >
+          Ungroup
+        </button>
+      </div>
+
+      <DndContext
+        id={`block-${id}`}
+        sensors={sensors}
+        collisionDetection={closestCenter}
+        onDragEnd={(event) => {
+          const { active, over } = event;
+          if (over && active.id !== over.id) {
+            onReorder(Number(String(active.id).slice(2)), Number(String(over.id).slice(2)));
+          }
+        }}
+      >
+        <SortableContext items={members.map((m) => `m-${m.id}`)} strategy={verticalListSortingStrategy}>
+          <div className="flex flex-col gap-1.5">
+            {members.map((member) => (
+              <BlockMember key={member.id} exercise={member} disabled={disabled} onPopOut={() => onPopOut(member.id)} />
+            ))}
+          </div>
+        </SortableContext>
+      </DndContext>
+
+      {canAddNext ? (
+        <button
+          type="button"
+          onClick={onAddNext}
+          disabled={disabled}
+          className="touch-target mt-1.5 flex w-full items-center justify-center gap-1.5 rounded-xl border border-dashed border-brand-line bg-surface/60 px-3 py-2 text-xs font-semibold text-brand-strong transition-colors active:bg-surface disabled:opacity-50"
+        >
+          <Plus aria-hidden="true" size={14} />
+          Add next exercise
+        </button>
+      ) : null}
+    </div>
+  );
+}
+
+function BlockMember({
+  exercise,
+  disabled,
+  onPopOut,
+}: {
+  exercise: EditableExercise;
+  disabled: boolean;
+  onPopOut: () => void;
+}) {
+  const sortable = useSortable({ id: `m-${exercise.id}` });
+  return (
+    <div ref={sortable.setNodeRef} style={dragStyle(sortable)} className="rounded-xl bg-surface p-3">
+      <ExerciseRow
+        exercise={exercise}
+        gripRef={sortable.setActivatorNodeRef}
+        gripProps={{ ...sortable.attributes, ...sortable.listeners }}
+        leadingAction={
+          <RowIconButton onClick={onPopOut} disabled={disabled} label={`Remove ${exercise.name} from the superset`}>
+            <Unlink2 aria-hidden="true" size={15} />
+          </RowIconButton>
+        }
+      />
     </div>
   );
 }
@@ -168,96 +394,112 @@ function titleCase(value: string): string {
   return value.charAt(0).toUpperCase() + value.slice(1);
 }
 
-function SortableExerciseRow({
+function dragStyle(sortable: ReturnType<typeof useSortable>) {
+  return {
+    transform: CSS.Transform.toString(sortable.transform),
+    transition: sortable.transition,
+    opacity: sortable.isDragging ? 0.6 : 1,
+  };
+}
+
+function RowIconButton({
+  onClick,
+  disabled,
+  label,
+  children,
+}: {
+  onClick: () => void;
+  disabled: boolean;
+  label: string;
+  children: React.ReactNode;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      disabled={disabled}
+      aria-label={label}
+      className="touch-target inline-flex items-center justify-center rounded-xl border border-line bg-surface px-2 text-muted transition-colors active:bg-surface-muted disabled:opacity-50"
+    >
+      {children}
+    </button>
+  );
+}
+
+/** Presentational exercise row: drag grip, name, summary, edit toggle, delete. */
+function ExerciseRow({
   exercise,
-  nextExerciseId,
-  nextExerciseName,
-  groupStart,
+  gripRef,
+  gripProps,
+  leadingAction,
 }: {
   exercise: EditableExercise;
-  nextExerciseId: number | null;
-  nextExerciseName: string | null;
-  groupStart: boolean;
+  gripRef: (node: HTMLElement | null) => void;
+  gripProps: Record<string, unknown>;
+  leadingAction?: React.ReactNode;
 }) {
-  const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({
-    id: exercise.id,
-  });
   const [editing, setEditing] = useState(false);
-  const grouped = exercise.superset_group !== null;
-  const style = {
-    transform: CSS.Transform.toString(transform),
-    transition,
-    opacity: isDragging ? 0.6 : 1,
-  };
   const progression = PROGRESSION_SHORT[exercise.progression_type] ?? titleCase(exercise.progression_type);
 
   return (
-    <div ref={setNodeRef} style={style} className={grouped ? "border-l-2 border-brand-line pl-3" : ""}>
-      {groupStart ? <span className="mb-1 block text-xs font-medium text-faint">Superset</span> : null}
-      <div className="rounded-xl bg-surface-muted p-3">
-        <div className="flex items-center justify-between gap-2">
-          <div className="flex min-w-0 flex-1 items-center gap-1.5">
-            <button
-              type="button"
-              aria-label={`Drag ${exercise.name} to reorder`}
-              className="touch-target -ml-1 inline-flex shrink-0 cursor-grab items-center text-faint active:cursor-grabbing"
-              {...attributes}
-              {...listeners}
-            >
-              <GripVertical aria-hidden="true" size={16} />
-            </button>
-            <div className="min-w-0 flex-1">
-              <ExerciseNameEditor exerciseId={exercise.id} initialName={exercise.name} />
-            </div>
-          </div>
-          <div className="flex shrink-0 items-center gap-1">
-            <SupersetLink
-              exerciseId={exercise.id}
-              linkExerciseId={nextExerciseId}
-              linkName={nextExerciseName}
-              supersetGroup={exercise.superset_group}
-            />
-            <button
-              type="button"
-              onClick={() => setEditing((value) => !value)}
-              aria-expanded={editing}
-              aria-label={`Edit ${exercise.name} type and training max`}
-              className={`touch-target inline-flex items-center justify-center rounded-xl border px-2 transition-colors active:bg-surface ${
-                editing ? "border-brand-line bg-brand-soft text-brand-strong" : "border-line bg-surface text-muted"
-              }`}
-            >
-              <SlidersHorizontal aria-hidden="true" size={15} />
-            </button>
-            <DeleteButton
-              endpoint={`/api/exercises/${exercise.id}`}
-              label="exercise"
-              align="center"
-              triggerClassName="touch-target inline-flex items-center justify-center rounded-xl border border-line px-2 text-danger-ink transition-colors active:bg-danger-soft"
-            >
-              <Trash2 aria-hidden="true" size={15} />
-            </DeleteButton>
+    <>
+      <div className="flex items-center justify-between gap-2">
+        <div className="flex min-w-0 flex-1 items-center gap-1.5">
+          <button
+            type="button"
+            ref={gripRef}
+            aria-label={`Drag ${exercise.name} to reorder`}
+            className="touch-target -ml-1 inline-flex shrink-0 cursor-grab items-center text-faint active:cursor-grabbing"
+            {...gripProps}
+          >
+            <GripVertical aria-hidden="true" size={16} />
+          </button>
+          <div className="min-w-0 flex-1">
+            <ExerciseNameEditor exerciseId={exercise.id} initialName={exercise.name} />
           </div>
         </div>
-
-        <p className="mt-1 pl-[22px] text-xs text-muted">
-          {titleCase(exercise.category)} · {progression} ·{" "}
-          <span className="font-display tracking-tight">TM {exercise.training_max}</span>
-        </p>
-
-        {editing ? (
-          <div className="mt-2.5 border-t border-line pt-2.5">
-            <ExerciseTypeEditor
-              exerciseId={exercise.id}
-              category={exercise.category}
-              progressionType={exercise.progression_type}
-            />
-            <div className="mt-2 flex items-center gap-1.5 text-xs font-semibold text-faint">
-              TM
-              <TrainingMaxEditor exerciseId={exercise.id} initialValue={exercise.training_max} />
-            </div>
-          </div>
-        ) : null}
+        <div className="flex shrink-0 items-center gap-1">
+          {leadingAction}
+          <button
+            type="button"
+            onClick={() => setEditing((value) => !value)}
+            aria-expanded={editing}
+            aria-label={`Edit ${exercise.name} type and training max`}
+            className={`touch-target inline-flex items-center justify-center rounded-xl border px-2 transition-colors active:bg-surface ${
+              editing ? "border-brand-line bg-brand-soft text-brand-strong" : "border-line bg-surface text-muted"
+            }`}
+          >
+            <SlidersHorizontal aria-hidden="true" size={15} />
+          </button>
+          <DeleteButton
+            endpoint={`/api/exercises/${exercise.id}`}
+            label="exercise"
+            align="center"
+            triggerClassName="touch-target inline-flex items-center justify-center rounded-xl border border-line px-2 text-danger-ink transition-colors active:bg-danger-soft"
+          >
+            <Trash2 aria-hidden="true" size={15} />
+          </DeleteButton>
+        </div>
       </div>
-    </div>
+
+      <p className="mt-1 pl-[22px] text-xs text-muted">
+        {titleCase(exercise.category)} · {progression} ·{" "}
+        <span className="font-display tracking-tight">TM {exercise.training_max}</span>
+      </p>
+
+      {editing ? (
+        <div className="mt-2.5 border-t border-line pt-2.5">
+          <ExerciseTypeEditor
+            exerciseId={exercise.id}
+            category={exercise.category}
+            progressionType={exercise.progression_type}
+          />
+          <div className="mt-2 flex items-center gap-1.5 text-xs font-semibold text-faint">
+            TM
+            <TrainingMaxEditor exerciseId={exercise.id} initialValue={exercise.training_max} />
+          </div>
+        </div>
+      ) : null}
+    </>
   );
 }
