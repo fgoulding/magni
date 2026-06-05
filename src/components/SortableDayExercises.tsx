@@ -4,6 +4,8 @@ import {
   closestCenter,
   DndContext,
   type DragEndEvent,
+  DragOverlay,
+  type DragStartEvent,
   KeyboardSensor,
   PointerSensor,
   useSensor,
@@ -73,6 +75,7 @@ export function SortableDayExercises({
   const [order, setOrder] = useState(exercises);
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
+  const [activeUnit, setActiveUnit] = useState<string | null>(null);
   const router = useRouter();
 
   const serverKey = exercises.map((e) => `${e.id}:${e.superset_group ?? ""}`).join(",");
@@ -131,6 +134,7 @@ export function SortableDayExercises({
   }
 
   function onUnitDragEnd(event: DragEndEvent) {
+    setActiveUnit(null);
     const { active, over } = event;
     if (!over || active.id === over.id) return;
     const from = units.findIndex((u) => u.key === active.id);
@@ -138,6 +142,8 @@ export function SortableDayExercises({
     if (from < 0 || to < 0) return;
     commit(arrayMove(units, from, to));
   }
+
+  const activeUnitData = activeUnit ? units.find((u) => u.key === activeUnit) : null;
 
   function reorderMembers(unitIndex: number, activeId: number, overId: number) {
     const ids = units[unitIndex].ids;
@@ -182,7 +188,9 @@ export function SortableDayExercises({
         id={`day-${dayId}`}
         sensors={sensors}
         collisionDetection={closestCenter}
+        onDragStart={(event: DragStartEvent) => setActiveUnit(String(event.active.id))}
         onDragEnd={onUnitDragEnd}
+        onDragCancel={() => setActiveUnit(null)}
       >
         <SortableContext items={units.map((u) => u.key)} strategy={verticalListSortingStrategy}>
           <div className="flex flex-col gap-1.5">
@@ -219,6 +227,13 @@ export function SortableDayExercises({
             })}
           </div>
         </SortableContext>
+        <DragOverlay>
+          {activeUnitData ? (
+            <UnitPreview
+              members={activeUnitData.ids.map((id) => byId.get(id)).filter(Boolean) as EditableExercise[]}
+            />
+          ) : null}
+        </DragOverlay>
       </DndContext>
     </div>
   );
@@ -284,10 +299,12 @@ function SupersetBlock({
   onReorder: (activeId: number, overId: number) => void;
 }) {
   const sortable = useSortable({ id });
+  const [activeMember, setActiveMember] = useState<number | null>(null);
   const sensors = useSensors(
     useSensor(PointerSensor, { activationConstraint: { distance: 6 } }),
     useSensor(KeyboardSensor, { coordinateGetter: sortableKeyboardCoordinates }),
   );
+  const activeMemberData = activeMember != null ? members.find((m) => m.id === activeMember) : null;
   return (
     <div
       ref={sortable.setNodeRef}
@@ -325,7 +342,10 @@ function SupersetBlock({
         id={`block-${id}`}
         sensors={sensors}
         collisionDetection={closestCenter}
+        onDragStart={(event: DragStartEvent) => setActiveMember(Number(String(event.active.id).slice(2)))}
+        onDragCancel={() => setActiveMember(null)}
         onDragEnd={(event) => {
+          setActiveMember(null);
           const { active, over } = event;
           if (over && active.id !== over.id) {
             onReorder(Number(String(active.id).slice(2)), Number(String(over.id).slice(2)));
@@ -339,6 +359,13 @@ function SupersetBlock({
             ))}
           </div>
         </SortableContext>
+        <DragOverlay>
+          {activeMemberData ? (
+            <div className="cursor-grabbing rounded-xl bg-surface p-3 shadow-lg ring-1 ring-brand-line">
+              <PreviewLine exercise={activeMemberData} />
+            </div>
+          ) : null}
+        </DragOverlay>
       </DndContext>
 
       {canAddNext ? (
@@ -398,8 +425,50 @@ function dragStyle(sortable: ReturnType<typeof useSortable>) {
   return {
     transform: CSS.Transform.toString(sortable.transform),
     transition: sortable.transition,
-    opacity: sortable.isDragging ? 0.6 : 1,
+    // The original becomes a faint placeholder slot; the DragOverlay shows the
+    // lifted copy that follows the finger.
+    opacity: sortable.isDragging ? 0.35 : 1,
   };
+}
+
+/** Read-only preview line used inside the drag overlay (name + summary). */
+function PreviewLine({ exercise }: { exercise: EditableExercise }) {
+  const progression = PROGRESSION_SHORT[exercise.progression_type] ?? titleCase(exercise.progression_type);
+  return (
+    <div>
+      <p className="truncate font-semibold">{exercise.name}</p>
+      <p className="mt-0.5 text-xs text-muted">
+        {titleCase(exercise.category)} · {progression} ·{" "}
+        <span className="font-display tracking-tight">TM {exercise.training_max}</span>
+      </p>
+    </div>
+  );
+}
+
+/** The lifted copy shown under the finger while dragging a top-level unit. */
+function UnitPreview({ members }: { members: EditableExercise[] }) {
+  if (members.length === 1) {
+    return (
+      <div className="cursor-grabbing rounded-xl bg-surface-muted p-3 shadow-lg ring-1 ring-line">
+        <PreviewLine exercise={members[0]} />
+      </div>
+    );
+  }
+  return (
+    <div className="cursor-grabbing rounded-2xl border border-brand-line bg-brand-soft p-2 shadow-lg">
+      <div className="eyebrow mb-1 flex items-center gap-1 px-1 text-[11px] text-brand-strong">
+        <Link2 aria-hidden="true" size={12} />
+        Superset
+      </div>
+      <div className="flex flex-col gap-1.5">
+        {members.map((member) => (
+          <div key={member.id} className="rounded-xl bg-surface p-3">
+            <PreviewLine exercise={member} />
+          </div>
+        ))}
+      </div>
+    </div>
+  );
 }
 
 function RowIconButton({
