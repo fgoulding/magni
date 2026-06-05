@@ -33,6 +33,9 @@ COPY --from=builder /app/.next/static ./.next/static
 COPY --from=builder /app/public ./public
 # schema.sql is read at runtime via process.cwd(); guarantee it's present.
 COPY --from=builder /app/src/lib/db/schema.sql ./src/lib/db/schema.sql
+# Admin CLIs (password reset, etc.) so they're runnable via `docker compose exec`.
+# They import better-sqlite3/argon2, which the standalone bundle already includes.
+COPY --from=builder /app/scripts ./scripts
 
 # Drop any DB the build baked in (initDb runs at import time). Real data lives
 # only in the mounted /data volume. Create it and hand everything to `node`.

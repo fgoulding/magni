@@ -137,6 +137,8 @@ and `fail2ban` on the host.
 
 ## 7. Common operations
 
+Run these from the deploy directory on the host (where `docker-compose.yml` is).
+
 ```bash
 docker compose ps                 # status + health
 docker compose logs -f app        # app logs
@@ -146,3 +148,42 @@ docker compose exec app sh        # shell inside the container (USER node)
 
 Health endpoint: `GET /api/health` → `{"status":"ok"}` (container healthcheck +
 uptime monitoring).
+
+### Redeploy / restart safely
+
+```bash
+docker compose pull && docker compose up -d   # pull latest image, recreate
+docker compose restart app                    # just bounce the app
+docker compose up -d --force-recreate app     # rebuild the container from the same image
+```
+
+All of these keep your data: the database lives in the **`app_data` volume**, not
+the container. Migrations re-run on boot and are **idempotent + additive-only**
+(56 `IF NOT EXISTS` / column guards), so a redeploy never rewrites or drops data.
+
+> ⚠️ The **only** command that destroys data is `docker compose down -v` — the
+> `-v` deletes the volume. Plain `docker compose down` (no `-v`) is safe. Take a
+> backup (§5) before anything you're unsure about.
+
+### Reset a password / recover an account
+
+No email is involved, so password recovery is a host-side admin action — you only
+need SSH/console access to the box, not the app. From the deploy directory:
+
+```bash
+# Set a specific password:
+docker compose exec app node scripts/reset-password.mjs user@example.com 'NewPassw0rd!'
+
+# …or generate a random temporary one (printed once, share it securely):
+docker compose exec app node scripts/reset-password.mjs user@example.com
+```
+
+It rehashes with argon2id (same cost as the app), writes directly to the live
+database, and **revokes the user's existing sessions**. The container already
+points `DB_PATH` at the mounted volume, so it edits real data. The user then logs
+in and sets their own in **Settings → Password** (the in-app change-password
+flow, which requires the current password).
+
+> Self-service: a logged-in user changes their own password under
+> **Settings → Password** — no host access needed. The CLI above is the
+> break-glass path for a forgotten password / full lockout.
