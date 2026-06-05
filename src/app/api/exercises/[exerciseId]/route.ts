@@ -1,4 +1,6 @@
 import { NextResponse } from "next/server";
+import { updateDefinitionExerciseType } from "@/features/programs/program-service";
+import type { ExerciseCategory } from "@/features/training-templates/types";
 import { assertSameOrigin, jsonError, isUnauthorized, numberParam } from "@/lib/api";
 import { getSettingNumber, requireUser } from "@/lib/auth";
 import { calculateWeight } from "@/lib/calculator";
@@ -12,6 +14,8 @@ type ExerciseUpdateBody = {
   name?: unknown;
   trainingMax?: unknown;
   move?: unknown;
+  category?: unknown;
+  progressionType?: unknown;
 };
 
 type ExerciseRow = {
@@ -19,11 +23,19 @@ type ExerciseRow = {
   day_id: number;
   name: string;
   training_max: number;
+  category: string;
+  progression_type: string;
   sort_order: number;
   shared_exercise_key: string | null;
   program_definition_id: number | null;
   program_run_id: number | null;
 };
+
+function validCategory(value: unknown, fallback: string): ExerciseCategory | null {
+  const category = value === undefined ? fallback : value;
+  if (category === "main" || category === "aux" || category === "accessory") return category;
+  return null;
+}
 
 export async function PUT(request: Request, context: RouteContext) {
   try {
@@ -98,6 +110,27 @@ export async function PUT(request: Request, context: RouteContext) {
         }
       })();
 
+      return NextResponse.json({ success: true });
+    }
+
+    if (body.category !== undefined || body.progressionType !== undefined) {
+      const category = validCategory(body.category, exercise.category);
+      if (!category) return jsonError("invalid category", 400);
+      const progressionType =
+        typeof body.progressionType === "string" && body.progressionType.trim()
+          ? body.progressionType.trim()
+          : exercise.progression_type;
+      try {
+        updateDefinitionExerciseType({ userId: user.id, legacyExerciseId: id, category, progressionType });
+      } catch (error) {
+        if (error instanceof Error && error.message.includes("does not support")) {
+          return jsonError(error.message, 400);
+        }
+        if (error instanceof Error && error.message.startsWith("Unknown training template")) {
+          return jsonError(error.message, 400);
+        }
+        throw error;
+      }
       return NextResponse.json({ success: true });
     }
 

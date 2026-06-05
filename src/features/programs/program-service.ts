@@ -1297,6 +1297,139 @@ export const addDefinitionExerciseForDay = db.transaction(
   },
 );
 
+/**
+ * Change an existing exercise's category and/or progression after creation. This
+ * re-materialises the exercise's week loading from the new template (logged
+ * sessions live in session_sets and are untouched), keeping the same id, name,
+ * training max, order, and superset grouping.
+ */
+export const updateDefinitionExerciseType = db.transaction(
+  ({
+    userId,
+    legacyExerciseId,
+    category,
+    progressionType,
+  }: {
+    userId: number;
+    legacyExerciseId: number;
+    category: ExerciseCategory;
+    progressionType: string;
+  }): void => {
+    const row = db
+      .prepare(
+        `
+          SELECT
+            e.training_max AS trainingMax,
+            pd.num_weeks AS numWeeks,
+            pde.id AS definitionExerciseId
+          FROM exercises e
+          JOIN days d ON d.id = e.day_id
+          JOIN programs p ON p.id = d.program_id
+          JOIN program_definitions pd ON pd.id = p.program_definition_id
+          JOIN program_runs pr ON pr.id = p.program_run_id
+          JOIN program_definition_days pdd
+            ON pdd.program_definition_id = pd.id
+           AND pdd.stable_key = d.shared_day_key
+           AND pdd.archived_at IS NULL
+          JOIN program_definition_exercises pde
+            ON pde.program_definition_day_id = pdd.id
+           AND pde.stable_key = e.shared_exercise_key
+           AND pde.archived_at IS NULL
+          WHERE e.id = ?
+            AND e.archived_at IS NULL
+            AND d.archived_at IS NULL
+            AND pr.user_id = ?
+            AND pr.archived_at IS NULL
+            AND pr.status != 'archived'
+        `,
+      )
+      .get(legacyExerciseId, userId) as
+      | { trainingMax: number; numWeeks: number; definitionExerciseId: number }
+      | undefined;
+    if (!row) throw new Error("Exercise not found");
+
+    const template = getTrainingTemplate(normalizeTemplateId(progressionType));
+    if (!template.supportedCategories.includes(category)) {
+      throw new Error(`${template.id} does not support ${category} exercises`);
+    }
+
+    const autoProgression = template.autoProgression ? 1 : 0;
+    db.prepare(
+      "UPDATE program_definition_exercises SET category = ?, progression_type = ? WHERE id = ?",
+    ).run(category, template.id, row.definitionExerciseId);
+    db.prepare(
+      "UPDATE exercises SET category = ?, progression_type = ?, auto_progression_enabled = ? WHERE id = ?",
+    ).run(category, template.id, autoProgression, legacyExerciseId);
+
+    // Drop the old plan and rebuild it from the new template/category.
+    db.prepare("DELETE FROM program_definition_week_settings WHERE program_definition_exercise_id = ?").run(
+      row.definitionExerciseId,
+    );
+    db.prepare("DELETE FROM week_settings WHERE exercise_id = ?").run(legacyExerciseId);
+
+    const rounding = getSettingNumber(userId, "rounding", 2.5);
+    const templateWeeks = getTemplateWeeks(template.id, category);
+    const insertDefinitionWeek = db.prepare(
+      `
+        INSERT INTO program_definition_week_settings (
+          program_definition_exercise_id, week_number, set_number, intensity_pct, reps, sets, rep_out_target
+        ) VALUES (?, ?, ?, ?, ?, ?, ?)
+      `,
+    );
+    const insertLegacyWeek = db.prepare(
+      `
+        INSERT INTO week_settings (
+          exercise_id, week_number, set_number, intensity_pct, reps, sets, rep_out_target, calculated_weight
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+      `,
+    );
+
+    for (let week = 1; week <= row.numWeeks; week++) {
+      const templateWeek = templateWeekFor(templateWeeks, week);
+      const sets =
+        templateWeek.ramp && templateWeek.ramp.length > 0
+          ? templateWeek.ramp.map((rampSet) => ({
+              setNumber: rampSet.setNumber,
+              intensityPct: rampSet.intensityPct,
+              reps: rampSet.reps,
+              sets: 1,
+              repOutTarget: rampSet.repOutTarget,
+            }))
+          : [
+              {
+                setNumber: 1,
+                intensityPct: templateWeek.intensityPct,
+                reps: templateWeek.reps,
+                sets: templateWeek.sets,
+                repOutTarget: templateWeek.repOutTarget,
+              },
+            ];
+
+      for (const set of sets) {
+        insertDefinitionWeek.run(
+          row.definitionExerciseId,
+          week,
+          set.setNumber,
+          set.intensityPct,
+          set.reps,
+          set.sets,
+          set.repOutTarget,
+        );
+        insertLegacyWeek.run(
+          legacyExerciseId,
+          week,
+          set.setNumber,
+          set.intensityPct,
+          set.reps,
+          set.sets,
+          set.repOutTarget,
+          calculateWeight(row.trainingMax, set.intensityPct, rounding),
+        );
+      }
+    }
+  },
+);
+
 export const updateProgramRun = db.transaction(
   ({
     userId,

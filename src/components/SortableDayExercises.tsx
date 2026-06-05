@@ -22,6 +22,7 @@ import { useRouter } from "next/navigation";
 import { useState } from "react";
 import { DeleteButton } from "@/components/DeleteButton";
 import { ExerciseNameEditor } from "@/components/ExerciseNameEditor";
+import { ExerciseTypeEditor } from "@/components/ExerciseTypeEditor";
 import { SupersetLink } from "@/components/SupersetLink";
 import { TrainingMaxEditor } from "@/components/TrainingMaxEditor";
 
@@ -193,9 +194,11 @@ function SortableExerciseRow({
             </button>
             <div className="min-w-0">
               <ExerciseNameEditor exerciseId={exercise.id} initialName={exercise.name} />
-              <p className="mt-1 text-sm text-muted">
-                <span className="capitalize">{exercise.category}</span> · {exercise.progression_type}
-              </p>
+              <ExerciseTypeEditor
+                exerciseId={exercise.id}
+                category={exercise.category}
+                progressionType={exercise.progression_type}
+              />
               <div className="mt-1.5 flex items-center gap-1.5 text-xs font-semibold text-faint">
                 TM
                 <TrainingMaxEditor exerciseId={exercise.id} initialValue={exercise.training_max} />
