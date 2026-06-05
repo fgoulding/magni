@@ -21,8 +21,9 @@ const securityHeaders = [
     : []),
   {
     // Self-hosted only; no third-party scripts/styles. 'unsafe-inline' is
-    // required for Next's hydration bootstrap + inline styles (nonce-based CSP
-    // would need middleware — a reasonable future hardening step).
+    // required for Next's inline RSC-streaming/hydration scripts (dynamic per
+    // render, so not hashable). Moving to a per-request nonce is a deliberate
+    // deferred hardening step — see docs/security.md ("Accepted residual risks").
     key: "Content-Security-Policy",
     value: [
       "default-src 'self'",
