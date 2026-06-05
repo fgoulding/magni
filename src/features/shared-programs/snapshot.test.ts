@@ -106,6 +106,34 @@ describe("shared program snapshots", () => {
     expect(parseSharedProgramSnapshot(serializeSharedProgramSnapshot(snapshot))).toEqual(snapshot);
   });
 
+  it("accepts a ramp week whose week-level reps/intensity are placeholder zeros", () => {
+    // Reverse-materialising a ramped lift (SBS etc.) yields week-level reps:0
+    // (the ramp carries the real per-set values). Duplicating/sharing must not
+    // reject that.
+    const snapshot = makeSnapshot({
+      exercises: [
+        {
+          ...makeExercise(),
+          weeks: [
+            {
+              weekNumber: 1,
+              intensityPct: 0,
+              reps: 0,
+              sets: 2,
+              repOutTarget: 0,
+              ramp: [
+                { setNumber: 1, intensityPct: 0.7, reps: 5, repOutTarget: 10 },
+                { setNumber: 2, intensityPct: 0.8, reps: 3, repOutTarget: 6 },
+              ],
+            },
+          ],
+        },
+      ],
+    });
+
+    expect(parseSharedProgramSnapshot(serializeSharedProgramSnapshot(snapshot))).toEqual(snapshot);
+  });
+
   it("requires stable day and exercise keys", () => {
     expect(() =>
       parseSharedProgramSnapshot(

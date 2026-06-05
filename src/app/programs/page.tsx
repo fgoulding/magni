@@ -1,5 +1,5 @@
 import Link from "next/link";
-import { CalendarDays, Dumbbell, Library, Plus, Trash2 } from "lucide-react";
+import { CalendarDays, Copy, Dumbbell, Library, Plus, Trash2 } from "lucide-react";
 import { redirect } from "next/navigation";
 import { DeleteButton } from "@/components/DeleteButton";
 import { ProgramActiveToggle } from "@/components/ProgramActiveToggle";
@@ -91,13 +91,20 @@ function renderProgramCard(program: ProgramLibraryItem) {
         ) : null}
       </div>
 
-      <div className="grid grid-cols-2 border-t border-line text-sm font-semibold text-muted">
+      <div className="grid grid-cols-3 border-t border-line text-sm font-semibold text-muted">
         <Link
           href={`/programs/${program.id}`}
           className="touch-target inline-flex items-center justify-center gap-1.5 border-r border-line transition-colors active:bg-surface-muted"
         >
           <Dumbbell aria-hidden="true" size={15} className="text-brand-strong" />
           Edit
+        </Link>
+        <Link
+          href={`/programs/new?from=${program.id}`}
+          className="touch-target inline-flex items-center justify-center gap-1.5 border-r border-line transition-colors active:bg-surface-muted"
+        >
+          <Copy aria-hidden="true" size={15} className="text-faint" />
+          Duplicate
         </Link>
         <DeleteButton
           endpoint={`/api/programs/${program.id}`}

@@ -155,7 +155,11 @@ function validateWeek(value: unknown): TemplateWeek {
   return {
     weekNumber: assertPositiveInteger(value.weekNumber, "Week number"),
     intensityPct: assertIntensityPct(value.intensityPct),
-    reps: assertPositiveInteger(value.reps, "Week reps"),
+    // When a ramp is present the week-level reps are an unused placeholder (the
+    // per-set ramp carries the real values), so allow 0; otherwise require >= 1.
+    reps: ramp
+      ? assertNonNegativeInteger(value.reps, "Week reps")
+      : assertPositiveInteger(value.reps, "Week reps"),
     sets: assertPositiveInteger(value.sets, "Week sets"),
     repOutTarget: assertNonNegativeInteger(value.repOutTarget, "Week rep-out target"),
     ramp,
