@@ -1,7 +1,7 @@
 "use client";
 
-import { Check, Circle } from "lucide-react";
-import { useState } from "react";
+import { Check, Circle, Dumbbell } from "lucide-react";
+import { type ReactNode, useState } from "react";
 import { AddSessionExerciseForm } from "@/components/AddSessionExerciseForm";
 import { ErrorBanner } from "@/components/ErrorBanner";
 import { WorkoutTmEditor, type TmUpdatedSet } from "@/components/WorkoutTmEditor";
@@ -28,6 +28,11 @@ export function WorkoutCard({
   startLabel = "Start Workout",
   scheduledDate,
   showSkip = true,
+  nextLifts,
+  scheduleLabel,
+  statusLine,
+  holdSlot,
+  eyebrow,
 }: {
   programId: number;
   dayId: number;
@@ -39,6 +44,14 @@ export function WorkoutCard({
   startLabel?: string;
   scheduledDate?: string;
   showSkip?: boolean;
+  /** Next-lift preview shown in the idle (pre-start) state. */
+  nextLifts?: { name: string; detail: string }[];
+  scheduleLabel?: string;
+  statusLine?: string;
+  /** Pause-run control, rendered in the idle header. */
+  holdSlot?: ReactNode;
+  /** Small label above the program name (e.g. "Scheduled today"). */
+  eyebrow?: string;
 }) {
   const [session, setSession] = useState<SessionResponse | null>(null);
   const [currentGroupIdx, setCurrentGroupIdx] = useState(0);
@@ -189,18 +202,68 @@ export function WorkoutCard({
   }
 
   const isLive = Boolean(session) && !finished && !skipped;
+  const idle = !session && !finished && !skipped;
+  const showPreview = idle && (Boolean(nextLifts?.length) || Boolean(scheduleLabel) || Boolean(statusLine));
 
   return (
     <section className={`card overflow-hidden ${isLive ? "sticky top-3 z-10 border-brand-line" : ""}`}>
-      <div className="flex items-center gap-3 px-4 py-3.5">
-        <span aria-hidden="true" className={`h-9 w-1 rounded-full ${isLive ? "bg-brand" : "bg-line"}`} />
-        <div className="min-w-0">
-          <p className="display truncate text-lg leading-tight">{programName}</p>
-          <p className="eyebrow mt-0.5 text-[10px] text-faint">
-            Day {currentDay} · Week {currentWeek} · {dayName}
-          </p>
+      {showPreview ? (
+        <>
+          <div className="h-1 bg-brand" aria-hidden="true" />
+          <div className="p-4">
+            <div className="flex items-start justify-between gap-3">
+              <div className="min-w-0">
+                {eyebrow ? (
+                  <p className="eyebrow text-[11px] text-brand-strong">{eyebrow}</p>
+                ) : null}
+                <p className="display mt-1 truncate text-2xl leading-tight">{programName}</p>
+                <p className="mt-1 text-sm text-muted">
+                  Week {currentWeek} · Day {currentDay} · {dayName}
+                </p>
+              </div>
+              {scheduleLabel ? (
+                <span className="shrink-0 rounded-full bg-surface-muted px-2.5 py-1 text-xs font-semibold text-muted">
+                  {scheduleLabel}
+                </span>
+              ) : null}
+            </div>
+
+            {nextLifts && nextLifts.length > 0 ? (
+              <div className="mt-4 rounded-xl bg-surface-muted p-3.5">
+                <div className="eyebrow mb-2.5 flex items-center gap-1.5 text-[11px] text-brand-strong">
+                  <Dumbbell aria-hidden="true" size={13} />
+                  Next lift
+                </div>
+                <div className="flex flex-col gap-2.5">
+                  {nextLifts.map((lift) => (
+                    <div key={lift.name} className="flex items-center justify-between gap-3 text-sm">
+                      <span className="font-semibold">{lift.name}</span>
+                      <span className="font-display text-base tracking-tight text-muted">{lift.detail}</span>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            ) : null}
+
+            {statusLine || holdSlot ? (
+              <div className="mt-3.5 flex items-center justify-between text-xs text-faint">
+                <span>{statusLine}</span>
+                {holdSlot}
+              </div>
+            ) : null}
+          </div>
+        </>
+      ) : (
+        <div className="flex items-center gap-3 px-4 py-3.5">
+          <span aria-hidden="true" className={`h-9 w-1 rounded-full ${isLive ? "bg-brand" : "bg-line"}`} />
+          <div className="min-w-0">
+            <p className="display truncate text-lg leading-tight">{programName}</p>
+            <p className="eyebrow mt-0.5 text-[10px] text-faint">
+              Day {currentDay} · Week {currentWeek} · {dayName}
+            </p>
+          </div>
         </div>
-      </div>
+      )}
 
       {skipped ? (
         <div className="border-t border-line px-4 py-7 text-center">

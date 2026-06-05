@@ -1,5 +1,5 @@
 import Link from "next/link";
-import { CalendarDays, ChevronRight, Dumbbell, LineChart } from "lucide-react";
+import { CalendarDays, ChevronRight, LineChart } from "lucide-react";
 import { redirect } from "next/navigation";
 import { ProgramHoldDialog } from "@/components/ProgramHoldForm";
 import { WorkoutCard } from "@/components/WorkoutCard";
@@ -21,90 +21,55 @@ function finishedMessage(status: TodayWorkoutSummary["today_session_status"]): s
   return "Workout complete today";
 }
 
+function statusLineFor(row: TodayWorkoutSummary): string {
+  if (row.scheduled_date) return `Originally scheduled ${row.scheduled_date}`;
+  if (row.last_session_date) return `Last logged ${row.last_session_date}`;
+  return "No sessions logged yet";
+}
+
 function renderWorkout(row: TodayWorkoutSummary, label: string) {
+  const key = `${row.program_id}-${row.definition_day_id}-${row.scheduled_date ?? label}`;
+
+  if (row.today_session_status) {
+    return (
+      <section key={key} className="card px-4 py-6 text-center">
+        <p className="display text-xl text-success-ink">{finishedMessage(row.today_session_status)}</p>
+        <p className="mt-1 text-sm text-muted">{row.day_name} is logged for today.</p>
+        <Link
+          href="/history"
+          className="touch-target mt-4 inline-flex items-center justify-center gap-2 rounded-xl border border-line bg-surface px-4 text-sm font-semibold text-foreground transition-colors active:bg-surface-muted"
+        >
+          <LineChart aria-hidden="true" size={16} />
+          Stats
+        </Link>
+      </section>
+    );
+  }
+
   return (
-    <section
-      key={`${row.program_id}-${row.definition_day_id}-${row.scheduled_date ?? label}`}
-      className="flex flex-col gap-3"
-    >
-      <div className="card overflow-hidden">
-        <div className="h-1 bg-brand" aria-hidden="true" />
-        <div className="p-4">
-          <div className="flex items-start justify-between gap-3">
-            <div className="min-w-0">
-              <p className="eyebrow text-[11px] text-brand-strong">{label}</p>
-              <h2 className="display mt-1.5 truncate text-3xl">{row.program_name}</h2>
-              <p className="mt-1 text-sm text-muted">
-                Week {row.current_week} · Day {row.day_number} · {row.day_name}
-              </p>
-            </div>
-            <span className="shrink-0 rounded-full bg-surface-muted px-2.5 py-1 text-xs font-semibold text-muted">
-              {row.schedule_label}
-            </span>
-          </div>
-
-          {row.next_lifts.length > 0 ? (
-            <div className="mt-4 rounded-xl bg-surface-muted p-3.5">
-              <div className="eyebrow mb-2.5 flex items-center gap-1.5 text-[11px] text-brand-strong">
-                <Dumbbell aria-hidden="true" size={13} />
-                Next lift
-              </div>
-              <div className="flex flex-col gap-2.5">
-                {row.next_lifts.map((lift) => (
-                  <div key={lift.name} className="flex items-center justify-between gap-3 text-sm">
-                    <span className="font-semibold">{lift.name}</span>
-                    <span className="font-display text-base tracking-tight text-muted">
-                      {formatLift(lift)}
-                    </span>
-                  </div>
-                ))}
-              </div>
-            </div>
-          ) : null}
-
-          <div className="mt-3.5 flex items-center justify-between text-xs text-faint">
-            <span>
-              {row.scheduled_date
-                ? `Originally scheduled ${row.scheduled_date}`
-                : row.last_session_date
-                  ? `Last logged ${row.last_session_date}`
-                  : "No sessions logged yet"}
-            </span>
-            <ProgramHoldDialog
-              programId={row.program_id}
-              programName={row.program_name}
-              activeHold={null}
-              triggerLabel="Pause run"
-              triggerClassName="inline-flex items-center font-semibold text-brand-strong"
-            />
-          </div>
-        </div>
-      </div>
-
-      {row.today_session_status ? (
-        <section className="card px-4 py-6 text-center">
-          <p className="display text-xl text-success-ink">{finishedMessage(row.today_session_status)}</p>
-          <p className="mt-1 text-sm text-muted">{row.day_name} is logged for today.</p>
-          <Link
-            href="/history"
-            className="touch-target mt-4 inline-flex items-center justify-center gap-2 rounded-xl border border-line bg-surface px-4 text-sm font-semibold text-foreground transition-colors active:bg-surface-muted"
-          >
-            <LineChart aria-hidden="true" size={16} />
-            Stats
-          </Link>
-        </section>
-      ) : (
-        <WorkoutCard
+    <WorkoutCard
+      key={key}
+      programId={row.program_id}
+      dayId={row.day_id}
+      definitionDayId={row.definition_day_id}
+      programName={row.program_name}
+      dayName={row.day_name}
+      currentWeek={row.current_week}
+      currentDay={row.day_number}
+      eyebrow={label}
+      scheduleLabel={row.schedule_label}
+      statusLine={statusLineFor(row)}
+      nextLifts={row.next_lifts.map((lift) => ({ name: lift.name, detail: formatLift(lift) }))}
+      holdSlot={
+        <ProgramHoldDialog
           programId={row.program_id}
-          dayId={row.day_id}
-          definitionDayId={row.definition_day_id}
           programName={row.program_name}
-          dayName={row.day_name}
-          currentWeek={row.current_week}
-          currentDay={row.day_number}
+          activeHold={null}
+          triggerLabel="Pause run"
+          triggerClassName="inline-flex items-center font-semibold text-brand-strong"
         />
-      )}
-    </section>
+      }
+    />
   );
 }
 
