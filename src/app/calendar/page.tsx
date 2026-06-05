@@ -7,7 +7,7 @@ import {
   isDateHeldForRun,
   type ProgramDaySummary,
 } from "@/features/programs/program-service";
-import { requireUser } from "@/lib/auth";
+import { getSettingNumber, requireUser } from "@/lib/auth";
 import { parseDateKey, toLocalDateKey } from "@/lib/date-key";
 import { db } from "@/lib/db";
 
@@ -307,6 +307,7 @@ export default async function CalendarPage({ searchParams }: CalendarPageProps) 
   const monthStart = parseMonth(params?.month, today);
   const monthEnd = new Date(monthStart.getFullYear(), monthStart.getMonth() + 1, 0);
   const monthDays = buildMonthDays(monthStart);
+  const rounding = getSettingNumber(user.id, "rounding", 2.5);
   const historyEvents = getHistoryEvents(user.id, monthStart, monthEnd);
   const loggedWorkoutKeys = new Set(
     historyEvents.map((event) => workoutKey(event.scheduledDate ?? event.date, event.programId, event.dayId)),
@@ -444,6 +445,7 @@ export default async function CalendarPage({ searchParams }: CalendarPageProps) 
                 scheduledDate={selectedEvent.kind === "scheduled" ? selectedEvent.scheduledDate : undefined}
                 startLabel={actionLabel(selectedEvent.kind)}
                 showSkip={selectedEvent.kind !== "completed"}
+                rounding={rounding}
               />
             ) : (
               <div className="px-4 pb-4">

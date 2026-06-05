@@ -13,11 +13,14 @@ export function WorkoutTmEditor({
   sessionId,
   exerciseName,
   value,
+  onPreview,
   onUpdated,
 }: {
   sessionId: number;
   exerciseName: string;
   value: number;
+  /** Fired on every valid edit so the card can re-price the weight live. */
+  onPreview?: (trainingMax: number) => void;
   onUpdated: (sets: TmUpdatedSet[]) => void;
 }) {
   const [val, setVal] = useState(String(value));
@@ -64,7 +67,13 @@ export function WorkoutTmEditor({
         min={1}
         step={0.1}
         value={val}
-        onChange={(event) => setVal(event.target.value)}
+        onChange={(event) => {
+          setVal(event.target.value);
+          const parsed = Number(event.target.value);
+          if (onPreview && Number.isFinite(parsed) && parsed > 0) {
+            onPreview(Math.round(parsed * 10) / 10);
+          }
+        }}
         onBlur={save}
         onKeyDown={(event) => {
           if (event.key === "Enter") {

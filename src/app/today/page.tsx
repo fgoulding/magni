@@ -9,7 +9,7 @@ import {
   type TodayLiftPreview,
   type TodayWorkoutSummary,
 } from "@/features/programs/program-service";
-import { requireUser } from "@/lib/auth";
+import { getSettingNumber, requireUser } from "@/lib/auth";
 import { toLocalDateKey } from "@/lib/date-key";
 
 function formatLift(lift: TodayLiftPreview): string {
@@ -28,7 +28,7 @@ function statusLineFor(row: TodayWorkoutSummary): string {
   return "No sessions logged yet";
 }
 
-function renderWorkout(row: TodayWorkoutSummary, label: string) {
+function renderWorkout(row: TodayWorkoutSummary, label: string, rounding: number) {
   const key = `${row.program_id}-${row.definition_day_id}-${row.scheduled_date ?? label}`;
 
   if (row.today_session_status) {
@@ -58,6 +58,7 @@ function renderWorkout(row: TodayWorkoutSummary, label: string) {
       currentWeek={row.current_week}
       currentDay={row.day_number}
       eyebrow={label}
+      rounding={rounding}
       scheduleLabel={row.schedule_label}
       statusLine={statusLineFor(row)}
       nextLifts={row.next_lifts.map((lift) => ({ name: lift.name, detail: formatLift(lift) }))}
@@ -84,6 +85,7 @@ export default async function TodayPage() {
   }
 
   const dashboard = getTodayWorkoutDashboard(user.id);
+  const rounding = getSettingNumber(user.id, "rounding", 2.5);
   const todayKey = toLocalDateKey(new Date());
   const heldRuns = getProgramLibrary(user.id).activeRuns.filter(
     (run) =>
@@ -164,11 +166,11 @@ export default async function TodayPage() {
         </>
       ) : (
         <>
-          {dashboard.scheduledToday.map((row) => renderWorkout(row, "Scheduled today"))}
+          {dashboard.scheduledToday.map((row) => renderWorkout(row, "Scheduled today", rounding))}
           {dashboard.otherActiveRuns.length > 0 ? (
             <section className="flex flex-col gap-3">
               <h2 className="eyebrow text-xs text-faint">Other active runs</h2>
-              {dashboard.otherActiveRuns.map((row) => renderWorkout(row, "Unscheduled run"))}
+              {dashboard.otherActiveRuns.map((row) => renderWorkout(row, "Unscheduled run", rounding))}
             </section>
           ) : null}
         </>

@@ -10,6 +10,7 @@ export type WorkoutSet = {
   actual_weight: number | null;
   superset_group: string | null;
   training_max?: number | null;
+  intensity_pct?: number | null;
   progression_type?: string;
 };
 

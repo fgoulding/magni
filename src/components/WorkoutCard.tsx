@@ -1,10 +1,11 @@
 "use client";
 
 import { Check, Circle, Dumbbell, Trophy } from "lucide-react";
-import { type ReactNode, useState } from "react";
+import { type ReactNode, useEffect, useState } from "react";
 import { AddSessionExerciseForm } from "@/components/AddSessionExerciseForm";
 import { ErrorBanner } from "@/components/ErrorBanner";
 import { WorkoutTmEditor, type TmUpdatedSet } from "@/components/WorkoutTmEditor";
+import { calculateWeight } from "@/lib/calculator";
 import {
   buildGroups,
   buildSummaryRows,
@@ -34,6 +35,7 @@ export function WorkoutCard({
   statusLine,
   holdSlot,
   eyebrow,
+  rounding = 2.5,
 }: {
   programId: number;
   dayId: number;
@@ -53,6 +55,8 @@ export function WorkoutCard({
   holdSlot?: ReactNode;
   /** Small label above the program name (e.g. "Scheduled today"). */
   eyebrow?: string;
+  /** User's weight-rounding setting, for live TM-driven weight recompute. */
+  rounding?: number;
 }) {
   const [session, setSession] = useState<SessionResponse | null>(null);
   const [currentGroupIdx, setCurrentGroupIdx] = useState(0);
@@ -81,6 +85,51 @@ export function WorkoutCard({
   const liftCount = summaryRows.length;
   const completedGroupCount = groups.filter((group) => allSetsInGroupLogged(group)).length;
 
+  // Load a session into the card, restoring any already-logged sets (a set with
+  // actual_reps is logged) and jumping to the first unfinished group. Used both
+  // when starting/resuming and when remounting onto an in-progress workout.
+  function loadSession(body: SessionResponse) {
+    setSession(body);
+    setValues(
+      Object.fromEntries(body.sets.map((set) => [set.id, set.actual_reps ?? set.rep_out_target])),
+    );
+    setAdded(
+      Object.fromEntries(
+        body.sets.filter((set) => set.actual_weight != null).map((set) => [set.id, set.actual_weight as number]),
+      ),
+    );
+    const logged = new Set(body.sets.filter((set) => set.actual_reps != null).map((set) => set.id));
+    setCompletedSetIds(logged);
+    const gs = buildGroups(body.sets);
+    const firstUnfinished = gs.findIndex((group) => {
+      const last = group.sets[group.sets.length - 1];
+      return group.sets.length > 1 ? !logged.has(last.id) : !group.sets.every((s) => logged.has(s.id));
+    });
+    setCurrentGroupIdx(firstUnfinished === -1 ? Math.max(0, gs.length - 1) : firstUnfinished);
+  }
+
+  // Resume an in-progress workout when landing back on this card (e.g. after
+  // switching tabs) so logged sets and weights aren't lost. Read-only fetch.
+  useEffect(() => {
+    if (session || finished || skipped) return;
+    let active = true;
+    const params = new URLSearchParams({
+      dayId: String(dayId),
+      definitionDayId: String(definitionDayId ?? ""),
+      week: String(currentWeek),
+    });
+    fetch(`/api/programs/${programId}/sessions/current?${params.toString()}`)
+      .then((response) => (response.ok ? response.json() : null))
+      .then((data: SessionResponse | null) => {
+        if (active && data && data.sets) loadSession(data);
+      })
+      .catch(() => {});
+    return () => {
+      active = false;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [programId, dayId, definitionDayId, currentWeek]);
+
   async function startSession() {
     setError("");
     setSubmitting(true);
@@ -92,19 +141,37 @@ export function WorkoutCard({
       });
       const body = (await response.json()) as SessionResponse & { error?: string };
       if (!response.ok) throw new Error(body.error ?? "Could not start workout");
-      setSession(body);
-      setValues(
-        Object.fromEntries(
-          body.sets.map((set) => [set.id, set.actual_reps ?? set.rep_out_target]),
-        ),
-      );
-      setCompletedSetIds(new Set());
-      setCurrentGroupIdx(0);
+      loadSession(body);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Could not start workout");
     } finally {
       setSubmitting(false);
     }
+  }
+
+  // Live: as the TM field changes, re-price this exercise's unlogged sets right
+  // away (using the same formula as the server) so the working weight tracks the
+  // TM before you commit. Persisting happens on blur via applyTmUpdate.
+  function previewTm(exerciseName: string, trainingMax: number) {
+    setSession((prev) =>
+      prev
+        ? {
+            ...prev,
+            sets: prev.sets.map((set) =>
+              set.exercise_name === exerciseName
+                ? {
+                    ...set,
+                    training_max: trainingMax,
+                    calculated_weight:
+                      set.actual_reps == null && set.intensity_pct != null
+                        ? calculateWeight(trainingMax, set.intensity_pct, rounding)
+                        : set.calculated_weight,
+                  }
+                : set,
+            ),
+          }
+        : prev,
+    );
   }
 
   function applyTmUpdate(updated: TmUpdatedSet[]) {
@@ -210,6 +277,17 @@ export function WorkoutCard({
 
   function selectGroup(groupIndex: number) {
     setCurrentGroupIdx(groupIndex);
+  }
+
+  // Re-open a logged group for editing (e.g. to fix a wrong rep count). Clearing
+  // it from completedSetIds re-enables the inputs, pre-filled with the logged
+  // values; logging again overwrites the saved set.
+  function editGroup(group: WorkoutGroup) {
+    setCompletedSetIds((prev) => {
+      const next = new Set(prev);
+      for (const set of group.sets) next.delete(set.id);
+      return next;
+    });
   }
 
   function allSetsInGroupLogged(group: WorkoutGroup): boolean {
@@ -439,6 +517,7 @@ export function WorkoutCard({
                       sessionId={session.id}
                       exerciseName={currentGroup.sets[0].exercise_name}
                       value={currentGroup.sets[0].training_max}
+                      onPreview={(tm) => previewTm(currentGroup.sets[0].exercise_name, tm)}
                       onUpdated={applyTmUpdate}
                     />
                   ) : null}
@@ -525,10 +604,19 @@ export function WorkoutCard({
                 )}
 
                 {allSetsInGroupLogged(currentGroup) ? (
-                  <p className="mt-3 inline-flex items-center gap-1.5 text-sm font-semibold text-success-ink">
-                    <Check aria-hidden="true" size={15} strokeWidth={3} />
-                    Logged
-                  </p>
+                  <div className="mt-3 flex items-center justify-between gap-3">
+                    <span className="inline-flex items-center gap-1.5 text-sm font-semibold text-success-ink">
+                      <Check aria-hidden="true" size={15} strokeWidth={3} />
+                      Logged
+                    </span>
+                    <button
+                      type="button"
+                      onClick={() => editGroup(currentGroup)}
+                      className="touch-target rounded-xl border border-line bg-surface px-3 text-sm font-semibold text-muted transition-colors active:bg-surface-muted"
+                    >
+                      Edit
+                    </button>
+                  </div>
                 ) : (
                   <button
                     type="button"

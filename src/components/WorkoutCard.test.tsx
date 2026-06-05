@@ -29,6 +29,21 @@ function jsonResponse(body: unknown, init?: ResponseInit): Response {
   });
 }
 
+// The card fetches /sessions/current on mount to resume an in-progress workout.
+// Route that to "no session" so it doesn't consume each test's mocked sequence;
+// the inner mock still records the real calls the assertions check.
+function stubFetch(inner: ReturnType<typeof vi.fn>) {
+  const call = inner as unknown as (url: string, init?: RequestInit) => Promise<Response>;
+  vi.stubGlobal(
+    "fetch",
+    vi.fn((url: string, init?: RequestInit) =>
+      typeof url === "string" && url.includes("/sessions/current")
+        ? Promise.resolve(jsonResponse(null))
+        : call(url, init),
+    ),
+  );
+}
+
 function makeCardProps(overrides?: Partial<Parameters<typeof WorkoutCard>[0]>) {
   return {
     programId: 1,
@@ -82,7 +97,7 @@ describe("WorkoutCard", () => {
           ],
         }),
     );
-    vi.stubGlobal("fetch", fetchMock);
+    stubFetch(fetchMock);
 
     render(<WorkoutCard {...makeCardProps()} />);
     await user.click(screen.getByRole("button", { name: "Start Workout" }));
@@ -108,7 +123,7 @@ describe("WorkoutCard", () => {
         }),
       )
       .mockResolvedValueOnce(jsonResponse({ success: true }));
-    vi.stubGlobal("fetch", fetchMock);
+    stubFetch(fetchMock);
 
     render(<WorkoutCard {...makeCardProps()} />);
     await user.click(screen.getByRole("button", { name: "Start Workout" }));
@@ -139,7 +154,7 @@ describe("WorkoutCard", () => {
       )
       .mockResolvedValueOnce(jsonResponse({ success: true }))
       .mockResolvedValueOnce(jsonResponse({ success: true }));
-    vi.stubGlobal("fetch", fetchMock);
+    stubFetch(fetchMock);
 
     render(<WorkoutCard {...makeCardProps()} />);
     await user.click(screen.getByRole("button", { name: "Start Workout" }));
@@ -171,7 +186,7 @@ describe("WorkoutCard", () => {
       .mockResolvedValueOnce(jsonResponse({ success: true }))
       .mockResolvedValueOnce(jsonResponse({ success: true }))
       .mockResolvedValueOnce(jsonResponse({ success: true }));
-    vi.stubGlobal("fetch", fetchMock);
+    stubFetch(fetchMock);
 
     render(<WorkoutCard {...makeCardProps()} />);
     await user.click(screen.getByRole("button", { name: "Start Workout" }));
@@ -202,7 +217,7 @@ describe("WorkoutCard", () => {
         }),
       )
       .mockResolvedValueOnce(jsonResponse({ error: "Network error" }, { status: 503 }));
-    vi.stubGlobal("fetch", fetchMock);
+    stubFetch(fetchMock);
 
     render(<WorkoutCard {...makeCardProps()} />);
     await user.click(screen.getByRole("button", { name: "Start Workout" }));
@@ -214,10 +229,39 @@ describe("WorkoutCard", () => {
     expect(screen.getByRole("button", { name: "Log Set" })).toBeInTheDocument();
   });
 
+  it("resumes an in-progress workout, restoring logged sets, and re-opens one to edit", async () => {
+    const user = userEvent.setup();
+    const session = {
+      id: 42,
+      sets: [
+        { id: 7, exercise_name: "Squat", reps: 5, sets: 1, set_number: 1, rep_out_target: 5, calculated_weight: 225, actual_reps: 5, actual_weight: 225 },
+      ],
+    };
+    vi.stubGlobal(
+      "fetch",
+      vi.fn((url: string) =>
+        typeof url === "string" && url.includes("/sessions/current")
+          ? Promise.resolve(jsonResponse(session))
+          : Promise.resolve(jsonResponse({ success: true })),
+      ),
+    );
+
+    render(<WorkoutCard {...makeCardProps()} />);
+
+    // Resumed straight into the workout (no Start), with the set shown as logged.
+    expect(await screen.findByText("Squat")).toBeInTheDocument();
+    expect(screen.getByText("Logged")).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Start Workout" })).not.toBeInTheDocument();
+
+    // Editing re-enables the reps input (pre-filled with the logged value).
+    await user.click(screen.getByRole("button", { name: "Edit" }));
+    expect(screen.getByRole("spinbutton", { name: "Reps" })).toBeInTheDocument();
+  });
+
   it("skips a workout", async () => {
     const user = userEvent.setup();
     const fetchMock = vi.fn().mockResolvedValueOnce(jsonResponse({ success: true }));
-    vi.stubGlobal("fetch", fetchMock);
+    stubFetch(fetchMock);
 
     render(<WorkoutCard {...makeCardProps()} />);
     await user.click(screen.getByRole("button", { name: "Skip" }));
@@ -254,7 +298,7 @@ describe("WorkoutCard", () => {
           { status: 201 },
         ),
       );
-    vi.stubGlobal("fetch", fetchMock);
+    stubFetch(fetchMock);
 
     render(<WorkoutCard {...makeCardProps()} />);
     await user.click(screen.getByRole("button", { name: "Start Workout" }));
