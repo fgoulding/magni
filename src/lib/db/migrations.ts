@@ -1018,6 +1018,8 @@ function createPerformanceIndexes(db: Database.Database): void {
   const indexes = [
     "CREATE INDEX IF NOT EXISTS idx_sessions_user_date ON sessions(user_id, date)",
     "CREATE INDEX IF NOT EXISTS idx_sessions_user_run_date ON sessions(user_id, program_run_id, date)",
+    // Stats aggregates scan a user's completed sessions; this drives that + date windows.
+    "CREATE INDEX IF NOT EXISTS idx_sessions_user_status_date ON sessions(user_id, status, date)",
     "CREATE UNIQUE INDEX IF NOT EXISTS idx_sessions_unique_definition_day ON sessions(program_run_id, user_id, program_definition_day_id, week_number, date) WHERE program_definition_day_id IS NOT NULL",
     "CREATE INDEX IF NOT EXISTS idx_exercises_day_archived ON exercises(day_id, archived_at)",
     "CREATE INDEX IF NOT EXISTS idx_days_program_archived ON days(program_id, archived_at)",

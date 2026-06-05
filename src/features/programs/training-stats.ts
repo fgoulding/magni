@@ -433,8 +433,64 @@ export function getSessionPrs(userId: number, sessionId: number): SessionPr[] {
   return computeSessionPrs(sessionSets, priorSets);
 }
 
+// How far back we load individual SET rows for the windowed charts (weekly
+// volume needs 10 weeks; per-lift trends need ~10 recent session-dates). This
+// is what keeps Stats roughly constant-time regardless of history depth — all
+// rows stay in the DB; we just don't pull years of them into JS each render.
+const STATS_WINDOW_WEEKS = 30;
+
+type PerLiftAgg = Readonly<{
+  name: string;
+  maxWeight: number;
+  volume: number;
+  lastDate: string | null;
+  bestE1rm: number;
+  bestReps: number;
+  bestWeight: number;
+}>;
+
+/** Featured (big-three) lifts: all-time bests via SQL, recent trend from the window. */
+function buildBigThree(perLiftRows: readonly PerLiftAgg[], recentRows: readonly StatSetRow[]): LiftStat[] {
+  const perLift = new Map<string, LiftStat>();
+  const volumeByLift = new Map<string, number>();
+  for (const row of perLiftRows) {
+    const name = row.name.trim();
+    if (!name) continue;
+    perLift.set(name, {
+      name,
+      maxWeight: round(row.maxWeight),
+      bestE1rm: round(row.bestE1rm),
+      bestReps: row.bestReps,
+      bestWeight: round(row.bestWeight),
+      trend: [],
+      lastDate: row.lastDate,
+    });
+    volumeByLift.set(name, row.volume);
+  }
+
+  const trendByLift = new Map<string, Map<string, number>>();
+  for (const row of recentRows) {
+    if (row.weight <= 0 || row.reps <= 0) continue;
+    const name = row.exercise.trim();
+    if (!name) continue;
+    const dates = trendByLift.get(name) ?? new Map<string, number>();
+    dates.set(row.date, Math.max(dates.get(row.date) ?? 0, epleyE1rm(row.weight, row.reps)));
+    trendByLift.set(name, dates);
+  }
+
+  return selectFeaturedLifts(perLift, volumeByLift).map((lift) => {
+    const dateMap = trendByLift.get(lift.name) ?? new Map<string, number>();
+    const trend = [...dateMap.keys()].sort().slice(-10).map((d) => round(dateMap.get(d) ?? 0));
+    return { ...lift, trend };
+  });
+}
+
 export function getUserTrainingStats(userId: number, now: Date = new Date()): TrainingStats {
-  const setRows = db
+  const currentWeekStart = weekStartKey(toLocalDateKey(now));
+  const windowStart = recentWeekKeys(currentWeekStart, STATS_WINDOW_WEEKS)[0];
+
+  // Recent SET rows only — bounds the per-row JS work to the visible window.
+  const recentRows = db
     .prepare(
       `
         SELECT
@@ -445,16 +501,101 @@ export function getUserTrainingStats(userId: number, now: Date = new Date()): Tr
           COALESCE(ss.actual_weight, ss.calculated_weight, 0) AS weight
         FROM session_sets ss
         JOIN sessions s ON s.id = ss.session_id
-        WHERE s.user_id = ? AND s.status = 'completed'
+        WHERE s.user_id = ? AND s.status = 'completed' AND s.date >= ?
       `,
     )
-    .all(userId) as StatSetRow[];
+    .all(userId, windowStart) as StatSetRow[];
 
+  // All completed session DATES (cheap — bounded by # sessions, not # sets).
   const sessionDates = (
     db
       .prepare(`SELECT s.date AS date FROM sessions s WHERE s.user_id = ? AND s.status = 'completed'`)
       .all(userId) as { date: string }[]
   ).map((row) => row.date);
 
-  return buildTrainingStats(setRows, sessionDates, now);
+  // Windowed charts (weekly volume) + all-time-from-dates frequency come from the
+  // pure builder fed bounded set rows + full session dates.
+  const windowed = buildTrainingStats(recentRows, sessionDates, now);
+
+  // All-time set-derived scalars via SQL aggregates — full history, no row load.
+  const totalsRow = db
+    .prepare(
+      `
+        SELECT
+          COUNT(*) AS sets,
+          COALESCE(SUM(COALESCE(ss.actual_reps, ss.reps)), 0) AS reps,
+          COALESCE(SUM(COALESCE(ss.actual_reps, ss.reps) * COALESCE(ss.actual_weight, ss.calculated_weight, 0)), 0) AS volume
+        FROM session_sets ss
+        JOIN sessions s ON s.id = ss.session_id
+        WHERE s.user_id = ? AND s.status = 'completed'
+      `,
+    )
+    .get(userId) as { sets: number; reps: number; volume: number };
+
+  const categoryRows = db
+    .prepare(
+      `
+        SELECT ss.category AS category,
+               COALESCE(SUM(COALESCE(ss.actual_reps, ss.reps) * COALESCE(ss.actual_weight, ss.calculated_weight, 0)), 0) AS volume
+        FROM session_sets ss
+        JOIN sessions s ON s.id = ss.session_id
+        WHERE s.user_id = ? AND s.status = 'completed'
+        GROUP BY ss.category
+      `,
+    )
+    .all(userId) as { category: string; volume: number }[];
+
+  // Per-lift all-time bests: max weight, total volume, last date, and the set
+  // that produced the best Epley e1RM (argmax via a window-function rank).
+  const perLiftRows = db
+    .prepare(
+      `
+        WITH base AS (
+          SELECT
+            ss.exercise_name AS name,
+            s.date AS date,
+            COALESCE(ss.actual_reps, ss.reps) AS reps,
+            COALESCE(ss.actual_weight, ss.calculated_weight, 0) AS weight,
+            COALESCE(ss.actual_reps, ss.reps) * COALESCE(ss.actual_weight, ss.calculated_weight, 0) AS vol,
+            COALESCE(ss.actual_weight, ss.calculated_weight, 0) * (1 + COALESCE(ss.actual_reps, ss.reps) / 30.0) AS e1rm
+          FROM session_sets ss
+          JOIN sessions s ON s.id = ss.session_id
+          WHERE s.user_id = ? AND s.status = 'completed'
+            AND COALESCE(ss.actual_weight, ss.calculated_weight, 0) > 0
+            AND COALESCE(ss.actual_reps, ss.reps) > 0
+        ),
+        ranked AS (
+          SELECT name, reps, weight, e1rm,
+                 MAX(weight) OVER (PARTITION BY name) AS maxWeight,
+                 SUM(vol) OVER (PARTITION BY name) AS volume,
+                 MAX(date) OVER (PARTITION BY name) AS lastDate,
+                 ROW_NUMBER() OVER (PARTITION BY name ORDER BY e1rm DESC, weight DESC) AS rn
+          FROM base
+        )
+        SELECT name, maxWeight, volume, lastDate, e1rm AS bestE1rm, reps AS bestReps, weight AS bestWeight
+        FROM ranked WHERE rn = 1
+      `,
+    )
+    .all(userId) as PerLiftAgg[];
+
+  const totals = {
+    sessions: sessionDates.length,
+    sets: totalsRow.sets,
+    reps: round(totalsRow.reps),
+    volume: round(totalsRow.volume),
+  };
+  const volumeByCategory = new Map(categoryRows.map((row) => [row.category, row.volume]));
+  const categorySplit: CategorySlice[] = ["main", "aux", "accessory"]
+    .map((category) => ({ category, volume: round(volumeByCategory.get(category) ?? 0) }))
+    .filter((slice) => slice.volume > 0)
+    .map((slice) => ({ ...slice, pct: totals.volume > 0 ? Math.round((slice.volume / totals.volume) * 100) : 0 }));
+
+  return {
+    hasData: totals.sessions > 0 && totals.sets > 0,
+    totals,
+    bigThree: buildBigThree(perLiftRows, recentRows),
+    weeklyVolume: windowed.weeklyVolume,
+    frequency: windowed.frequency,
+    categorySplit,
+  };
 }
