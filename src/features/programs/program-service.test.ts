@@ -204,6 +204,52 @@ describe("program service", () => {
     ]);
   });
 
+  it("re-materialises an exercise's week loading when its type changes", () => {
+    const userId = createUser("service-change-type@example.com");
+    const created = service.createProgramRun({ userId, name: "Type Change", numWeeks: 4 });
+    const day = service.addDefinitionDayForRun({ userId, legacyProgramId: created.legacyProgramId, name: "Day" });
+    const exercise = service.addDefinitionExerciseForDay({
+      userId,
+      legacyDayId: day.legacyDayId,
+      name: "Press",
+      trainingMax: 100,
+      category: "main",
+      progressionType: "sbs",
+    });
+
+    const countWeekSettings = () =>
+      dbModule.db
+        .prepare(
+          "SELECT COUNT(*) AS n, COUNT(DISTINCT week_number) AS weeks FROM week_settings WHERE exercise_id = ?",
+        )
+        .get(exercise.legacyExerciseId) as { n: number; weeks: number };
+
+    // sbs is materialised across all 4 program weeks.
+    expect(countWeekSettings().weeks).toBe(4);
+
+    service.updateDefinitionExerciseType({
+      userId,
+      legacyExerciseId: exercise.legacyExerciseId,
+      category: "aux",
+      progressionType: "linear",
+    });
+
+    // Both the legacy and definition rows reflect the new type.
+    expect(
+      dbModule.db
+        .prepare("SELECT category, progression_type, auto_progression_enabled FROM exercises WHERE id = ?")
+        .get(exercise.legacyExerciseId),
+    ).toEqual({ category: "aux", progression_type: "linear", auto_progression_enabled: 1 });
+    expect(
+      dbModule.db
+        .prepare("SELECT category, progression_type FROM program_definition_exercises WHERE id = ?")
+        .get(exercise.definitionExerciseId),
+    ).toEqual({ category: "aux", progression_type: "linear" });
+
+    // Week loading is rebuilt from the new template: linear aux = 3 flat sets × 4 weeks.
+    expect(countWeekSettings()).toEqual({ n: 12, weeks: 4 });
+  });
+
   it("creates and cancels dated holds for one owned run", () => {
     const userId = createUser("service-hold@example.com");
     const first = service.createProgramRun({ userId, name: "Rack Program", numWeeks: 7 });
