@@ -17,6 +17,8 @@ export type LiftStat = Readonly<{
   bestWeight: number;
   trend: number[];
   lastDate: string | null;
+  /** "main" | "aux" | "accessory" — featured slots prefer a main-category lift. */
+  category?: string;
 }>;
 
 export type WeeklyPoint = Readonly<{ weekStart: string; value: number }>;
@@ -100,7 +102,10 @@ export function selectFeaturedLifts(perLift: ReadonlyMap<string, LiftStat>, volu
     let best: LiftStat | null = null;
     let bestVolume = -1;
     for (const [name, stat] of perLift) {
-      if (used.has(name) || !match(name.toLowerCase())) continue;
+      // Only a MAIN-category lift fills a big-three slot, so an aux/accessory
+      // name match (e.g. "Bench Variation") never masquerades as a main lift —
+      // the slot stays empty until a real main lift (e.g. "Bench Press") is logged.
+      if (used.has(name) || stat.category !== "main" || !match(name.toLowerCase())) continue;
       const volume = volumeByLift.get(name) ?? 0;
       if (volume > bestVolume) {
         best = stat;
@@ -154,6 +159,7 @@ export function buildTrainingStats(
     if (!existing || e1rm > existing.bestE1rm) {
       perLift.set(name, {
         name,
+        category: row.category,
         maxWeight: Math.max(existing?.maxWeight ?? 0, row.weight),
         bestE1rm: Math.max(existing?.bestE1rm ?? 0, e1rm),
         bestReps: e1rm >= (existing?.bestE1rm ?? 0) ? row.reps : (existing?.bestReps ?? row.reps),
@@ -441,6 +447,7 @@ const STATS_WINDOW_WEEKS = 30;
 
 type PerLiftAgg = Readonly<{
   name: string;
+  category: string;
   maxWeight: number;
   volume: number;
   lastDate: string | null;
@@ -458,6 +465,7 @@ function buildBigThree(perLiftRows: readonly PerLiftAgg[], recentRows: readonly 
     if (!name) continue;
     perLift.set(name, {
       name,
+      category: row.category,
       maxWeight: round(row.maxWeight),
       bestE1rm: round(row.bestE1rm),
       bestReps: row.bestReps,
@@ -553,6 +561,7 @@ export function getUserTrainingStats(userId: number, now: Date = new Date()): Tr
         WITH base AS (
           SELECT
             ss.exercise_name AS name,
+            ss.category AS category,
             s.date AS date,
             COALESCE(ss.actual_reps, ss.reps) AS reps,
             COALESCE(ss.actual_weight, ss.calculated_weight, 0) AS weight,
@@ -565,14 +574,14 @@ export function getUserTrainingStats(userId: number, now: Date = new Date()): Tr
             AND COALESCE(ss.actual_reps, ss.reps) > 0
         ),
         ranked AS (
-          SELECT name, reps, weight, e1rm,
+          SELECT name, category, reps, weight, e1rm,
                  MAX(weight) OVER (PARTITION BY name) AS maxWeight,
                  SUM(vol) OVER (PARTITION BY name) AS volume,
                  MAX(date) OVER (PARTITION BY name) AS lastDate,
                  ROW_NUMBER() OVER (PARTITION BY name ORDER BY e1rm DESC, weight DESC) AS rn
           FROM base
         )
-        SELECT name, maxWeight, volume, lastDate, e1rm AS bestE1rm, reps AS bestReps, weight AS bestWeight
+        SELECT name, category, maxWeight, volume, lastDate, e1rm AS bestE1rm, reps AS bestReps, weight AS bestWeight
         FROM ranked WHERE rn = 1
       `,
     )

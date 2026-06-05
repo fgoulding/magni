@@ -96,8 +96,9 @@ describe("computeStreakWeeks", () => {
 });
 
 describe("selectFeaturedLifts", () => {
-  const lift = (name: string): LiftStat => ({
+  const lift = (name: string, category = "main"): LiftStat => ({
     name,
+    category,
     maxWeight: 100,
     bestE1rm: 100,
     bestReps: 1,
@@ -119,6 +120,19 @@ describe("selectFeaturedLifts", () => {
       "Bench Press",
       "Deadlift",
     ]);
+  });
+
+  it("won't feature an aux/accessory name match as a main lift", () => {
+    const perLift = new Map<string, LiftStat>([
+      ["Bench Variation", lift("Bench Variation", "aux")],
+      ["Back Squat", lift("Back Squat", "main")],
+    ]);
+    // The aux variation has far more volume, but only the main squat is featured.
+    const vol = new Map<string, number>([
+      ["Bench Variation", 9000],
+      ["Back Squat", 100],
+    ]);
+    expect(selectFeaturedLifts(perLift, vol).map((l) => l.name)).toEqual(["Back Squat"]);
   });
 
   it("falls back to top lifts by volume when no big-three present", () => {
