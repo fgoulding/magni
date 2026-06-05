@@ -63,7 +63,7 @@ export default async function ProgramPage({ params }: PageProps) {
         </div>
       </header>
 
-      <details className="card p-4">
+      <details open className="card p-4">
         <summary className="display cursor-pointer list-none text-lg">
           Schedule &amp; tracking
         </summary>

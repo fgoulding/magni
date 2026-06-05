@@ -62,13 +62,12 @@ test("trains a missed calendar workout today and records it on the day it is don
   const schedule = page.locator("section").filter({ has: page.getByRole("heading", { name: "Schedule" }) });
   const yesterdayButton = schedule.getByRole("button", { name: yesterday });
   if ((await yesterdayButton.getAttribute("aria-pressed")) !== "true") {
-    await yesterdayButton.click();
+    const responsePromise = page.waitForResponse((response) =>
+      /\/api\/programs\/\d+$/.test(response.url()) && response.request().method() === "PUT",
+    );
+    await yesterdayButton.click(); // toggling auto-saves
+    expect((await responsePromise).ok()).toBe(true);
   }
-  const responsePromise = page.waitForResponse((response) =>
-    /\/api\/programs\/\d+$/.test(response.url()) && response.request().method() === "PUT",
-  );
-  await schedule.getByRole("button", { name: "Save schedule" }).click();
-  expect((await responsePromise).ok()).toBe(true);
 
   await goToTab(page, "Calendar");
   await page.getByRole("link", { name: new RegExp(`Scheduled: ${programName} - Late Lower on`) }).first().click();

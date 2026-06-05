@@ -40,9 +40,12 @@ test("maps selected weekdays onto ordered program days", async ({ page }) => {
   await addDay(page, "Today Day");
 
   const schedule = page.locator("section").filter({ has: page.getByRole("heading", { name: "Schedule" }) });
-  await schedule.getByRole("button", { name: companionDay }).click();
-  await schedule.getByRole("button", { name: today }).click();
-  await schedule.getByRole("button", { name: "Save schedule" }).click();
+  await schedule.getByRole("button", { name: companionDay }).click(); // auto-saves
+  const schedulePut = page.waitForResponse((response) =>
+    /\/api\/programs\/\d+$/.test(response.url()) && response.request().method() === "PUT",
+  );
+  await schedule.getByRole("button", { name: today }).click(); // auto-saves the 2-day state
+  await schedulePut;
   await expect(schedule.getByText("2 days each week")).toBeVisible();
 
   await goToTab(page, "Today");

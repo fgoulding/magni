@@ -124,11 +124,10 @@ export async function addLinearExercise(page: Page, name: string, trainingMax: s
 export async function scheduleForToday(page: Page): Promise<string> {
   const weekday = await currentWeekdayLabel(page);
   const schedule = page.locator("section").filter({ has: page.getByRole("heading", { name: "Schedule" }) });
-  await schedule.getByRole("button", { name: weekday }).click();
   const responsePromise = page.waitForResponse((response) =>
     /\/api\/programs\/\d+$/.test(response.url()) && response.request().method() === "PUT",
   );
-  await schedule.getByRole("button", { name: "Save schedule" }).click();
+  await schedule.getByRole("button", { name: weekday }).click(); // toggling auto-saves
   const response = await responsePromise;
   expect(response.ok()).toBe(true);
   await expect(schedule.getByText("1 day each week")).toBeVisible();

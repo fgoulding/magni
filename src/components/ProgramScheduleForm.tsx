@@ -33,40 +33,36 @@ export function ProgramScheduleForm({
   const router = useRouter();
   const isCompressedSchedule = dayCount > 0 && selected.size > dayCount;
 
-  function toggle(day: number) {
-    setSelected((current) => {
-      const next = new Set(current);
-      if (next.has(day)) {
-        next.delete(day);
-      } else {
-        next.add(day);
-      }
-      return next;
-    });
-  }
-
-  async function save() {
-    setSaving(true);
+  // Auto-save on each toggle — matches the rest of the editor (no Save button).
+  async function persist(next: Set<number>, previous: Set<number>) {
     setError("");
-
+    setSaving(true);
     try {
       const response = await fetch(`/api/programs/${programId}`, {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ scheduleWeekdays: sortedWeekdays(selected) }),
+        body: JSON.stringify({ scheduleWeekdays: sortedWeekdays(next) }),
       });
       const body = (await response.json()) as { error?: string };
-
       if (!response.ok) {
+        setSelected(previous); // revert the optimistic toggle
         throw new Error(body.error ?? "Could not save schedule");
       }
-
       router.refresh();
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Could not save schedule");
+      setSelected(previous);
+      setError(err instanceof Error ? err.message : "Couldn't save — check your connection");
     } finally {
       setSaving(false);
     }
+  }
+
+  function toggle(day: number) {
+    const next = new Set(selected);
+    if (next.has(day)) next.delete(day);
+    else next.add(day);
+    setSelected(next); // optimistic
+    void persist(next, selected);
   }
 
   return (
@@ -78,14 +74,7 @@ export function ProgramScheduleForm({
             {selected.size > 0 ? `${selected.size} day${selected.size > 1 ? "s" : ""} each week` : "Unscheduled"}
           </p>
         </div>
-        <button
-          type="button"
-          disabled={saving}
-          onClick={save}
-          className="touch-target rounded-xl bg-foreground px-3 text-sm font-semibold text-white transition-opacity active:opacity-90 disabled:opacity-50"
-        >
-          {saving ? "Saving…" : "Save schedule"}
-        </button>
+        <span className="text-xs font-medium text-faint">{saving ? "Saving…" : "Tap days to schedule"}</span>
       </div>
 
       <div className="mt-3 grid grid-cols-7 gap-1">

@@ -46,10 +46,10 @@ describe("ProgramScheduleForm", () => {
     vi.stubGlobal("fetch", fetchMock);
     render(<ProgramScheduleForm programId={123} initialScheduleWeekdays={[]} />);
 
+    // Each toggle auto-saves; the final state is sent on the last toggle.
     await user.click(screen.getByRole("button", { name: "Thu" }));
     await user.click(screen.getByRole("button", { name: "Sun" }));
     await user.click(screen.getByRole("button", { name: "Tue" }));
-    await user.click(screen.getByRole("button", { name: "Save schedule" }));
 
     await waitFor(() => expect(fetchMock).toHaveBeenCalled());
     expect(fetchMock).toHaveBeenCalledWith(
@@ -71,7 +71,6 @@ describe("ProgramScheduleForm", () => {
 
     await user.click(screen.getByRole("button", { name: "Mon" }));
     await user.click(screen.getByRole("button", { name: "Wed" }));
-    await user.click(screen.getByRole("button", { name: "Save schedule" }));
 
     await waitFor(() => expect(fetchMock).toHaveBeenCalled());
     expect(fetchMock).toHaveBeenCalledWith(
@@ -89,14 +88,18 @@ describe("ProgramScheduleForm", () => {
     vi.stubGlobal("fetch", fetchMock);
     render(<ProgramScheduleForm programId={123} initialScheduleWeekdays={[]} />);
 
-    await user.click(screen.getByRole("button", { name: "Save schedule" }));
+    await user.click(screen.getByRole("button", { name: "Mon" }));
 
     expect(await screen.findByText("scheduleWeekdays must contain unique weekdays from 0 to 6")).toBeInTheDocument();
     expect(routerMock.refresh).not.toHaveBeenCalled();
+    // The optimistic toggle reverts on error.
+    expect(screen.getByRole("button", { name: "Mon" })).toHaveAttribute("aria-pressed", "false");
   });
 
   it("warns when scheduled weekdays exceed definition days", async () => {
     const user = userEvent.setup();
+    fetchMock.mockResolvedValue(mockJsonResponse({ success: true }));
+    vi.stubGlobal("fetch", fetchMock);
 
     render(<ProgramScheduleForm programId={123} initialScheduleWeekdays={[1, 3]} dayCount={2} />);
 
