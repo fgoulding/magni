@@ -222,7 +222,7 @@ function ProgramHoldControls({
             type="button"
             disabled={saving}
             onClick={holdRun}
-            className="touch-target rounded-xl bg-foreground px-3 text-sm font-medium text-white disabled:opacity-50"
+            className="touch-target rounded-xl bg-foreground px-3 text-sm font-medium text-background disabled:opacity-50"
           >
             {saving ? "Pausing..." : "Pause run"}
           </button>

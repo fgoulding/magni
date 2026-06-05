@@ -3,6 +3,7 @@ import { Barlow, Barlow_Condensed } from "next/font/google";
 import { AppHeight } from "@/components/AppHeight";
 import { BottomNav } from "@/components/BottomNav";
 import { InstallHelp } from "@/components/InstallHelp";
+import { ThemeScript } from "@/components/ThemeScript";
 import { getUser } from "@/lib/auth";
 import "./globals.css";
 
@@ -60,9 +61,11 @@ export default async function RootLayout({
   return (
     <html
       lang="en"
+      suppressHydrationWarning
       className={`${barlow.variable} ${barlowCondensed.variable} h-full antialiased`}
     >
       <body className="min-h-full bg-background text-foreground">
+        <ThemeScript />
         <AppHeight />
         <main className="safe-top mx-auto flex min-h-[var(--app-height)] w-full max-w-xl flex-col pb-[calc(5.5rem+var(--safe-bottom))]">
           <InstallHelp />

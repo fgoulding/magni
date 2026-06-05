@@ -40,6 +40,45 @@
   --danger-line: #fbcfcf;
 }
 
+/* Dark theme — a warm near-black base (complements the warm light theme) with
+   elevated surfaces lifting toward the light. The brand orange stays the accent;
+   the *-ink/*-strong text tokens lighten so they read on dark instead of vanishing.
+   Applied via data-theme on <html> (set before paint by ThemeScript). */
+:root[data-theme="dark"] {
+  color-scheme: dark;
+
+  /* Surfaces & text */
+  --background: #16130f;
+  --surface: #28231c;
+  --surface-muted: #1f1b16;
+  --foreground: #f4f1ec;
+  --muted: #b0a89f;
+  --faint: #7d756c;
+  --line: #332e28;
+
+  /* Brand — energy orange (fill stays vivid for white labels; text lightens) */
+  --brand: #ea580c;
+  --brand-strong: #fdba74;
+  --brand-soft: #2a1a10;
+  --brand-line: #5c3a1e;
+
+  /* Success — training green */
+  --success: #22c55e;
+  --success-ink: #86efac;
+  --success-soft: #122017;
+  --success-line: #1f4031;
+
+  /* Warning — hold amber */
+  --warn-ink: #fcd34d;
+  --warn-soft: #241c0c;
+  --warn-line: #4d3c14;
+
+  /* Danger */
+  --danger-ink: #fca5a5;
+  --danger-soft: #251313;
+  --danger-line: #5c2a2a;
+}
+
 @theme inline {
   --color-background: var(--background);
   --color-surface: var(--surface);

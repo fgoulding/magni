@@ -56,7 +56,7 @@ export function DeleteButton({
             type="button"
             disabled={deleting}
             onClick={deleteItem}
-            className="touch-target rounded-xl bg-danger-ink px-3 text-xs font-semibold text-white transition-opacity active:opacity-90 disabled:opacity-50"
+            className="touch-target rounded-xl bg-danger-ink px-3 text-xs font-semibold text-background transition-opacity active:opacity-90 disabled:opacity-50"
           >
             Confirm
           </button>

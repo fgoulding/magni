@@ -162,7 +162,7 @@ export function AddExerciseForm({ dayId }: { dayId: number }) {
         <button
           type="submit"
           disabled={submitting}
-          className="touch-target rounded-xl bg-foreground px-4 text-sm font-semibold text-white transition-opacity active:opacity-90 disabled:opacity-50"
+          className="touch-target rounded-xl bg-foreground px-4 text-sm font-semibold text-background transition-opacity active:opacity-90 disabled:opacity-50"
         >
           Add
         </button>

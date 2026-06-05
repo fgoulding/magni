@@ -3,6 +3,7 @@ import { redirect } from "next/navigation";
 import { ChangePasswordForm } from "@/components/ChangePasswordForm";
 import { LogoutButton } from "@/components/LogoutButton";
 import { SettingsForm } from "@/components/SettingsForm";
+import { ThemeToggle } from "@/components/ThemeToggle";
 import { getSettingNumber, requireUser } from "@/lib/auth";
 
 export default async function SettingsPage() {
@@ -25,6 +26,15 @@ export default async function SettingsPage() {
         </div>
         <div className="mt-6 border-t border-line pt-4">
           <LogoutButton />
+        </div>
+      </section>
+
+      <section className="card p-4">
+        <p className="eyebrow text-[11px] text-faint">Appearance</p>
+        <h2 className="display mt-1 text-lg">Theme</h2>
+        <p className="mt-1 text-sm text-muted">Match your device, or force light or dark.</p>
+        <div className="mt-3">
+          <ThemeToggle />
         </div>
       </section>
 

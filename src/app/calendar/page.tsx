@@ -449,7 +449,7 @@ export default async function CalendarPage({ searchParams }: CalendarPageProps) 
               <div className="px-4 pb-4">
                 <Link
                   href="/history"
-                  className="touch-target inline-flex w-full items-center justify-center rounded-xl bg-foreground px-4 text-sm font-medium text-white"
+                  className="touch-target inline-flex w-full items-center justify-center rounded-xl bg-foreground px-4 text-sm font-medium text-background"
                 >
                   View history
                 </Link>

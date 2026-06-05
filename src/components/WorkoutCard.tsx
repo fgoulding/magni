@@ -590,7 +590,7 @@ export function WorkoutCard({
               type="button"
               disabled={completing}
               onClick={complete}
-              className="touch-target flex-1 rounded-xl bg-foreground px-4 py-2.5 text-sm font-semibold text-white transition-colors active:opacity-90 disabled:opacity-50"
+              className="touch-target flex-1 rounded-xl bg-foreground px-4 py-2.5 text-sm font-semibold text-background transition-colors active:opacity-90 disabled:opacity-50"
             >
               {completing ? "Finishing…" : "Finish Workout"}
             </button>

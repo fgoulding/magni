@@ -53,7 +53,7 @@ export function SettingsForm({ initialRounding }: { initialRounding: number }) {
       <button
         type="submit"
         disabled={submitting}
-        className="touch-target rounded-xl bg-foreground px-4 text-sm font-semibold text-white transition-colors active:opacity-90 disabled:opacity-50"
+        className="touch-target rounded-xl bg-foreground px-4 text-sm font-semibold text-background transition-colors active:opacity-90 disabled:opacity-50"
       >
         {submitting ? "Saving…" : "Save settings"}
       </button>

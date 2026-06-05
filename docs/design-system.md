@@ -65,6 +65,25 @@ Defined as CSS variables in `globals.css` and exposed as Tailwind utilities via
 > adjacent as status indicators. The calendar legend uses **gray (`bg-muted`)**
 > for "Skipped" specifically to stay distinct from orange "Due".
 
+### Dark mode
+
+A second palette lives under `:root[data-theme="dark"]` in `globals.css` — a warm
+near-black base with elevated surfaces lifting toward the light. **You don't theme
+components; you use the semantic tokens and they flip automatically.** The resolved
+theme is set on `<html>` before paint by `ThemeScript` (reads `localStorage.theme`:
+`system`/`light`/`dark`); `ThemeToggle` (Settings → Appearance) writes it and
+follows the OS live in System mode.
+
+Two conventions make tokens survive the flip:
+- **Ink buttons** (`bg-foreground` / `bg-danger-ink` with light text) must use
+  **`text-background`, not `text-white`** — `--foreground`/`--danger-ink` invert
+  to *light* in dark, so white text would vanish. `text-background` is ~white in
+  light and dark in dark, so it reads in both. `bg-brand` buttons keep `text-white`
+  (orange stays dark enough for white in both modes).
+- The `*-ink` / `*-strong` text tokens **lighten** in dark (e.g. `--brand-strong`
+  → light orange) so small colored text keeps 4.5:1. Soft backgrounds darken to
+  matching tints. Never hardcode a hex — add it to both palettes if a token is missing.
+
 ---
 
 ## 2. Typography
