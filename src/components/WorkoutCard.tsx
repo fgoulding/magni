@@ -1,6 +1,6 @@
 "use client";
 
-import { Check, Circle, Dumbbell } from "lucide-react";
+import { Check, Circle, Dumbbell, Trophy } from "lucide-react";
 import { type ReactNode, useState } from "react";
 import { AddSessionExerciseForm } from "@/components/AddSessionExerciseForm";
 import { ErrorBanner } from "@/components/ErrorBanner";
@@ -64,6 +64,7 @@ export function WorkoutCard({
   const [completing, setCompleting] = useState(false);
   const [finished, setFinished] = useState(false);
   const [skipped, setSkipped] = useState(false);
+  const [prs, setPrs] = useState<{ exercise: string; e1rm: number; weight: number; reps: number }[]>([]);
 
   const groups = buildGroups(session?.sets ?? []);
   const currentGroup = groups[currentGroupIdx];
@@ -166,6 +167,16 @@ export function WorkoutCard({
       const body = (await response.json()) as { error?: string };
       if (!response.ok) throw new Error(body.error ?? "Could not complete workout");
       setFinished(true);
+      // Surface any personal records set this session (non-fatal if it fails).
+      try {
+        const prResponse = await fetch(`/api/sessions/${session.id}/prs`);
+        if (prResponse.ok) {
+          const prBody = (await prResponse.json()) as { prs?: typeof prs };
+          setPrs(prBody.prs ?? []);
+        }
+      } catch {
+        /* PRs are a bonus — never block the finish on them */
+      }
     } catch (err) {
       setError(err instanceof Error ? err.message : "Could not complete workout");
     } finally {
@@ -293,6 +304,25 @@ export function WorkoutCard({
               </div>
             )}
           </div>
+          {prs.length > 0 && (
+            <div className="mt-5 rounded-xl border border-brand-line bg-brand-soft p-3.5">
+              <p className="eyebrow flex items-center gap-1.5 text-[11px] text-brand-strong">
+                <Trophy aria-hidden="true" size={13} />
+                New personal record{prs.length > 1 ? "s" : ""}
+              </p>
+              <ul className="mt-2.5 flex flex-col gap-2">
+                {prs.map((pr) => (
+                  <li key={pr.exercise} className="flex items-center justify-between gap-3 text-sm">
+                    <span className="font-semibold">{pr.exercise}</span>
+                    <span className="font-display tracking-tight text-muted">
+                      {pr.weight} × {pr.reps} · e1RM{" "}
+                      <span className="font-semibold text-brand-strong">{pr.e1rm}</span>
+                    </span>
+                  </li>
+                ))}
+              </ul>
+            </div>
+          )}
           {summaryRows.length > 0 && (
             <ul className="mt-5 flex flex-col gap-2 text-left">
               {summaryRows.map((row) => (

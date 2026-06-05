@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   buildLiftDetail,
   buildTrainingStats,
+  computeSessionPrs,
   computeStreakWeeks,
   epleyE1rm,
   recentWeekKeys,
@@ -10,6 +11,47 @@ import {
   type LiftStat,
   type StatSetRow,
 } from "./training-stats";
+
+describe("computeSessionPrs", () => {
+  it("flags an exercise only when this session beats the prior best e1RM", () => {
+    const prior = [
+      { exercise: "Squat", reps: 5, weight: 300 }, // e1RM 350
+      { exercise: "Bench", reps: 5, weight: 200 }, // e1RM 233.3
+    ];
+    const session = [
+      { exercise: "Squat", reps: 3, weight: 330 }, // e1RM 363 > 350 → PR
+      { exercise: "Bench", reps: 5, weight: 195 }, // e1RM 227.5 < 233.3 → no PR
+    ];
+    expect(computeSessionPrs(session, prior)).toEqual([
+      { exercise: "Squat", e1rm: 363, weight: 330, reps: 3 },
+    ]);
+  });
+
+  it("does not flag a lift with no prior history (first time isn't a PR)", () => {
+    expect(computeSessionPrs([{ exercise: "Curl", reps: 10, weight: 50 }], [])).toEqual([]);
+  });
+
+  it("takes the best set in the session and sorts PRs by e1RM", () => {
+    const prior = [
+      { exercise: "Squat", reps: 1, weight: 100 },
+      { exercise: "Deadlift", reps: 1, weight: 100 },
+    ];
+    const session = [
+      { exercise: "Squat", reps: 8, weight: 120 }, // best of two Squat sets
+      { exercise: "Squat", reps: 3, weight: 130 },
+      { exercise: "Deadlift", reps: 5, weight: 200 },
+    ];
+    const prs = computeSessionPrs(session, prior);
+    expect(prs.map((p) => p.exercise)).toEqual(["Deadlift", "Squat"]);
+    // 8×120 → e1RM 152 beats 3×130 → e1RM 143, so the 8-rep set is the PR.
+    expect(prs.find((p) => p.exercise === "Squat")).toEqual({
+      exercise: "Squat",
+      e1rm: 152,
+      weight: 120,
+      reps: 8,
+    });
+  });
+});
 
 describe("epleyE1rm", () => {
   it("returns the weight for a single rep", () => {

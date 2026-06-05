@@ -375,6 +375,64 @@ export function getUserLiftDetail(userId: number, name: string): LiftDetail {
   return buildLiftDetail(rows, name);
 }
 
+export type SessionPr = Readonly<{ exercise: string; e1rm: number; weight: number; reps: number }>;
+export type SetRepWeight = Readonly<{ exercise: string; reps: number; weight: number }>;
+
+/**
+ * Pure PR detection: an exercise is a PR when its best e1RM in `sessionSets`
+ * beats its best in `priorSets`. Requires a prior record (>0), so the first time
+ * you ever do a lift isn't flagged. Unit-tested.
+ */
+export function computeSessionPrs(
+  sessionSets: readonly SetRepWeight[],
+  priorSets: readonly SetRepWeight[],
+): SessionPr[] {
+  const best = new Map<string, { e1rm: number; weight: number; reps: number }>();
+  for (const row of sessionSets) {
+    if (row.weight <= 0 || row.reps <= 0) continue;
+    const e1rm = epleyE1rm(row.weight, row.reps);
+    const current = best.get(row.exercise);
+    if (!current || e1rm > current.e1rm) best.set(row.exercise, { e1rm, weight: row.weight, reps: row.reps });
+  }
+  if (best.size === 0) return [];
+
+  const priorBest = new Map<string, number>();
+  for (const row of priorSets) {
+    if (row.weight <= 0 || row.reps <= 0) continue;
+    priorBest.set(row.exercise, Math.max(priorBest.get(row.exercise) ?? 0, epleyE1rm(row.weight, row.reps)));
+  }
+
+  const prs: SessionPr[] = [];
+  for (const [exercise, b] of best) {
+    const prior = priorBest.get(exercise) ?? 0;
+    if (prior > 0 && b.e1rm > prior + 0.001) {
+      prs.push({ exercise, e1rm: round(b.e1rm), weight: round(b.weight), reps: b.reps });
+    }
+  }
+  return prs.sort((a, b) => b.e1rm - a.e1rm);
+}
+
+/**
+ * Personal records set in one session — its best e1RM per exercise vs the user's
+ * best across all their OTHER completed sessions.
+ */
+export function getSessionPrs(userId: number, sessionId: number): SessionPr[] {
+  const setQuery = `
+    SELECT ss.exercise_name AS exercise,
+      COALESCE(ss.actual_reps, ss.reps) AS reps,
+      COALESCE(ss.actual_weight, ss.calculated_weight, 0) AS weight
+    FROM session_sets ss
+    JOIN sessions s ON s.id = ss.session_id
+  `;
+  const sessionSets = db
+    .prepare(`${setQuery} WHERE s.id = ? AND s.user_id = ?`)
+    .all(sessionId, userId) as SetRepWeight[];
+  const priorSets = db
+    .prepare(`${setQuery} WHERE s.user_id = ? AND s.status = 'completed' AND s.id != ?`)
+    .all(userId, sessionId) as SetRepWeight[];
+  return computeSessionPrs(sessionSets, priorSets);
+}
+
 export function getUserTrainingStats(userId: number, now: Date = new Date()): TrainingStats {
   const setRows = db
     .prepare(
