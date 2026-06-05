@@ -417,8 +417,8 @@ export default async function CalendarPage({ searchParams }: CalendarPageProps) 
       </div>
 
       {selectedEvent ? (
-        <div className="fixed inset-0 z-[60] flex items-end bg-black/35 p-3 sm:items-center sm:justify-center">
-          <div role="dialog" aria-modal="true" aria-labelledby="calendar-workout-title" className="max-h-[88vh] w-full max-w-xl overflow-y-auto rounded-xl bg-surface shadow-xl">
+        <div className="fixed inset-0 z-[60] flex items-end justify-center bg-black/35 px-3 pt-[calc(0.75rem+env(safe-area-inset-top))] pb-[calc(5.5rem+env(safe-area-inset-bottom))] sm:items-center sm:py-3">
+          <div role="dialog" aria-modal="true" aria-labelledby="calendar-workout-title" className="max-h-full w-full max-w-xl overflow-y-auto rounded-xl bg-surface shadow-xl">
             <div className="flex items-start justify-between gap-3 border-b border-line px-4 py-3">
               <div>
                 <p className="eyebrow text-[11px] text-brand-strong">{modalEyebrow(selectedEvent.kind)}</p>
