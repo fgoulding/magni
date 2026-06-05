@@ -36,10 +36,33 @@ describe("training template registry", () => {
       "linear",
       "double",
       "sbs",
+      "sbs-c2",
+      "sbs-c3",
       "madcow",
     ]);
     expect(new Set(templates.map((template) => template.id)).size).toBe(templates.length);
     expect(templates.every((template) => template.name && template.description)).toBe(true);
+  });
+
+  it("offsets each SBS cycle +5% over the previous, leaving reps and the deload unchanged", () => {
+    const c1 = getTemplateWeeks("sbs", "main");
+    const c2 = getTemplateWeeks("sbs-c2", "main");
+    const c3 = getTemplateWeeks("sbs-c3", "main");
+
+    // Week 1 working intensity climbs 70 → 75 → 80.
+    expect(c1[0].ramp![0].intensityPct).toBe(0.7);
+    expect(c2[0].ramp![0].intensityPct).toBe(0.75);
+    expect(c3[0].ramp![0].intensityPct).toBe(0.8);
+    // Heaviest working week (3) climbs 80 → 85 → 90.
+    expect(c2[2].ramp![0].intensityPct).toBe(0.85);
+    expect(c3[2].ramp![0].intensityPct).toBe(0.9);
+    // Reps and AMRAP targets are identical across cycles.
+    expect(c2[0].ramp![0].reps).toBe(c1[0].ramp![0].reps);
+    expect(c2[0].ramp![0].repOutTarget).toBe(c1[0].ramp![0].repOutTarget);
+    // The deload (week 7) is the same load in every cycle.
+    expect(c1[6].ramp![0].intensityPct).toBe(0.6);
+    expect(c2[6].ramp![0].intensityPct).toBe(0.6);
+    expect(c3[6].ramp![0].intensityPct).toBe(0.6);
   });
 
   it("returns category-specific weeks and falls back to main weeks", () => {

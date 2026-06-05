@@ -3,7 +3,11 @@ import { customTemplate } from "@/features/training-templates/templates/custom";
 import { doubleTemplate } from "@/features/training-templates/templates/double";
 import { linearTemplate } from "@/features/training-templates/templates/linear";
 import { madcowTemplate } from "@/features/training-templates/templates/madcow";
-import { sbsTemplate } from "@/features/training-templates/templates/sbs";
+import {
+  sbsCycle2Template,
+  sbsCycle3Template,
+  sbsTemplate,
+} from "@/features/training-templates/templates/sbs";
 import type { ExerciseCategory, TemplateWeek, TrainingTemplate } from "@/features/training-templates/types";
 
 const EXERCISE_CATEGORIES = ["main", "aux", "accessory"] as const satisfies readonly ExerciseCategory[];
@@ -14,6 +18,8 @@ const TRAINING_TEMPLATES = [
   linearTemplate,
   doubleTemplate,
   sbsTemplate,
+  sbsCycle2Template,
+  sbsCycle3Template,
   madcowTemplate,
 ] as const satisfies readonly TrainingTemplate[];
 
