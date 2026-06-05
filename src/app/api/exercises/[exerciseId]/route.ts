@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { updateDefinitionExerciseType } from "@/features/programs/program-service";
+import { clearSupersetMembership } from "@/features/programs/superset";
 import type { ExerciseCategory } from "@/features/training-templates/types";
 import { assertSameOrigin, jsonError, isUnauthorized, numberParam } from "@/lib/api";
 import { getSettingNumber, requireUser } from "@/lib/auth";
@@ -216,23 +217,8 @@ export async function DELETE(request: Request, context: RouteContext) {
       | undefined;
     if (!exercise) return jsonError("Exercise not found", 404);
 
-    const clearMembership = (memberId: number, sharedKey: string | null) => {
-      db.prepare("UPDATE exercises SET superset_group = NULL WHERE id = ?").run(memberId);
-      if (exercise.program_definition_id && sharedKey) {
-        db.prepare(
-          `
-            UPDATE program_definition_exercises
-            SET superset_group = NULL
-            WHERE stable_key = ?
-              AND program_definition_day_id IN (
-                SELECT id
-                FROM program_definition_days
-                WHERE program_definition_id = ?
-              )
-          `,
-        ).run(sharedKey, exercise.program_definition_id);
-      }
-    };
+    const clearMembership = (memberId: number, sharedKey: string | null) =>
+      clearSupersetMembership(memberId, sharedKey, exercise.program_definition_id);
 
     db.transaction(() => {
       db.prepare("UPDATE exercises SET archived_at = datetime('now') WHERE id = ?").run(id);

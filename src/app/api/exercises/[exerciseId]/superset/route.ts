@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server";
+import { clearSupersetMembership } from "@/features/programs/superset";
 import { assertSameOrigin, jsonError, isUnauthorized, numberParam } from "@/lib/api";
 import { requireUser } from "@/lib/auth";
 import { db } from "@/lib/db";
@@ -38,25 +39,8 @@ export async function PUT(request: Request, context: RouteContext) {
       | undefined;
     if (!exercise) return jsonError("Exercise not found", 404);
 
-    // Clear one exercise's superset membership, mirroring to the program
-    // definition so the change sticks across program syncs.
-    const clearMembership = (memberId: number, sharedKey: string | null) => {
-      db.prepare("UPDATE exercises SET superset_group = NULL WHERE id = ?").run(memberId);
-      if (exercise.program_definition_id && sharedKey) {
-        db.prepare(
-          `
-            UPDATE program_definition_exercises
-            SET superset_group = NULL
-            WHERE stable_key = ?
-              AND program_definition_day_id IN (
-                SELECT id
-                FROM program_definition_days
-                WHERE program_definition_id = ?
-              )
-          `,
-        ).run(sharedKey, exercise.program_definition_id);
-      }
-    };
+    const clearMembership = (memberId: number, sharedKey: string | null) =>
+      clearSupersetMembership(memberId, sharedKey, exercise.program_definition_id);
 
     const body = (await request.json()) as SupersetBody;
     const linkExerciseId =
