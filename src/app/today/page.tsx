@@ -13,6 +13,7 @@ import { requireUser } from "@/lib/auth";
 import { toLocalDateKey } from "@/lib/date-key";
 
 function formatLift(lift: TodayLiftPreview): string {
+  if (lift.bodyweight) return `${lift.set_count}×${lift.reps} BW`;
   return `${lift.set_count}×${lift.reps} @ ${lift.weight} lb`;
 }
 

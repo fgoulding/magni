@@ -256,11 +256,11 @@ export function WorkoutCard({
               <div className="mt-4 rounded-xl bg-surface-muted p-3.5">
                 <div className="eyebrow mb-2.5 flex items-center gap-1.5 text-[11px] text-brand-strong">
                   <Dumbbell aria-hidden="true" size={13} />
-                  Next lift
+                  Today&apos;s lifts
                 </div>
                 <div className="flex flex-col gap-2.5">
-                  {nextLifts.map((lift) => (
-                    <div key={lift.name} className="flex items-center justify-between gap-3 text-sm">
+                  {nextLifts.map((lift, index) => (
+                    <div key={`${lift.name}-${index}`} className="flex items-center justify-between gap-3 text-sm">
                       <span className="font-semibold">{lift.name}</span>
                       <span className="font-display text-base tracking-tight text-muted">{lift.detail}</span>
                     </div>

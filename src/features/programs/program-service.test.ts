@@ -447,6 +447,7 @@ describe("program service", () => {
             set_count: 3,
             reps: 5,
             weight: 200,
+            bodyweight: false,
           },
         ],
       }),

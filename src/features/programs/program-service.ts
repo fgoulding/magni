@@ -94,6 +94,7 @@ export type TodayLiftPreview = Readonly<{
   set_count: number;
   reps: number;
   weight: number;
+  bodyweight: boolean;
 }>;
 
 export type TodayWorkoutSummary = ProgramDaySummary & Readonly<{
@@ -597,6 +598,7 @@ function getLiftPreview(userId: number, row: ProgramDaySummary): TodayLiftPrevie
         SELECT
           pde.id,
           pde.name,
+          pde.progression_type,
           COALESCE(prx.expected_max, 100) AS training_max,
           MAX(pdws.reps) AS reps,
           MAX(pdws.intensity_pct) AS intensity_pct,
@@ -612,13 +614,13 @@ function getLiftPreview(userId: number, row: ProgramDaySummary): TodayLiftPrevie
          AND prx.shared_exercise_key = pde.stable_key
         WHERE pde.program_definition_day_id = ?
           AND pde.archived_at IS NULL
-        GROUP BY pde.id, pde.name, prx.expected_max
+        GROUP BY pde.id, pde.name, pde.progression_type, prx.expected_max
         ORDER BY pde.sort_order, pde.id
-        LIMIT 3
       `,
     )
     .all(row.current_week, row.program_id, row.definition_day_id) as {
     name: string;
+    progression_type: string;
     training_max: number;
     reps: number;
     intensity_pct: number;
@@ -631,6 +633,7 @@ function getLiftPreview(userId: number, row: ProgramDaySummary): TodayLiftPrevie
     set_count: setting.set_count,
     reps: setting.reps,
     weight: calculateWeight(setting.training_max, setting.intensity_pct, rounding),
+    bodyweight: setting.progression_type === "bodyweight",
   }));
 }
 
