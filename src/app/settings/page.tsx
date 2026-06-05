@@ -1,4 +1,5 @@
 import { redirect } from "next/navigation";
+import { ChangePasswordForm } from "@/components/ChangePasswordForm";
 import { LogoutButton } from "@/components/LogoutButton";
 import { SettingsForm } from "@/components/SettingsForm";
 import { getSettingNumber, requireUser } from "@/lib/auth";
@@ -25,6 +26,16 @@ export default async function SettingsPage() {
           <LogoutButton />
         </div>
       </section>
+
+      <details className="card p-4">
+        <summary className="display cursor-pointer list-none text-lg">Password</summary>
+        <p className="mt-1 text-sm text-muted">
+          Change your password. This signs you out of any other devices.
+        </p>
+        <div className="mt-4">
+          <ChangePasswordForm />
+        </div>
+      </details>
     </div>
   );
 }
