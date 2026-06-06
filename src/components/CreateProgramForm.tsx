@@ -23,6 +23,8 @@ function buildExpectedMaxesFromSnapshot(
   const maxes: Record<string, number | ""> = {};
   for (const day of snapshot.days) {
     for (const exercise of day.exercises) {
+      // Bodyweight lifts have no training max — don't prefill or send one.
+      if (exercise.progressionType === "bodyweight") continue;
       maxes[exercise.key] = latestMaxes[exercise.name.trim().toLowerCase()] ?? "";
     }
   }
@@ -241,32 +243,36 @@ export function CreateProgramForm({
               {day.exercises.map((exercise) => (
                 <label key={exercise.key} className="flex items-center gap-2 text-sm">
                   <span className="min-w-0 flex-1 truncate">{exercise.name}</span>
-                  <input
-                    type="number"
-                    value={expectedMaxes[exercise.key] ?? ""}
-                    onChange={(event) => {
-                      const rawValue: number | "" =
-                        event.target.value === "" ? "" : Number(event.target.value);
-                      setExpectedMaxes((prev) => {
-                        const next = { ...prev, [exercise.key]: rawValue };
-                        if (selectedSnapshot && rawValue !== "") {
-                          for (const d of selectedSnapshot.days) {
-                            for (const ex of d.exercises) {
-                              if (ex.key !== exercise.key && ex.name === exercise.name) {
-                                next[ex.key] = rawValue;
+                  {exercise.progressionType === "bodyweight" ? (
+                    <span className="w-24 text-right text-xs font-semibold text-faint">BW · no max</span>
+                  ) : (
+                    <input
+                      type="number"
+                      value={expectedMaxes[exercise.key] ?? ""}
+                      onChange={(event) => {
+                        const rawValue: number | "" =
+                          event.target.value === "" ? "" : Number(event.target.value);
+                        setExpectedMaxes((prev) => {
+                          const next = { ...prev, [exercise.key]: rawValue };
+                          if (selectedSnapshot && rawValue !== "") {
+                            for (const d of selectedSnapshot.days) {
+                              for (const ex of d.exercises) {
+                                if (ex.key !== exercise.key && ex.name === exercise.name) {
+                                  next[ex.key] = rawValue;
+                                }
                               }
                             }
                           }
-                        }
-                        return next;
-                      });
-                    }}
-                    min={1}
-                    step={0.1}
-                    inputMode="decimal"
-                    placeholder="Weight"
-                    className="w-24 touch-target rounded-xl border border-line bg-surface px-2 text-sm outline-none focus:border-brand"
-                  />
+                          return next;
+                        });
+                      }}
+                      min={1}
+                      step={0.1}
+                      inputMode="decimal"
+                      placeholder="Weight"
+                      className="w-24 touch-target rounded-xl border border-line bg-surface px-2 text-sm outline-none focus:border-brand"
+                    />
+                  )}
                 </label>
               ))}
             </div>
