@@ -14,7 +14,13 @@ export const db = new Database(dbPath);
 
 db.pragma("busy_timeout = 5000");
 db.pragma("journal_mode = WAL");
+// FULL durability: a committed write survives an OS crash / power loss, not just
+// an app crash. Writes here are infrequent, so the extra fsync cost is moot — we
+// trade a hair of speed for not losing the last logged set on a power cut.
+db.pragma("synchronous = FULL");
 db.pragma("foreign_keys = ON");
+// Fold the WAL back into the main file periodically so it can't grow unbounded.
+db.pragma("wal_autocheckpoint = 1000");
 
 function sleep(ms: number): void {
   Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
@@ -54,6 +60,17 @@ export function initDb(): void {
     db.exec(schema);
     runMigrations(db);
   });
+
+  // Surface corruption on boot instead of letting it silently propagate into
+  // every backup. quick_check is fast (no per-index scan) and "ok" when healthy.
+  try {
+    const result = db.pragma("quick_check", { simple: true });
+    if (result !== "ok") {
+      console.error(`[db] INTEGRITY CHECK FAILED: ${result} — restore from a known-good backup.`);
+    }
+  } catch (error) {
+    console.error("[db] integrity check could not run:", error);
+  }
 }
 
 initDb();

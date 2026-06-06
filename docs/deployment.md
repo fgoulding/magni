@@ -98,23 +98,43 @@ compose: `docker compose up -d --build` → http://localhost:3000.
 
 ---
 
-## 5. Backups
+## 5. Protecting your data (corruption & loss)
 
-One SQLite file, in WAL mode — don't `cp` it live. Use the WAL-safe online
-backup script in your deploy repo:
+The whole app is one SQLite file in the `app_data` volume. Defense in layers:
 
-```bash
-sh backup.sh            # snapshot into ./backups/
-```
+**On the engine — automatic, nothing to run:**
+- **WAL journal mode** — a crash or `kill` mid-write can't corrupt the file; SQLite
+  replays/discards the write-ahead log on next open.
+- **`synchronous = FULL`** — a committed write is fsync'd, so it survives an OS crash
+  or power loss, not just an app crash (worth the tiny cost at this write volume).
+- **`busy_timeout`** — writers wait briefly instead of erroring under contention.
+- **Boot integrity check** — `PRAGMA quick_check` runs on every start; a failure logs
+  loudly (`[db] INTEGRITY CHECK FAILED …`) so you catch corruption *before* it spreads
+  into backups. Watch it: `docker compose logs app | grep -i integrity` (no output = healthy).
 
-Cron it and copy snapshots **off the box**:
+**Backups — you must set these up (`deploy/backup.sh`, `deploy/restore.sh`):**
+- `sh backup.sh` takes a **consistent online snapshot** (SQLite `.backup()`, not a raw
+  `cp` that can copy a torn page), **verifies it with `quick_check` before keeping it**,
+  gzips it, and **rotates** snapshots older than `KEEP_DAYS` (default 30).
+- **Cron it daily AND copy snapshots off the box** — a backup on the same disk doesn't
+  survive a disk failure:
+  ```cron
+  0 3 * * * cd /path/to/magni-deploy && sh backup.sh >> backups/backup.log 2>&1
+  0 4 * * * rsync -a /path/to/magni-deploy/backups/ user@another-host:/backups/magni/
+  ```
+- **Restore:** `sh restore.sh backups/workouts-YYYYMMDD-HHMMSS.db.gz` — stops the app,
+  swaps the file, drops the stale WAL/SHM (so SQLite can't replay an old log onto the
+  restored DB), restarts. **Test a restore once** so you trust your backups.
 
-```cron
-0 3 * * * cd /srv/workouts && sh backup.sh >> backups/backup.log 2>&1
-```
+**Don't:**
+- ❌ `docker compose down -v` — deletes the volume (the one destructive command).
+- ❌ Put the volume on a **network filesystem** (NFS/SMB) — SQLite locking is unsafe
+  there and corrupts eventually. Keep it on a **local disk (ext4)**.
+- ❌ Run **two app containers** against the same DB file — one writer only.
+- ❌ `cp`/`tar` the live `.db` as a backup — use `backup.sh`.
 
-Restore steps are in [`deploy/README.md`](../deploy/README.md). Test a restore
-once so you trust your backups.
+**Watch the disk:** a full disk fails writes. Schedule `df -h` on the volume's disk and
+alert before it fills.
 
 ---
 

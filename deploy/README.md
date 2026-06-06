@@ -83,26 +83,31 @@ To roll back, set `IMAGE=ghcr.io/fgoulding/magni:v0.9.0` in `.env`, comment out 
 ## Backups
 
 ```bash
-sh backup.sh            # WAL-safe snapshot into ./backups/
+sh backup.sh            # verified, gzip'd, rotated snapshot into ./backups/
 ```
 
-Automate with cron and copy snapshots off the box:
+`backup.sh` takes a consistent online snapshot, runs an integrity check on it
+before keeping it, compresses it, and rotates anything older than `KEEP_DAYS`
+(default 30). Automate it AND copy snapshots **off the box**:
 
 ```bash
 0 3 * * * cd /path/to/magni-deploy && sh backup.sh >> backups/backup.log 2>&1
+0 4 * * * rsync -a /path/to/magni-deploy/backups/ user@another-host:/backups/magni/
 ```
 
-**Restore:**
+**Restore** (stops the app, swaps the file, clears the stale WAL/SHM, restarts):
 
 ```bash
-docker compose down                      # NOT -v
-docker compose cp backups/workouts-YYYYMMDD-HHMMSS.db app:/data/workouts.db
-docker compose run --rm app sh -c 'rm -f /data/workouts.db-wal /data/workouts.db-shm'
-docker compose up -d
+sh restore.sh backups/workouts-YYYYMMDD-HHMMSS.db.gz
 ```
+
+Test a restore once so you trust your backups. Full data-protection notes
+(corruption defenses, what not to do, disk monitoring) are in
+[`docs/deployment.md` §5](https://github.com/fgoulding/magni/blob/main/docs/deployment.md).
 
 ## Don't lose data
 
 The database is the `app_data` volume. It survives `up`, `down`, `pull`, reboots,
-and image updates. It is destroyed only by `docker compose down -v`, deleting the
-volume, or losing the host. Keep backups.
+and image updates. It is destroyed only by `docker compose down -v` (deletes the
+volume) or losing the host disk. Keep off-box backups, and never put the volume on
+a network filesystem (NFS/SMB) — SQLite corrupts there.
