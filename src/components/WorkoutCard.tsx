@@ -1,6 +1,7 @@
 "use client";
 
 import { Check, Circle, Dumbbell, Trophy } from "lucide-react";
+import { useRouter } from "next/navigation";
 import { type ReactNode, useEffect, useState } from "react";
 import { AddSessionExerciseForm } from "@/components/AddSessionExerciseForm";
 import { ErrorBanner } from "@/components/ErrorBanner";
@@ -72,8 +73,11 @@ export function WorkoutCard({
   const [saving, setSaving] = useState(false);
   const [skipping, setSkipping] = useState(false);
   const [completing, setCompleting] = useState(false);
+  const [canceling, setCanceling] = useState(false);
+  const [confirmingCancel, setConfirmingCancel] = useState(false);
   const [finished, setFinished] = useState(false);
   const [skipped, setSkipped] = useState(false);
+  const router = useRouter();
   const [prs, setPrs] = useState<{ exercise: string; e1rm: number; weight: number; reps: number }[]>([]);
 
   const groups = buildGroups(session?.sets ?? []);
@@ -275,6 +279,35 @@ export function WorkoutCard({
       setError(err instanceof Error ? err.message : "Could not skip workout");
     } finally {
       setSkipping(false);
+    }
+  }
+
+  // Discard an in-progress workout (and its logged sets) and return to idle.
+  // Two-tap: the first tap arms the button, the second actually cancels.
+  async function cancelWorkout() {
+    if (!session) return;
+    if (!confirmingCancel) {
+      setConfirmingCancel(true);
+      return;
+    }
+    setError("");
+    setCanceling(true);
+    try {
+      const response = await fetch(`/api/sessions/${session.id}`, { method: "DELETE" });
+      const body = (await response.json()) as { error?: string };
+      if (!response.ok) throw new Error(body.error ?? "Could not cancel workout");
+      // Back to the idle "Start workout" state.
+      setSession(null);
+      setCompletedSetIds(new Set());
+      setValues({});
+      setAdded({});
+      setCurrentGroupIdx(0);
+      setConfirmingCancel(false);
+      router.refresh();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Could not cancel workout");
+    } finally {
+      setCanceling(false);
     }
   }
 
@@ -666,24 +699,41 @@ export function WorkoutCard({
             onError={setError}
           />
 
-          <div className="flex gap-2 px-4 pb-4 pt-3">
-            {showSkip ? (
+          <div className="flex flex-col gap-2 px-4 pb-4 pt-3">
+            <div className="flex gap-2">
+              {showSkip ? (
+                <button
+                  type="button"
+                  disabled={skipping}
+                  onClick={skipWorkout}
+                  className="touch-target rounded-xl border border-line bg-surface px-4 py-2.5 text-sm font-semibold text-faint transition-colors active:bg-surface-muted disabled:opacity-50"
+                >
+                  Skip workout
+                </button>
+              ) : null}
               <button
                 type="button"
-                disabled={skipping}
-                onClick={skipWorkout}
-                className="touch-target rounded-xl border border-line bg-surface px-4 py-2.5 text-sm font-semibold text-faint transition-colors active:bg-surface-muted disabled:opacity-50"
+                disabled={completing}
+                onClick={complete}
+                className="touch-target flex-1 rounded-xl bg-foreground px-4 py-2.5 text-sm font-semibold text-background transition-colors active:opacity-90 disabled:opacity-50"
               >
-                Skip workout
+                {completing ? "Finishing…" : "Finish Workout"}
               </button>
-            ) : null}
+            </div>
             <button
               type="button"
-              disabled={completing}
-              onClick={complete}
-              className="touch-target flex-1 rounded-xl bg-foreground px-4 py-2.5 text-sm font-semibold text-background transition-colors active:opacity-90 disabled:opacity-50"
+              disabled={canceling}
+              onClick={cancelWorkout}
+              onBlur={() => setConfirmingCancel(false)}
+              className={`touch-target rounded-xl px-4 py-2 text-xs font-medium transition-colors disabled:opacity-50 ${
+                confirmingCancel ? "bg-danger-soft text-danger-ink" : "text-faint active:bg-surface-muted"
+              }`}
             >
-              {completing ? "Finishing…" : "Finish Workout"}
+              {canceling
+                ? "Canceling…"
+                : confirmingCancel
+                  ? "Tap again to discard this workout"
+                  : "Cancel workout"}
             </button>
           </div>
         </div>
