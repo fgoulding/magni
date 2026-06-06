@@ -7,7 +7,10 @@
 set -eu
 
 TS=$(date +%Y%m%d-%H%M%S)
-OUT_DIR=backups
+# Where snapshots land. Default ./backups; override to a path OUTSIDE any folder
+# bind-mounted into the container, so the container can never touch your backups:
+#   OUT_DIR=/media/Safe-Storage/magni-backups sh backup.sh
+OUT_DIR=${OUT_DIR:-backups}
 KEEP_DAYS=${KEEP_DAYS:-30}
 mkdir -p "$OUT_DIR"
 
