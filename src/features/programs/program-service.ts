@@ -624,6 +624,7 @@ function getLiftPreview(userId: number, row: ProgramDaySummary): TodayLiftPrevie
           COALESCE(prx.expected_max, 100) AS training_max,
           MAX(pdws.reps) AS reps,
           MAX(pdws.intensity_pct) AS intensity_pct,
+          MAX(pdws.weight) AS weight_override,
           COUNT(*) AS set_count
         FROM program_definition_exercises pde
         JOIN program_definition_week_settings pdws
@@ -646,6 +647,7 @@ function getLiftPreview(userId: number, row: ProgramDaySummary): TodayLiftPrevie
     training_max: number;
     reps: number;
     intensity_pct: number;
+    weight_override: number | null;
     set_count: number;
   }[];
   const rounding = getSettingNumber(userId, "rounding", 2.5);
@@ -654,7 +656,8 @@ function getLiftPreview(userId: number, row: ProgramDaySummary): TodayLiftPrevie
     name: setting.name,
     set_count: setting.set_count,
     reps: setting.reps,
-    weight: calculateWeight(setting.training_max, setting.intensity_pct, rounding),
+    // Per-week manual weight override wins, same as the workout materialisation.
+    weight: setting.weight_override ?? calculateWeight(setting.training_max, setting.intensity_pct, rounding),
     bodyweight: setting.progression_type === "bodyweight",
   }));
 }
