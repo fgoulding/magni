@@ -67,4 +67,16 @@ describe("program defaults", () => {
     expect(getProgramDefault("basic-strength-3-day")?.snapshot.days[0].exercises[0].weeks[0].sets).toBe(5);
     expect(getProgramDefault("missing")).toBeUndefined();
   });
+
+  it("materialises bodyweight default exercises as N individual sets (a ramp)", () => {
+    const superset = getProgramDefault("superset-hypertrophy-3-day")!;
+    const pullUp = superset.snapshot.days
+      .flatMap((day) => day.exercises)
+      .find((exercise) => exercise.name === "Pull-Up")!;
+
+    expect(pullUp.progressionType).toBe("bodyweight");
+    // 3 sets of 10 → a 3-set ramp so each logs its own reps + optional added weight.
+    expect(pullUp.weeks[0].ramp).toHaveLength(3);
+    expect(pullUp.weeks[0].ramp?.[0]).toMatchObject({ setNumber: 1, reps: 10, intensityPct: 0 });
+  });
 });

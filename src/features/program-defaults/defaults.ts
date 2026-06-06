@@ -240,9 +240,9 @@ const DEFAULT_DEFINITIONS = [
         exercises: [
           { slug: "squat", name: "Squat", category: "main" },
           { slug: "db-incline-bench", name: "DB Incline Bench Press", category: "accessory", progressionType: "custom", superset: "a", prescription: { sets: 3, reps: 12 } },
-          { slug: "rear-delt-face-pull", name: "Rear Delt / Face Pull", category: "accessory", progressionType: "custom", superset: "a", prescription: { sets: 3, reps: 15 } },
+          { slug: "rear-delt-face-pull", name: "Rear Delt / Face Pull", category: "accessory", progressionType: "bodyweight", superset: "a", prescription: { sets: 3, reps: 15 } },
           { slug: "single-leg-rdl", name: "Single-Leg RDL", category: "accessory", progressionType: "custom", superset: "b", prescription: { sets: 3, reps: 12 } },
-          { slug: "pull-up", name: "Pull-Up", category: "accessory", progressionType: "custom", superset: "b", prescription: { sets: 3, reps: 10 } },
+          { slug: "pull-up", name: "Pull-Up", category: "accessory", progressionType: "bodyweight", superset: "b", prescription: { sets: 3, reps: 10 } },
         ],
       },
       {
@@ -253,7 +253,7 @@ const DEFAULT_DEFINITIONS = [
           { slug: "split-squat", name: "Split Squat", category: "accessory", progressionType: "custom", superset: "a", prescription: { sets: 3, reps: 12 } },
           { slug: "lateral-raise", name: "Lateral Raise", category: "accessory", progressionType: "custom", superset: "a", prescription: { sets: 3, reps: 15 } },
           { slug: "db-row", name: "DB Row", category: "accessory", progressionType: "custom", superset: "b", prescription: { sets: 3, reps: 12 } },
-          { slug: "dip", name: "Dip", category: "accessory", progressionType: "custom", superset: "b", prescription: { sets: 3, reps: 12 } },
+          { slug: "dip", name: "Dip", category: "accessory", progressionType: "bodyweight", superset: "b", prescription: { sets: 3, reps: 12 } },
         ],
       },
       {
@@ -314,16 +314,35 @@ function createExerciseSnapshot(
   const progressionType = exercise.progressionType ?? "sbs";
   const templateWeeks = getTemplateWeeks(progressionType, exercise.category);
 
-  const weeks = exercise.prescription
-    ? [
-        {
-          weekNumber: 1,
-          intensityPct: exercise.prescription.intensityPct ?? 1,
-          reps: exercise.prescription.reps,
-          sets: exercise.prescription.sets,
-          repOutTarget: exercise.prescription.reps,
-        },
-      ]
+  const prescription = exercise.prescription;
+  const weeks = prescription
+    ? progressionType === "bodyweight"
+      ? // Bodyweight: materialise N individual sets (a ramp) so each logs its own
+        // reps + optional added weight, instead of one collapsed row.
+        [
+          {
+            weekNumber: 1,
+            intensityPct: 0,
+            reps: 0,
+            sets: prescription.sets,
+            repOutTarget: 0,
+            ramp: Array.from({ length: prescription.sets }, (_, index) => ({
+              setNumber: index + 1,
+              intensityPct: 0,
+              reps: prescription.reps,
+              repOutTarget: prescription.reps,
+            })),
+          },
+        ]
+      : [
+          {
+            weekNumber: 1,
+            intensityPct: prescription.intensityPct ?? 1,
+            reps: prescription.reps,
+            sets: prescription.sets,
+            repOutTarget: prescription.reps,
+          },
+        ]
     : templateWeeks.length > 0
       ? templateWeeks.map((tw) => ({
           weekNumber: tw.weekNumber,
