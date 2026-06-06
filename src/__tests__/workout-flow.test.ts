@@ -106,8 +106,9 @@ describe("workout flow", () => {
     expect(sessionResponse.status).toBe(201);
     expect(session.sets).toHaveLength(5);  // 5 ramp sets for SBS
 
+    // The rep-out (AMRAP) is the exercise's FINAL set; working sets target `reps`.
     const setResponse = await setRoute.PUT(
-      jsonRequest({ setId: session.sets[0].id, actualReps: 12, actualWeight: 210 }),
+      jsonRequest({ setId: session.sets[session.sets.length - 1].id, actualReps: 12, actualWeight: 210 }),
       params({ sessionId: String(session.id) }),
     );
     expect(setResponse.status).toBe(200);

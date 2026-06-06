@@ -334,7 +334,19 @@ export async function POST(request: Request, context: RouteContext) {
         `,
       );
 
+      // Only the exercise's FINAL set is the AMRAP (rep-out) set. Working sets
+      // target `reps`, so when a flat-single exercise is logged with one input,
+      // the working sets default to their working reps (e.g. 4) rather than the
+      // rep-out number (e.g. 7) — otherwise an SBS 5×4 (rep-out 7) logs as 7×5.
+      const finalSetNumber = new Map<number, number>();
       for (const weekSetting of weekSettings) {
+        finalSetNumber.set(
+          weekSetting.exercise_id,
+          Math.max(finalSetNumber.get(weekSetting.exercise_id) ?? 0, weekSetting.set_number),
+        );
+      }
+      for (const weekSetting of weekSettings) {
+        const isAmrapSet = weekSetting.set_number === finalSetNumber.get(weekSetting.exercise_id);
         insertSet.run(
           sessionId,
           weekSetting.legacy_week_setting_id,
@@ -350,7 +362,7 @@ export async function POST(request: Request, context: RouteContext) {
           weekSetting.intensity_pct,
           weekSetting.reps,
           weekSetting.sets,
-          weekSetting.rep_out_target,
+          isAmrapSet ? weekSetting.rep_out_target : weekSetting.reps,
           weekSetting.weight ?? calculateWeight(weekSetting.training_max, weekSetting.intensity_pct, rounding),
           weekSetting.training_max,
           weekSetting.progression_type === "custom" || weekSetting.progression_type === "bodyweight" ? 0 : 1,
