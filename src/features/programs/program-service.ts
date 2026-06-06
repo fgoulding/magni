@@ -44,6 +44,7 @@ export type ProgramDetail = Record<string, unknown> & {
   current_week: number;
   current_day: number;
   schedule_weekdays: string;
+  schedule_start_date?: string | null;
   is_active: number;
   active_hold_id: number | null;
   active_hold_start_date: string | null;
@@ -349,6 +350,7 @@ export function getProgramDetailForUser(legacyProgramId: number, userId: number)
           COALESCE(pr.current_day, p.current_day) AS current_day,
           COALESCE(pr.schedule_weekdays, p.schedule_weekdays) AS schedule_weekdays,
           COALESCE(pr.schedule_mode, p.schedule_mode) AS schedule_mode,
+          COALESCE(pr.start_date, substr(pr.created_at, 1, 10), substr(p.created_at, 1, 10)) AS schedule_start_date,
           hold.id AS active_hold_id,
           hold.start_date AS active_hold_start_date,
           hold.end_date AS active_hold_end_date,
@@ -655,6 +657,21 @@ function getLiftPreview(userId: number, row: ProgramDaySummary): TodayLiftPrevie
     weight: calculateWeight(setting.training_max, setting.intensity_pct, rounding),
     bodyweight: setting.progression_type === "bodyweight",
   }));
+}
+
+/** Lift preview (name + sets×reps @ weight) for any program day & week — so a
+ *  scheduled workout can show what's in it before you start. */
+export function getProgramDayLiftPreview(
+  userId: number,
+  programId: number,
+  definitionDayId: number,
+  weekNumber: number,
+): TodayLiftPreview[] {
+  return getLiftPreview(userId, {
+    program_id: programId,
+    definition_day_id: definitionDayId,
+    current_week: weekNumber,
+  } as ProgramDaySummary);
 }
 
 function enrichTodayRow(
@@ -1445,6 +1462,7 @@ export const updateProgramRun = db.transaction(
     name,
     status,
     scheduleWeekdays,
+    startDate,
     currentWeek,
     currentDay,
   }: {
@@ -1453,10 +1471,15 @@ export const updateProgramRun = db.transaction(
     name?: string;
     status?: ProgramRunStatus;
     scheduleWeekdays?: readonly number[];
+    /** Schedule anchor (YYYY-MM-DD); null clears it (falls back to created_at). */
+    startDate?: string | null;
     currentWeek?: number;
     currentDay?: number;
   }): void => {
     const context = assertProgramContext(legacyProgramId, userId);
+    if (startDate !== undefined) {
+      db.prepare("UPDATE program_runs SET start_date = ? WHERE id = ?").run(startDate, context.runId);
+    }
     if (name !== undefined) {
       db.prepare("UPDATE program_runs SET name = ? WHERE id = ?").run(name, context.runId);
       db.prepare("UPDATE program_definitions SET name = ? WHERE id = ?").run(name, context.definitionId);

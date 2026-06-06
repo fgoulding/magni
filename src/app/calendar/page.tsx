@@ -4,9 +4,11 @@ import { SessionRecapView } from "@/components/SessionRecapView";
 import { WorkoutCard } from "@/components/WorkoutCard";
 import {
   getActiveProgramDaysForUser,
+  getProgramDayLiftPreview,
   getProgramRunHoldsForRange,
   isDateHeldForRun,
   type ProgramDaySummary,
+  type TodayLiftPreview,
 } from "@/features/programs/program-service";
 import { getSessionRecap } from "@/features/programs/training-stats";
 import { getSettingNumber, requireUser } from "@/lib/auth";
@@ -106,6 +108,11 @@ function buildMonthDays(monthStart: Date): Date[] {
   }
 
   return days;
+}
+
+function formatLiftDetail(lift: TodayLiftPreview): string {
+  if (lift.bodyweight) return `${lift.set_count}×${lift.reps} BW`;
+  return `${lift.set_count}×${lift.reps} @ ${lift.weight} lb`;
 }
 
 function getHistoryEvents(userId: number, monthStart: Date, monthEnd: Date): CalendarEvent[] {
@@ -327,6 +334,16 @@ export default async function CalendarPage({ searchParams }: CalendarPageProps) 
     selectedEvent && (selectedEvent.kind === "completed" || selectedEvent.kind === "skipped") && selectedEvent.sessionId
       ? getSessionRecap(user.id, selectedEvent.sessionId)
       : null;
+  // What's in the workout, so you can see it before choosing "Do workout".
+  const selectedLifts =
+    selectedEvent?.programId && selectedEvent.definitionDayId && selectedEvent.currentWeek
+      ? getProgramDayLiftPreview(
+          user.id,
+          selectedEvent.programId,
+          selectedEvent.definitionDayId,
+          selectedEvent.currentWeek,
+        )
+      : [];
   const eventsByDate = new Map<string, CalendarEvent[]>();
   for (const event of events) {
     eventsByDate.set(event.date, [...(eventsByDate.get(event.date) ?? []), event]);
@@ -460,6 +477,10 @@ export default async function CalendarPage({ searchParams }: CalendarPageProps) 
                 startLabel={actionLabel(selectedEvent.kind)}
                 showSkip={selectedEvent.kind !== "completed"}
                 rounding={rounding}
+                liftsLabel="In this workout"
+                nextLifts={
+                  sessionRecap ? undefined : selectedLifts.map((lift) => ({ name: lift.name, detail: formatLiftDetail(lift) }))
+                }
               />
             ) : (
               <div className="px-4 pb-4">

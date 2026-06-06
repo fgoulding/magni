@@ -12,7 +12,18 @@ type ProgramUpdateBody = {
   name?: unknown;
   isActive?: unknown;
   scheduleWeekdays?: unknown;
+  startDate?: unknown;
 };
+
+// undefined = not provided; null = clear it; otherwise a YYYY-MM-DD anchor.
+function parseStartDate(value: unknown): string | null | undefined {
+  if (value === undefined) return undefined;
+  if (value === null || value === "") return null;
+  if (typeof value !== "string" || !/^\d{4}-\d{2}-\d{2}$/.test(value)) {
+    throw new Error("startDate must be YYYY-MM-DD");
+  }
+  return value;
+}
 
 function parseScheduleWeekdays(value: unknown): number[] | undefined {
   if (value === undefined) return undefined;
@@ -73,8 +84,10 @@ export async function PUT(request: Request, context: RouteContext) {
     const hasActive = typeof body.isActive === "boolean";
     const scheduleWeekdays = parseScheduleWeekdays(body.scheduleWeekdays);
     const hasSchedule = scheduleWeekdays !== undefined;
+    const startDate = parseStartDate(body.startDate);
+    const hasStartDate = startDate !== undefined;
 
-    if (!hasName && !hasActive && !hasSchedule) {
+    if (!hasName && !hasActive && !hasSchedule && !hasStartDate) {
       return jsonError("name is required", 400);
     }
 
@@ -84,12 +97,16 @@ export async function PUT(request: Request, context: RouteContext) {
       name: hasName ? name : undefined,
       status: hasActive ? (body.isActive ? "active" : "paused") : undefined,
       scheduleWeekdays: hasSchedule ? scheduleWeekdays : undefined,
+      startDate: hasStartDate ? startDate : undefined,
     });
 
     return NextResponse.json({ success: true });
   } catch (error) {
     if (isUnauthorized(error)) return jsonError("Unauthorized", 401);
     if (error instanceof Error && error.message.startsWith("scheduleWeekdays")) {
+      return jsonError(error.message, 400);
+    }
+    if (error instanceof Error && error.message.startsWith("startDate")) {
       return jsonError(error.message, 400);
     }
     return jsonError("Failed to update program", 500);

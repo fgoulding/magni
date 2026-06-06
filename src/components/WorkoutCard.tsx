@@ -35,6 +35,7 @@ export function WorkoutCard({
   statusLine,
   holdSlot,
   eyebrow,
+  liftsLabel = "Today's lifts",
   rounding = 2.5,
 }: {
   programId: number;
@@ -55,6 +56,8 @@ export function WorkoutCard({
   holdSlot?: ReactNode;
   /** Small label above the program name (e.g. "Scheduled today"). */
   eyebrow?: string;
+  /** Heading over the lift preview (default "Today's lifts"). */
+  liftsLabel?: string;
   /** User's weight-rounding setting, for live TM-driven weight recompute. */
   rounding?: number;
 }) {
@@ -326,7 +329,7 @@ export function WorkoutCard({
               <div className="mt-4 rounded-xl bg-surface-muted p-3.5">
                 <div className="eyebrow mb-2.5 flex items-center gap-1.5 text-[11px] text-brand-strong">
                   <Dumbbell aria-hidden="true" size={13} />
-                  Today&apos;s lifts
+                  {liftsLabel}
                 </div>
                 <div className="flex flex-col gap-2.5">
                   {nextLifts.map((lift, index) => (

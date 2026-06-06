@@ -81,6 +81,7 @@ export default async function ProgramPage({ params }: PageProps) {
           <ProgramScheduleForm
             programId={program.id}
             initialScheduleWeekdays={parseScheduleWeekdays(program.schedule_weekdays)}
+            initialStartDate={program.schedule_start_date}
             dayCount={daysWithExercises.length}
           />
         </div>
