@@ -1,5 +1,6 @@
 import Link from "next/link";
 import { redirect } from "next/navigation";
+import { SessionRecapView } from "@/components/SessionRecapView";
 import { WorkoutCard } from "@/components/WorkoutCard";
 import {
   getActiveProgramDaysForUser,
@@ -7,6 +8,7 @@ import {
   isDateHeldForRun,
   type ProgramDaySummary,
 } from "@/features/programs/program-service";
+import { getSessionRecap } from "@/features/programs/training-stats";
 import { getSettingNumber, requireUser } from "@/lib/auth";
 import { parseDateKey, toLocalDateKey } from "@/lib/date-key";
 import { db } from "@/lib/db";
@@ -35,6 +37,8 @@ type CalendarEvent = {
   kind: "completed" | "skipped" | "scheduled";
   title: string;
   href: string;
+  /** The logged session, for completed/skipped events (drives the recap). */
+  sessionId?: number;
   programId?: number | null;
   dayId?: number | null;
   definitionDayId?: number | null;
@@ -138,6 +142,7 @@ function getHistoryEvents(userId: number, monthStart: Date, monthEnd: Date): Cal
     kind: row.status,
     title: `${row.status === "completed" ? "Completed" : "Skipped"}: ${row.program_name} - ${row.day_name}`,
     href: "/history",
+    sessionId: row.id,
     programId: row.program_id,
     dayId: row.day_id ?? row.program_definition_day_id,
     definitionDayId: row.program_definition_day_id,
@@ -318,6 +323,10 @@ export default async function CalendarPage({ searchParams }: CalendarPageProps) 
   ].sort((a, b) => a.date.localeCompare(b.date) || a.kind.localeCompare(b.kind));
   const selectedWorkout = Array.isArray(params?.workout) ? params.workout[0] : (params?.workout ?? params?.train);
   const selectedEvent = events.find((event) => event.key === selectedWorkout);
+  const sessionRecap =
+    selectedEvent && (selectedEvent.kind === "completed" || selectedEvent.kind === "skipped") && selectedEvent.sessionId
+      ? getSessionRecap(user.id, selectedEvent.sessionId)
+      : null;
   const eventsByDate = new Map<string, CalendarEvent[]>();
   for (const event of events) {
     eventsByDate.set(event.date, [...(eventsByDate.get(event.date) ?? []), event]);
@@ -433,6 +442,11 @@ export default async function CalendarPage({ searchParams }: CalendarPageProps) 
                 Close
               </Link>
             </div>
+            {sessionRecap ? (
+              <div className="px-4 pt-3">
+                <SessionRecapView recap={sessionRecap} />
+              </div>
+            ) : null}
             {selectedEvent.programId && selectedEvent.dayId && selectedEvent.currentWeek && selectedEvent.currentDay ? (
               <WorkoutCard
                 programId={selectedEvent.programId}

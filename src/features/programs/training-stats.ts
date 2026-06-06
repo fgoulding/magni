@@ -608,3 +608,109 @@ export function getUserTrainingStats(userId: number, now: Date = new Date()): Tr
     categorySplit,
   };
 }
+
+// --- Completed-workout recap (what you did + what you skipped) ---
+
+export type RecapExercise = Readonly<{
+  name: string;
+  bodyweight: boolean;
+  skipped: boolean;
+  loggedSets: number;
+  totalReps: number;
+  topWeight: number;
+  repScheme: string;
+}>;
+
+export type SessionRecap = Readonly<{
+  status: string;
+  date: string;
+  programName: string;
+  dayName: string;
+  volume: number;
+  exercises: RecapExercise[];
+  loggedCount: number;
+  skippedCount: number;
+}>;
+
+/** Recap a completed/skipped session: per-exercise what was logged, and skips. */
+export function getSessionRecap(userId: number, sessionId: number): SessionRecap | null {
+  const session = db
+    .prepare(
+      `
+        SELECT
+          s.status AS status,
+          s.date AS date,
+          COALESCE(NULLIF(s.program_name, ''), p.name, '') AS programName,
+          COALESCE(NULLIF(s.day_name, ''), d.name, pdd.name, '') AS dayName
+        FROM sessions s
+        LEFT JOIN programs p ON p.id = s.program_id
+        LEFT JOIN days d ON d.id = s.day_id
+        LEFT JOIN program_definition_days pdd ON pdd.id = s.program_definition_day_id
+        WHERE s.id = ? AND s.user_id = ?
+      `,
+    )
+    .get(sessionId, userId) as
+    | { status: string; date: string; programName: string; dayName: string }
+    | undefined;
+  if (!session) return null;
+
+  const rows = db
+    .prepare(
+      `
+        SELECT exercise_name AS name, progression_type AS progressionType,
+               actual_reps AS actualReps, actual_weight AS actualWeight
+        FROM session_sets
+        WHERE session_id = ?
+        ORDER BY program_definition_exercise_id, set_number, id
+      `,
+    )
+    .all(sessionId) as {
+    name: string;
+    progressionType: string;
+    actualReps: number | null;
+    actualWeight: number | null;
+  }[];
+
+  const order: string[] = [];
+  const byName = new Map<string, { bodyweight: boolean; reps: number[]; topWeight: number; volume: number }>();
+  for (const row of rows) {
+    const name = row.name.trim();
+    if (!name) continue;
+    let agg = byName.get(name);
+    if (!agg) {
+      agg = { bodyweight: row.progressionType === "bodyweight", reps: [], topWeight: 0, volume: 0 };
+      byName.set(name, agg);
+      order.push(name);
+    }
+    if (row.actualReps != null) {
+      const weight = row.actualWeight ?? 0;
+      agg.reps.push(row.actualReps);
+      agg.topWeight = Math.max(agg.topWeight, weight);
+      agg.volume += row.actualReps * weight;
+    }
+  }
+
+  const exercises: RecapExercise[] = order.map((name) => {
+    const agg = byName.get(name)!;
+    return {
+      name,
+      bodyweight: agg.bodyweight,
+      skipped: agg.reps.length === 0,
+      loggedSets: agg.reps.length,
+      totalReps: agg.reps.reduce((sum, r) => sum + r, 0),
+      topWeight: round(agg.topWeight),
+      repScheme: agg.reps.join("/"),
+    };
+  });
+
+  return {
+    status: session.status,
+    date: session.date,
+    programName: session.programName,
+    dayName: session.dayName,
+    volume: round(exercises.length ? [...byName.values()].reduce((s, e) => s + e.volume, 0) : 0),
+    exercises,
+    loggedCount: exercises.filter((e) => !e.skipped).length,
+    skippedCount: exercises.filter((e) => e.skipped).length,
+  };
+}
