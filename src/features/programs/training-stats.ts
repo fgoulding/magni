@@ -7,6 +7,8 @@ export type StatSetRow = Readonly<{
   category: string;
   reps: number;
   weight: number;
+  /** How many identical sets this row stands in for (flat rows > 1; ramp rows 1). */
+  sets?: number;
 }>;
 
 export type LiftStat = Readonly<{
@@ -135,11 +137,13 @@ export function buildTrainingStats(
 ): TrainingStats {
   const currentWeekStart = weekStartKey(toLocalDateKey(now));
 
-  // Totals
-  const totals = { sessions: sessionDates.length, sets: setRows.length, reps: 0, volume: 0 };
+  // Totals — a flat row stands in for `sets` identical sets (ramp rows are 1).
+  const totals = { sessions: sessionDates.length, sets: 0, reps: 0, volume: 0 };
   for (const row of setRows) {
-    totals.reps += row.reps;
-    totals.volume += row.reps * row.weight;
+    const setCount = row.sets ?? 1;
+    totals.sets += setCount;
+    totals.reps += row.reps * setCount;
+    totals.volume += row.reps * row.weight * setCount;
   }
 
   // Per-lift aggregation
@@ -151,9 +155,10 @@ export function buildTrainingStats(
     if (row.weight <= 0 || row.reps <= 0) continue;
     const name = row.exercise.trim();
     if (!name) continue;
-    const e1rm = epleyE1rm(row.weight, row.reps);
+    const e1rm = epleyE1rm(row.weight, row.reps); // per-set metric — never × sets
+    const rowVolume = row.reps * row.weight * (row.sets ?? 1);
 
-    volumeByLift.set(name, (volumeByLift.get(name) ?? 0) + row.reps * row.weight);
+    volumeByLift.set(name, (volumeByLift.get(name) ?? 0) + rowVolume);
 
     const existing = perLift.get(name);
     if (!existing || e1rm > existing.bestE1rm) {
@@ -195,7 +200,7 @@ export function buildTrainingStats(
   const volumeByWeek = new Map<string, number>();
   for (const row of setRows) {
     const week = weekStartKey(row.date);
-    volumeByWeek.set(week, (volumeByWeek.get(week) ?? 0) + row.reps * row.weight);
+    volumeByWeek.set(week, (volumeByWeek.get(week) ?? 0) + row.reps * row.weight * (row.sets ?? 1));
   }
   const weeklyVolume: WeeklyPoint[] = recentWeekKeys(currentWeekStart, 10).map((weekStart) => ({
     weekStart,
@@ -228,7 +233,7 @@ export function buildTrainingStats(
   // Category split
   const volumeByCategory = new Map<string, number>();
   for (const row of setRows) {
-    volumeByCategory.set(row.category, (volumeByCategory.get(row.category) ?? 0) + row.reps * row.weight);
+    volumeByCategory.set(row.category, (volumeByCategory.get(row.category) ?? 0) + row.reps * row.weight * (row.sets ?? 1));
   }
   const categoryOrder = ["main", "aux", "accessory"];
   const categorySplit: CategorySlice[] = categoryOrder
@@ -281,7 +286,8 @@ export function buildLiftDetail(rows: readonly StatSetRow[], name: string): Lift
   for (const row of rows) {
     if (row.weight <= 0 || row.reps <= 0) continue;
     if (row.exercise.trim().toLowerCase() !== target) continue;
-    const e1rm = epleyE1rm(row.weight, row.reps);
+    const e1rm = epleyE1rm(row.weight, row.reps); // per-set metric — never × sets
+    const setCount = row.sets ?? 1; // a flat row stands in for `sets` sets
     const existing = byDate.get(row.date);
     if (!existing) {
       byDate.set(row.date, {
@@ -289,13 +295,13 @@ export function buildLiftDetail(rows: readonly StatSetRow[], name: string): Lift
         bestE1rm: e1rm,
         bestReps: row.reps,
         bestWeight: row.weight,
-        sets: 1,
-        volume: row.reps * row.weight,
+        sets: setCount,
+        volume: row.reps * row.weight * setCount,
       });
     } else {
       existing.topWeight = Math.max(existing.topWeight, row.weight);
-      existing.sets += 1;
-      existing.volume += row.reps * row.weight;
+      existing.sets += setCount;
+      existing.volume += row.reps * row.weight * setCount;
       if (e1rm > existing.bestE1rm) {
         existing.bestE1rm = e1rm;
         existing.bestReps = row.reps;
@@ -370,7 +376,8 @@ export function getUserLiftDetail(userId: number, name: string): LiftDetail {
           ss.exercise_name AS exercise,
           ss.category AS category,
           COALESCE(ss.actual_reps, ss.reps) AS reps,
-          COALESCE(ss.actual_weight, ss.calculated_weight, 0) AS weight
+          COALESCE(ss.actual_weight, ss.calculated_weight, 0) AS weight,
+          MAX(COALESCE(ss.sets, 1), 1) AS sets
         FROM session_sets ss
         JOIN sessions s ON s.id = ss.session_id
         WHERE s.user_id = ? AND s.status = 'completed' AND ss.exercise_name = ? COLLATE NOCASE
@@ -506,7 +513,8 @@ export function getUserTrainingStats(userId: number, now: Date = new Date()): Tr
           ss.exercise_name AS exercise,
           ss.category AS category,
           COALESCE(ss.actual_reps, ss.reps) AS reps,
-          COALESCE(ss.actual_weight, ss.calculated_weight, 0) AS weight
+          COALESCE(ss.actual_weight, ss.calculated_weight, 0) AS weight,
+          MAX(COALESCE(ss.sets, 1), 1) AS sets
         FROM session_sets ss
         JOIN sessions s ON s.id = ss.session_id
         WHERE s.user_id = ? AND s.status = 'completed' AND s.date >= ?
@@ -530,9 +538,9 @@ export function getUserTrainingStats(userId: number, now: Date = new Date()): Tr
     .prepare(
       `
         SELECT
-          COUNT(*) AS sets,
-          COALESCE(SUM(COALESCE(ss.actual_reps, ss.reps)), 0) AS reps,
-          COALESCE(SUM(COALESCE(ss.actual_reps, ss.reps) * COALESCE(ss.actual_weight, ss.calculated_weight, 0)), 0) AS volume
+          COALESCE(SUM(MAX(COALESCE(ss.sets, 1), 1)), 0) AS sets,
+          COALESCE(SUM(COALESCE(ss.actual_reps, ss.reps) * MAX(COALESCE(ss.sets, 1), 1)), 0) AS reps,
+          COALESCE(SUM(COALESCE(ss.actual_reps, ss.reps) * COALESCE(ss.actual_weight, ss.calculated_weight, 0) * MAX(COALESCE(ss.sets, 1), 1)), 0) AS volume
         FROM session_sets ss
         JOIN sessions s ON s.id = ss.session_id
         WHERE s.user_id = ? AND s.status = 'completed'
@@ -544,7 +552,7 @@ export function getUserTrainingStats(userId: number, now: Date = new Date()): Tr
     .prepare(
       `
         SELECT ss.category AS category,
-               COALESCE(SUM(COALESCE(ss.actual_reps, ss.reps) * COALESCE(ss.actual_weight, ss.calculated_weight, 0)), 0) AS volume
+               COALESCE(SUM(COALESCE(ss.actual_reps, ss.reps) * COALESCE(ss.actual_weight, ss.calculated_weight, 0) * MAX(COALESCE(ss.sets, 1), 1)), 0) AS volume
         FROM session_sets ss
         JOIN sessions s ON s.id = ss.session_id
         WHERE s.user_id = ? AND s.status = 'completed'
@@ -565,7 +573,7 @@ export function getUserTrainingStats(userId: number, now: Date = new Date()): Tr
             s.date AS date,
             COALESCE(ss.actual_reps, ss.reps) AS reps,
             COALESCE(ss.actual_weight, ss.calculated_weight, 0) AS weight,
-            COALESCE(ss.actual_reps, ss.reps) * COALESCE(ss.actual_weight, ss.calculated_weight, 0) AS vol,
+            COALESCE(ss.actual_reps, ss.reps) * COALESCE(ss.actual_weight, ss.calculated_weight, 0) * MAX(COALESCE(ss.sets, 1), 1) AS vol,
             COALESCE(ss.actual_weight, ss.calculated_weight, 0) * (1 + COALESCE(ss.actual_reps, ss.reps) / 30.0) AS e1rm
           FROM session_sets ss
           JOIN sessions s ON s.id = ss.session_id
@@ -658,7 +666,7 @@ export function getSessionRecap(userId: number, sessionId: number): SessionRecap
     .prepare(
       `
         SELECT exercise_name AS name, progression_type AS progressionType,
-               actual_reps AS actualReps, actual_weight AS actualWeight
+               actual_reps AS actualReps, actual_weight AS actualWeight, sets AS setCount
         FROM session_sets
         WHERE session_id = ?
         ORDER BY program_definition_exercise_id, set_number, id
@@ -669,6 +677,7 @@ export function getSessionRecap(userId: number, sessionId: number): SessionRecap
     progressionType: string;
     actualReps: number | null;
     actualWeight: number | null;
+    setCount: number;
   }[];
 
   const order: string[] = [];
@@ -684,9 +693,13 @@ export function getSessionRecap(userId: number, sessionId: number): SessionRecap
     }
     if (row.actualReps != null) {
       const weight = row.actualWeight ?? 0;
-      agg.reps.push(row.actualReps);
+      // A flat row stands in for `setCount` identical sets; a ramp row is one set.
+      const setCount = row.setCount > 0 ? row.setCount : 1;
+      for (let i = 0; i < setCount; i += 1) {
+        agg.reps.push(row.actualReps);
+        agg.volume += row.actualReps * weight;
+      }
       agg.topWeight = Math.max(agg.topWeight, weight);
-      agg.volume += row.actualReps * weight;
     }
   }
 

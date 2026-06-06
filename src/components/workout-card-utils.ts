@@ -96,13 +96,16 @@ export function buildSummaryRows(
     const bw = isBodyweight(set);
     // Bodyweight: no displayed load (shows "N reps"); tonnage counts only added weight.
     const setWeight = bw ? (set.actual_weight ?? 0) : set.calculated_weight;
+    // A flat exercise is one row standing in for `sets` identical sets; a ramp is
+    // one row per set (sets = 1). Multiply so total reps & tonnage count every set.
+    const setCount = set.sets > 0 ? set.sets : 1;
     const existing = rows.get(key);
     rows.set(key, {
       key,
       exerciseName: set.exercise_name,
-      reps: (existing?.reps ?? 0) + reps,
+      reps: (existing?.reps ?? 0) + reps * setCount,
       weight: bw ? null : existing && existing.weight !== set.calculated_weight ? null : set.calculated_weight,
-      tonnage: (existing?.tonnage ?? 0) + reps * setWeight,
+      tonnage: (existing?.tonnage ?? 0) + reps * setWeight * setCount,
     });
   }
 
