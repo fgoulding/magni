@@ -334,10 +334,12 @@ export async function POST(request: Request, context: RouteContext) {
         `,
       );
 
-      // Only the exercise's FINAL set is the AMRAP (rep-out) set. Working sets
-      // target `reps`, so when a flat-single exercise is logged with one input,
-      // the working sets default to their working reps (e.g. 4) rather than the
-      // rep-out number (e.g. 7) — otherwise an SBS 5×4 (rep-out 7) logs as 7×5.
+      // SBS-style programs do fixed working sets + a single rep-out (AMRAP) on the
+      // FINAL set, but store the rep-out target on every set. So for SBS only, the
+      // working sets target `reps` and just the last set keeps the rep-out target —
+      // otherwise a 5×4 (rep-out 7) logged with one input records 7×5 = 35 instead
+      // of 4,4,4,4,7 = 23. Range progressions (double) and others keep every set's
+      // rep-out target, since there every set is taken toward the same target.
       const finalSetNumber = new Map<number, number>();
       for (const weekSetting of weekSettings) {
         finalSetNumber.set(
@@ -346,7 +348,9 @@ export async function POST(request: Request, context: RouteContext) {
         );
       }
       for (const weekSetting of weekSettings) {
+        const isSbsFamily = (weekSetting.progression_type ?? "").toLowerCase().startsWith("sbs");
         const isAmrapSet = weekSetting.set_number === finalSetNumber.get(weekSetting.exercise_id);
+        const repOutTarget = isSbsFamily && !isAmrapSet ? weekSetting.reps : weekSetting.rep_out_target;
         insertSet.run(
           sessionId,
           weekSetting.legacy_week_setting_id,
@@ -362,7 +366,7 @@ export async function POST(request: Request, context: RouteContext) {
           weekSetting.intensity_pct,
           weekSetting.reps,
           weekSetting.sets,
-          isAmrapSet ? weekSetting.rep_out_target : weekSetting.reps,
+          repOutTarget,
           weekSetting.weight ?? calculateWeight(weekSetting.training_max, weekSetting.intensity_pct, rounding),
           weekSetting.training_max,
           weekSetting.progression_type === "custom" || weekSetting.progression_type === "bodyweight" ? 0 : 1,
