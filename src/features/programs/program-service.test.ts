@@ -414,6 +414,29 @@ describe("program service", () => {
     expect(tuesday.missedWorkouts).toEqual([]);
   });
 
+  it("derives the Today week from the schedule start date, not the completion counter", () => {
+    const userId = createUser("service-today-startdate@example.com");
+    const created = service.createProgramRun({ userId, name: "Backdated", numWeeks: 7 });
+    const day = service.addDefinitionDayForRun({ userId, legacyProgramId: created.legacyProgramId, name: "Mon Day" });
+    service.addDefinitionExerciseForDay({
+      userId,
+      legacyDayId: day.legacyDayId,
+      name: "Squat",
+      trainingMax: 200,
+      category: "main",
+      progressionType: "linear",
+    });
+    service.updateProgramRun({ userId, legacyProgramId: created.legacyProgramId, scheduleWeekdays: [1] });
+    // Backdate the start 5 weeks; current_week (the completion counter) stays 1.
+    service.updateProgramRun({ userId, legacyProgramId: created.legacyProgramId, startDate: "2026-05-04" });
+
+    // 2026-06-08 is the Monday 5 weeks after the start → Today shows week 6, in
+    // step with the calendar, even though current_week was never advanced.
+    const dashboard = service.getTodayWorkoutDashboard(userId, new Date("2026-06-08T12:00:00-07:00"));
+    expect(dashboard.scheduledToday).toHaveLength(1);
+    expect(dashboard.scheduledToday[0].current_week).toBe(6);
+  });
+
   it("builds a Today dashboard with scheduled workout preview and last session", () => {
     const userId = createUser("service-today@example.com");
     const created = service.createProgramRun({ userId, name: "Dashboard Strength", numWeeks: 4 });

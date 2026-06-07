@@ -910,6 +910,24 @@ export const cancelActiveProgramRunHold = db.transaction(
   },
 );
 
+/** Whole days from one YYYY-MM-DD key to another (DST-safe via UTC). */
+function daysBetweenKeys(fromKey: string, toKey: string): number {
+  const [fy, fm, fd] = fromKey.split("-").map(Number);
+  const [ty, tm, td] = toKey.split("-").map(Number);
+  if ([fy, fm, fd, ty, tm, td].some((n) => Number.isNaN(n))) return 0;
+  return Math.round((Date.UTC(ty, tm - 1, td) - Date.UTC(fy, fm - 1, fd)) / 86_400_000);
+}
+
+/** Date-driven program week for a scheduled run on a given day: how many 7-day
+ *  periods have elapsed since the schedule's start (1-based, clamped to the
+ *  program length). Keeps the Today card's week in step with the calendar
+ *  projection, which anchors off the same schedule_start_date. */
+function scheduledWeekForDate(startDateKey: string | null | undefined, numWeeks: number, dateKey: string): number {
+  if (!startDateKey) return 1;
+  const weeksElapsed = Math.floor(daysBetweenKeys(startDateKey, dateKey) / 7);
+  return Math.min(Math.max(weeksElapsed + 1, 1), Math.max(numWeeks, 1));
+}
+
 export function getTodayWorkoutDashboard(userId: number, today = new Date()): TodayWorkoutDashboard {
   const rows = getActiveProgramDaysForUser(userId);
   const todayWeekday = today.getDay();
@@ -943,10 +961,11 @@ export function getTodayWorkoutDashboard(userId: number, today = new Date()): To
           !hasLoggedWorkoutOnOrAfter(userId, missedDay, missedDateKey)
         ) {
           seenMissedDays.add(missedKey);
+          const missedWeek = scheduledWeekForDate(missedDay.schedule_start_date, missedDay.num_weeks, missedDateKey);
           missedWorkouts.push(
             enrichTodayRow(
               userId,
-              missedDay,
+              { ...missedDay, current_week: missedWeek },
               `Missed ${WEEKDAY_LABELS[missedDate.getDay()]}`,
               todayDateKey,
               missedDateKey,
@@ -957,7 +976,10 @@ export function getTodayWorkoutDashboard(userId: number, today = new Date()): To
 
       const dayRow = findScheduledDay(programRows, todayWeekday);
       if (dayRow && !isDateHeldForRun(holds, dayRow.program_run_id, todayDateKey)) {
-        scheduledToday.push(enrichTodayRow(userId, dayRow, WEEKDAY_LABELS[todayWeekday], todayDateKey));
+        const week = scheduledWeekForDate(dayRow.schedule_start_date, dayRow.num_weeks, todayDateKey);
+        scheduledToday.push(
+          enrichTodayRow(userId, { ...dayRow, current_week: week }, WEEKDAY_LABELS[todayWeekday], todayDateKey),
+        );
       }
       continue;
     }
