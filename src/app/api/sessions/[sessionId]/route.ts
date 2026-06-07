@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { isUnauthorized, jsonError, numberParam } from "@/lib/api";
+import { assertSameOrigin, isUnauthorized, jsonError, numberParam } from "@/lib/api";
 import { requireUser } from "@/lib/auth";
 import { db } from "@/lib/db";
 
@@ -10,8 +10,9 @@ type RouteContext = {
 /** Cancel an in-progress workout: discard the session (and its logged sets, which
  *  cascade) so the day returns to not-started. Completed/skipped sessions are
  *  historical and never deleted here. */
-export async function DELETE(_request: Request, context: RouteContext) {
+export async function DELETE(request: Request, context: RouteContext) {
   try {
+    assertSameOrigin(request);
     const user = await requireUser();
     const { sessionId } = await context.params;
     const id = numberParam(sessionId);
@@ -29,6 +30,9 @@ export async function DELETE(_request: Request, context: RouteContext) {
     return NextResponse.json({ success: true });
   } catch (error) {
     if (isUnauthorized(error)) return jsonError("Unauthorized", 401);
+    if (error instanceof Error && error.message === "Forbidden cross-origin request") {
+      return jsonError(error.message, 403);
+    }
     return jsonError("Could not cancel workout", 500);
   }
 }

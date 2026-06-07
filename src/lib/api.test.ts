@@ -23,4 +23,13 @@ describe("assertSameOrigin", () => {
 
     expect(() => assertSameOrigin(request)).toThrow("Forbidden cross-origin request");
   });
+
+  it("rejects a foreign Referer when Origin is absent", () => {
+    const request = new Request("http://localhost:3001/api/programs", {
+      method: "POST",
+      headers: { host: "192.168.1.50:3001", referer: "http://evil.example/x" },
+    });
+
+    expect(() => assertSameOrigin(request)).toThrow("Forbidden cross-origin request");
+  });
 });

@@ -38,6 +38,9 @@ export function assertSameOrigin(request: Request): void {
   const origin = request.headers.get("origin");
   const referer = request.headers.get("referer");
 
+  // A cross-site browser fetch always carries an Origin header, so a foreign
+  // Origin is rejected here; SameSite=Lax on the session cookie is the primary
+  // defense (the cookie isn't sent on cross-site mutations at all).
   if (origin && !allowedOrigins.has(origin)) {
     throw new Error("Forbidden cross-origin request");
   }
