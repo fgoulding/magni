@@ -1,6 +1,6 @@
 "use client";
 
-import { Check, Circle, Dumbbell, Trophy } from "lucide-react";
+import { Check, Circle, Dumbbell, SkipForward, Trophy } from "lucide-react";
 import { useRouter } from "next/navigation";
 import { type ReactNode, useEffect, useState } from "react";
 import { AddSessionExerciseForm } from "@/components/AddSessionExerciseForm";
@@ -68,6 +68,10 @@ export function WorkoutCard({
   // Optional added weight per set for bodyweight exercises (keyed by set id).
   const [added, setAdded] = useState<Record<number, number>>({});
   const [completedSetIds, setCompletedSetIds] = useState<Set<number>>(new Set());
+  // Lifts the user chose to skip this session, keyed by the group's leading set
+  // id. Client-only: skipped lifts are simply left unlogged, so the recap marks
+  // them skipped at finish. A full reload resets this (the lift returns as "to do").
+  const [skippedGroupKeys, setSkippedGroupKeys] = useState<Set<number>>(new Set());
   const [error, setError] = useState("");
   const [submitting, setSubmitting] = useState(false);
   const [saving, setSaving] = useState(false);
@@ -90,7 +94,11 @@ export function WorkoutCard({
   const totalTonnage = summaryRows.reduce((sum, row) => sum + row.tonnage, 0);
   const totalSets = completedSetIds.size;
   const liftCount = summaryRows.length;
-  const completedGroupCount = groups.filter((group) => allSetsInGroupLogged(group)).length;
+  // A lift is "resolved" once it's logged or deliberately skipped — both let the
+  // progress bar advance and the workout reach a finishable state.
+  const resolvedGroupCount = groups.filter(
+    (group) => allSetsInGroupLogged(group) || isGroupSkipped(group),
+  ).length;
 
   // Load a session into the card, restoring any already-logged sets (a set with
   // actual_reps is logged) and jumping to the first unfinished group. Used both
@@ -315,6 +323,34 @@ export function WorkoutCard({
     setCurrentGroupIdx(groupIndex);
   }
 
+  function groupKey(group: WorkoutGroup): number {
+    return group.sets[0].id;
+  }
+
+  function isGroupSkipped(group: WorkoutGroup): boolean {
+    return skippedGroupKeys.has(groupKey(group));
+  }
+
+  // Skip the current lift: mark it skipped (left unlogged → recap shows it as
+  // skipped) and advance to the next lift that's neither logged nor skipped.
+  function skipLift(group: WorkoutGroup) {
+    setSkippedGroupKeys((prev) => new Set(prev).add(groupKey(group)));
+    const next = groups.findIndex(
+      (g, i) => i > currentGroupIdx && !allSetsInGroupLogged(g) && !isGroupSkipped(g),
+    );
+    if (next !== -1) setCurrentGroupIdx(next);
+  }
+
+  // Re-open a skipped lift to do it after all: clear the skip and focus it.
+  function unskipLift(group: WorkoutGroup) {
+    setSkippedGroupKeys((prev) => {
+      const next = new Set(prev);
+      next.delete(groupKey(group));
+      return next;
+    });
+    setCurrentGroupIdx(group.index);
+  }
+
   // Re-open a logged group for editing (e.g. to fix a wrong rep count). Clearing
   // it from completedSetIds re-enables the inputs, pre-filled with the logged
   // values; logging again overwrites the saved set.
@@ -500,7 +536,7 @@ export function WorkoutCard({
             <div className="mt-2 h-1.5 overflow-hidden rounded-full bg-surface-muted">
               <div
                 className="h-full rounded-full bg-brand transition-all duration-300"
-                style={{ width: `${groups.length ? (completedGroupCount / groups.length) * 100 : 0}%` }}
+                style={{ width: `${groups.length ? (resolvedGroupCount / groups.length) * 100 : 0}%` }}
               />
             </div>
           </div>
@@ -513,24 +549,60 @@ export function WorkoutCard({
 
           {prevGroups.length > 0 && (
             <div className="px-4 pt-3">
-              {prevGroups.map((group) => (
-                <button
-                  key={group.index}
-                  type="button"
-                  onClick={() => selectGroup(group.index)}
-                  className="flex w-full items-center gap-2.5 rounded-lg px-2 py-2 text-left text-sm text-muted transition-colors active:bg-surface-muted"
-                >
-                  <Check aria-hidden="true" size={16} className="shrink-0 text-success" strokeWidth={3} />
-                  <span className="truncate">{groupExerciseNames(group).join(" + ")}</span>
-                  <span className="ml-auto font-display tracking-tight text-faint">
-                    {group.sets.map((s) => `${values[s.id] ?? s.rep_out_target}`).join("/")} reps
-                  </span>
-                </button>
-              ))}
+              {prevGroups.map((group) =>
+                isGroupSkipped(group) ? (
+                  <button
+                    key={group.index}
+                    type="button"
+                    onClick={() => unskipLift(group)}
+                    className="flex w-full items-center gap-2.5 rounded-lg px-2 py-2 text-left text-sm text-faint transition-colors active:bg-surface-muted"
+                  >
+                    <SkipForward aria-hidden="true" size={15} className="shrink-0 text-faint" />
+                    <span className="truncate line-through">{groupExerciseNames(group).join(" + ")}</span>
+                    <span className="ml-auto font-display tracking-tight">Skipped</span>
+                  </button>
+                ) : (
+                  <button
+                    key={group.index}
+                    type="button"
+                    onClick={() => selectGroup(group.index)}
+                    className="flex w-full items-center gap-2.5 rounded-lg px-2 py-2 text-left text-sm text-muted transition-colors active:bg-surface-muted"
+                  >
+                    <Check aria-hidden="true" size={16} className="shrink-0 text-success" strokeWidth={3} />
+                    <span className="truncate">{groupExerciseNames(group).join(" + ")}</span>
+                    <span className="ml-auto font-display tracking-tight text-faint">
+                      {group.sets.map((s) => `${values[s.id] ?? s.rep_out_target}`).join("/")} reps
+                    </span>
+                  </button>
+                ),
+              )}
             </div>
           )}
 
-          {currentGroup && (
+          {currentGroup && isGroupSkipped(currentGroup) && (
+            <div className="px-4 py-3">
+              <div className="rounded-2xl border border-line bg-surface-muted px-4 py-4">
+                <div className="flex items-start justify-between gap-3">
+                  <div className="min-w-0">
+                    <span className="eyebrow block text-[10px] text-faint">Skipped</span>
+                    <h3 className="display text-2xl leading-tight text-muted">
+                      {groupExerciseNames(currentGroup).join(" + ")}
+                    </h3>
+                  </div>
+                  <SkipForward aria-hidden="true" size={20} className="mt-1 shrink-0 text-faint" />
+                </div>
+                <button
+                  type="button"
+                  onClick={() => unskipLift(currentGroup)}
+                  className="touch-target mt-3 w-full rounded-xl border border-line bg-surface px-4 py-2.5 text-sm font-semibold text-muted transition-colors active:bg-surface-muted"
+                >
+                  Do this lift instead
+                </button>
+              </div>
+            </div>
+          )}
+
+          {currentGroup && !isGroupSkipped(currentGroup) && (
             <div className="px-4 py-3">
               <div className="rounded-2xl border border-brand-line bg-brand-soft px-4 py-4">
                 <div className="flex items-start gap-2">
@@ -654,14 +726,25 @@ export function WorkoutCard({
                     </button>
                   </div>
                 ) : (
-                  <button
-                    type="button"
-                    disabled={saving}
-                    onClick={logSet}
-                    className="touch-target mt-3 w-full rounded-xl bg-brand px-4 py-3 text-base font-semibold text-white transition-colors active:bg-brand-strong disabled:opacity-50"
-                  >
-                    {saving ? "Saving…" : isLastGroup ? "Log Set" : "Log & Next"}
-                  </button>
+                  <>
+                    <button
+                      type="button"
+                      disabled={saving}
+                      onClick={logSet}
+                      className="touch-target mt-3 w-full rounded-xl bg-brand px-4 py-3 text-base font-semibold text-white transition-colors active:bg-brand-strong disabled:opacity-50"
+                    >
+                      {saving ? "Saving…" : isLastGroup ? "Log Set" : "Log & Next"}
+                    </button>
+                    <button
+                      type="button"
+                      disabled={saving}
+                      onClick={() => skipLift(currentGroup)}
+                      className="touch-target mt-2 inline-flex w-full items-center justify-center gap-1.5 rounded-xl px-4 py-2 text-sm font-semibold text-faint transition-colors active:bg-surface-muted disabled:opacity-50"
+                    >
+                      <SkipForward aria-hidden="true" size={14} />
+                      Skip this lift
+                    </button>
+                  </>
                 )}
               </div>
             </div>
@@ -669,21 +752,34 @@ export function WorkoutCard({
 
           {upcomingGroups.length > 0 && (
             <div className="px-4 pb-1">
-              {upcomingGroups.map((group) => (
-                <button
-                  key={group.index}
-                  type="button"
-                  onClick={() => selectGroup(group.index)}
-                  className="flex w-full items-center gap-2.5 rounded-lg px-2 py-2 text-left text-sm text-faint transition-colors active:bg-surface-muted"
-                >
-                  <Circle aria-hidden="true" size={15} className="shrink-0 text-line" strokeWidth={2.5} />
-                  <span className="truncate text-muted">{groupExerciseNames(group).join(" + ")}</span>
-                  <span className="ml-auto font-display tracking-tight">
-                    {group.sets.length} set{group.sets.length > 1 ? "s" : ""} · {group.sets[0].reps} @{" "}
-                    {group.sets[0].calculated_weight} lb
-                  </span>
-                </button>
-              ))}
+              {upcomingGroups.map((group) =>
+                isGroupSkipped(group) ? (
+                  <button
+                    key={group.index}
+                    type="button"
+                    onClick={() => unskipLift(group)}
+                    className="flex w-full items-center gap-2.5 rounded-lg px-2 py-2 text-left text-sm text-faint transition-colors active:bg-surface-muted"
+                  >
+                    <SkipForward aria-hidden="true" size={15} className="shrink-0 text-faint" />
+                    <span className="truncate line-through">{groupExerciseNames(group).join(" + ")}</span>
+                    <span className="ml-auto font-display tracking-tight">Skipped</span>
+                  </button>
+                ) : (
+                  <button
+                    key={group.index}
+                    type="button"
+                    onClick={() => selectGroup(group.index)}
+                    className="flex w-full items-center gap-2.5 rounded-lg px-2 py-2 text-left text-sm text-faint transition-colors active:bg-surface-muted"
+                  >
+                    <Circle aria-hidden="true" size={15} className="shrink-0 text-line" strokeWidth={2.5} />
+                    <span className="truncate text-muted">{groupExerciseNames(group).join(" + ")}</span>
+                    <span className="ml-auto font-display tracking-tight">
+                      {group.sets.length} set{group.sets.length > 1 ? "s" : ""} · {group.sets[0].reps} @{" "}
+                      {group.sets[0].calculated_weight} lb
+                    </span>
+                  </button>
+                ),
+              )}
             </div>
           )}
 
