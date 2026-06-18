@@ -67,6 +67,9 @@ export function WorkoutCard({
   const [values, setValues] = useState<Record<number, number>>({});
   // Optional added weight per set for bodyweight exercises (keyed by set id).
   const [added, setAdded] = useState<Record<number, number>>({});
+  // Editable working weight per set for superset / custom lifts (keyed by set id).
+  // Main lifts edit weight via the training max instead, so they're excluded.
+  const [weights, setWeights] = useState<Record<number, number>>({});
   const [completedSetIds, setCompletedSetIds] = useState<Set<number>>(new Set());
   // Lifts the user chose to skip this session, keyed by the group's leading set
   // id. Client-only: skipped lifts are simply left unlogged, so the recap marks
@@ -90,7 +93,7 @@ export function WorkoutCard({
   const prevGroups = groups.slice(0, currentGroupIdx);
   const upcomingGroups = groups.slice(currentGroupIdx + 1);
   const isLastGroup = currentGroupIdx === lastGroupIndex(groups);
-  const summaryRows = buildSummaryRows(session?.sets ?? [], completedSetIds, values);
+  const summaryRows = buildSummaryRows(session?.sets ?? [], completedSetIds, values, weights, added);
   const totalTonnage = summaryRows.reduce((sum, row) => sum + row.tonnage, 0);
   const totalSets = completedSetIds.size;
   const liftCount = summaryRows.length;
@@ -116,6 +119,18 @@ export function WorkoutCard({
     const logged = new Set(body.sets.filter((set) => set.actual_reps != null).map((set) => set.id));
     setCompletedSetIds(logged);
     const gs = buildGroups(body.sets);
+    // Restore edited working weights for superset/custom sets (main lifts derive
+    // their weight from the training max, so they're left out).
+    const editableWeightIds = new Set(
+      gs.filter((group) => !isFlatSingle(group)).flatMap((group) => group.sets.map((set) => set.id)),
+    );
+    setWeights(
+      Object.fromEntries(
+        body.sets
+          .filter((set) => !isBodyweight(set) && editableWeightIds.has(set.id) && set.actual_weight != null)
+          .map((set) => [set.id, set.actual_weight as number]),
+      ),
+    );
     const firstUnfinished = gs.findIndex((group) => {
       const last = group.sets[group.sets.length - 1];
       return group.sets.length > 1 ? !logged.has(last.id) : !group.sets.every((s) => logged.has(s.id));
@@ -217,8 +232,9 @@ export function WorkoutCard({
     try {
       for (const set of currentGroup.sets) {
         const setReps = values[set.id] ?? set.rep_out_target;
-        // Bodyweight renders per-set (never flat-single), so each set has its own added weight.
-        const actualWeight = isBodyweight(set) ? (added[set.id] ?? 0) : set.calculated_weight;
+        // Bodyweight: each set's own added weight. Otherwise an edited working
+        // weight (supersets/custom) if present, else the prescribed weight.
+        const actualWeight = isBodyweight(set) ? (added[set.id] ?? 0) : (weights[set.id] ?? set.calculated_weight);
         const response = await fetch(`/api/sessions/${session.id}/sets`, {
           method: "PUT",
           headers: { "Content-Type": "application/json" },
@@ -690,7 +706,20 @@ export function WorkoutCard({
                                 />
                                 <span className="text-xs text-faint">+lb</span>
                               </label>
-                            ) : null}
+                            ) : (
+                              <label className="flex items-center gap-1">
+                                <input
+                                  type="number"
+                                  min={0}
+                                  step={2.5}
+                                  value={weights[set.id] ?? set.calculated_weight}
+                                  onChange={(event) => setWeights({ ...weights, [set.id]: Number(event.target.value) })}
+                                  aria-label={`${set.exercise_name} weight`}
+                                  className="touch-target w-16 rounded-xl border border-line bg-surface px-2 py-2 text-center font-display text-xl tracking-tight outline-none transition-colors focus:border-brand"
+                                />
+                                <span className="text-xs text-faint">lb</span>
+                              </label>
+                            )}
                             <label className="flex items-center gap-1.5">
                               <input
                                 type="number"

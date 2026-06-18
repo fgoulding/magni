@@ -86,6 +86,8 @@ export function buildSummaryRows(
   sets: WorkoutSet[],
   completedSetIds: ReadonlySet<number>,
   values: Record<number, number>,
+  weights: Record<number, number> = {},
+  added: Record<number, number> = {},
 ): WorkoutSummaryRow[] {
   const rows = new Map<string, WorkoutSummaryRow>();
 
@@ -95,8 +97,10 @@ export function buildSummaryRows(
     const key = set.exercise_name;
     const reps = values[set.id] ?? set.actual_reps ?? set.rep_out_target;
     const bw = isBodyweight(set);
-    // Bodyweight: no displayed load (shows "N reps"); tonnage counts only added weight.
-    const setWeight = bw ? (set.actual_weight ?? 0) : set.calculated_weight;
+    // Use the in-workout edited load when present: added weight for bodyweight,
+    // the edited working weight for supersets/custom, else the prescribed weight.
+    const displayWeight = weights[set.id] ?? set.calculated_weight;
+    const setWeight = bw ? (added[set.id] ?? set.actual_weight ?? 0) : displayWeight;
     // A flat exercise is one row standing in for `sets` identical sets; a ramp is
     // one row per set (sets = 1). Multiply so total reps & tonnage count every set.
     const setCount = set.sets > 0 ? set.sets : 1;
@@ -105,7 +109,7 @@ export function buildSummaryRows(
       key,
       exerciseName: set.exercise_name,
       reps: (existing?.reps ?? 0) + reps * setCount,
-      weight: bw ? null : existing && existing.weight !== set.calculated_weight ? null : set.calculated_weight,
+      weight: bw ? null : existing && existing.weight !== displayWeight ? null : displayWeight,
       tonnage: (existing?.tonnage ?? 0) + reps * setWeight * setCount,
     });
   }
