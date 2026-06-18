@@ -41,7 +41,6 @@ export type WorkoutSummaryRow = {
 /** Group consecutive sets into supersets (shared group token) or same-exercise runs. */
 export function buildGroups(sets: WorkoutSet[]): WorkoutGroup[] {
   const groups: WorkoutGroup[] = [];
-  let i = 0;
   for (const set of sets) {
     if (
       set.superset_group &&
@@ -57,9 +56,11 @@ export function buildGroups(sets: WorkoutSet[]): WorkoutGroup[] {
     ) {
       groups[groups.length - 1].sets.push(set);
     } else {
-      groups.push({ index: i, sets: [set], supersetGroup: set.superset_group });
+      // index is the group's ORDINAL position — it drives currentGroupIdx, which
+      // indexes the groups array. (Using the flat set index broke navigation once
+      // a group held more than one set, e.g. a flat-single lift or a superset.)
+      groups.push({ index: groups.length, sets: [set], supersetGroup: set.superset_group });
     }
-    i++;
   }
   return groups;
 }
