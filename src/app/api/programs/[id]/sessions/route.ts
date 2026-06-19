@@ -4,6 +4,7 @@ import { getSettingNumber, requireUser } from "@/lib/auth";
 import { calculateWeight } from "@/lib/calculator";
 import { todayLocalDateKey } from "@/lib/date-key";
 import { db } from "@/lib/db";
+import { getLastPerformanceByExercise } from "@/features/programs/training-stats";
 
 type RouteContext = {
   params: Promise<{ id: string }>;
@@ -52,7 +53,7 @@ function getSessionWithSets(sessionId: number) {
     )
     .all(sessionId);
 
-  return { ...session, sets };
+  return { ...session, sets, lastPerformance: getLastPerformanceByExercise(Number(session.user_id), sessionId) };
 }
 
 export async function GET(_request: Request, context: RouteContext) {

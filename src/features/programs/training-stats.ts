@@ -727,3 +727,62 @@ export function getSessionRecap(userId: number, sessionId: number): SessionRecap
     skippedCount: exercises.filter((e) => e.skipped).length,
   };
 }
+
+// --- "Last time" reference: the most recent prior completed performance per lift ---
+
+export type LastPerformance = Readonly<{
+  date: string;
+  reps: number[];
+  topWeight: number;
+  bodyweight: boolean;
+}>;
+
+/** For every exercise in a session, the logged sets from the most recent OTHER
+ *  completed session containing that exercise — so the workout can show what you
+ *  did last time. Flat rows (sets > 1) expand to one rep entry per set. */
+export function getLastPerformanceByExercise(userId: number, sessionId: number): Record<string, LastPerformance> {
+  const rows = db
+    .prepare(
+      `
+        WITH ranked AS (
+          SELECT
+            ss.exercise_name AS name,
+            ss.set_number AS setNumber,
+            ss.actual_reps AS reps,
+            COALESCE(ss.actual_weight, ss.calculated_weight, 0) AS weight,
+            ss.sets AS setCount,
+            ss.progression_type AS progressionType,
+            s.date AS date,
+            DENSE_RANK() OVER (PARTITION BY ss.exercise_name ORDER BY s.date DESC, s.id DESC) AS sessionRank
+          FROM session_sets ss
+          JOIN sessions s ON s.id = ss.session_id
+          WHERE s.user_id = ? AND s.status = 'completed' AND s.id <> ?
+            AND ss.actual_reps IS NOT NULL
+            AND ss.exercise_name IN (SELECT DISTINCT exercise_name FROM session_sets WHERE session_id = ?)
+        )
+        SELECT name, setNumber, reps, weight, setCount, progressionType, date
+        FROM ranked WHERE sessionRank = 1
+        ORDER BY name, setNumber
+      `,
+    )
+    .all(userId, sessionId, sessionId) as {
+    name: string;
+    reps: number;
+    weight: number;
+    setCount: number;
+    progressionType: string;
+    date: string;
+  }[];
+
+  const result: Record<string, { date: string; reps: number[]; topWeight: number; bodyweight: boolean }> = {};
+  for (const row of rows) {
+    const name = row.name.trim();
+    if (!name) continue;
+    const entry =
+      result[name] ?? (result[name] = { date: row.date, reps: [], topWeight: 0, bodyweight: row.progressionType === "bodyweight" });
+    const count = row.setCount > 0 ? row.setCount : 1;
+    for (let i = 0; i < count; i += 1) entry.reps.push(row.reps);
+    entry.topWeight = Math.max(entry.topWeight, Math.round(row.weight));
+  }
+  return result;
+}

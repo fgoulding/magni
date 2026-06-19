@@ -25,9 +25,18 @@ export type WorkoutGroup = {
   supersetGroup: string | null;
 };
 
+export type LastPerformance = {
+  date: string;
+  reps: number[];
+  topWeight: number;
+  bodyweight: boolean;
+};
+
 export type SessionResponse = {
   id: number;
   sets: WorkoutSet[];
+  /** Most recent prior completed performance, keyed by exercise name. */
+  lastPerformance?: Record<string, LastPerformance>;
 };
 
 export type WorkoutSummaryRow = {

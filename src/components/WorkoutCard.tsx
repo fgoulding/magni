@@ -16,9 +16,17 @@ import {
   isFlatSingle,
   lastGroupIndex,
   summaryDetail,
+  type LastPerformance,
   type SessionResponse,
   type WorkoutGroup,
 } from "@/components/workout-card-utils";
+
+/** Compact "last time" line, e.g. "5/5/8 @ 225 lb" or "12/12/12 BW +25". */
+function formatLastPerformance(last: LastPerformance): string {
+  const scheme = last.reps.join("/");
+  if (last.bodyweight) return `${scheme} BW${last.topWeight > 0 ? ` +${last.topWeight}` : ""}`;
+  return `${scheme} @ ${last.topWeight} lb`;
+}
 
 export function WorkoutCard({
   programId,
@@ -632,6 +640,15 @@ export function WorkoutCard({
                     <h3 className="display text-3xl leading-tight">
                       {groupExerciseNames(currentGroup).join(" + ")}
                     </h3>
+                    {groupExerciseNames(currentGroup).map((name) => {
+                      const last = session.lastPerformance?.[name];
+                      if (!last || last.reps.length === 0) return null;
+                      return (
+                        <p key={name} className="mt-1 text-xs text-muted">
+                          Last{currentGroup.supersetGroup ? ` · ${name}` : ""}: {formatLastPerformance(last)}
+                        </p>
+                      );
+                    })}
                   </div>
                   {!currentGroup.supersetGroup &&
                   currentGroup.sets[0].training_max &&
