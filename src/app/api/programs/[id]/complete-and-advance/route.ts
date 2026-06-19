@@ -195,6 +195,7 @@ export async function POST(request: Request, context: RouteContext) {
           repOutTarget: row.rep_out_target,
           category: row.category,
           currentTrainingMax: row.training_max,
+          userId: user.id,
         });
         const newTrainingMax = applyTmDelta(row.training_max, delta);
 

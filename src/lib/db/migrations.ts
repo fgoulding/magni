@@ -948,9 +948,27 @@ function dropSessionTriggers(db: Database.Database): void {
   `);
 }
 
+function createUserTrainingTemplatesTable(db: Database.Database): void {
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS user_training_templates (
+      id TEXT PRIMARY KEY,
+      user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      name TEXT NOT NULL,
+      description TEXT NOT NULL DEFAULT '',
+      weeks_json TEXT NOT NULL,
+      rule_json TEXT NOT NULL,
+      auto_progression INTEGER NOT NULL DEFAULT 1,
+      created_at TEXT NOT NULL DEFAULT (datetime('now')),
+      updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+    );
+    CREATE INDEX IF NOT EXISTS idx_user_training_templates_user ON user_training_templates(user_id);
+  `);
+}
+
 export function runMigrations(db: Database.Database): void {
   dropSessionTriggers(db);
   createProgramDefinitionRunTables(db);
+  createUserTrainingTemplatesTable(db);
   addColumn(db, "programs", "shared_program_id INTEGER REFERENCES shared_programs(id)");
   addColumn(db, "programs", "shared_program_version_id INTEGER REFERENCES shared_program_versions(id)");
   addColumn(db, "programs", "program_definition_id INTEGER REFERENCES program_definitions(id) ON DELETE SET NULL");

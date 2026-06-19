@@ -1,6 +1,7 @@
 import { calculateTmDelta, getAdjustmentPerRep } from "@/lib/calculator";
 import { getTrainingTemplate, isTrainingTemplateId } from "@/features/training-templates/registry";
-import type { ExerciseCategory } from "@/features/training-templates/types";
+import { resolveTrainingTemplate } from "@/features/training-templates/user-templates";
+import type { ExerciseCategory, TrainingTemplate } from "@/features/training-templates/types";
 
 export type TemplateTrainingMaxDeltaInput = {
   readonly templateId: string;
@@ -8,20 +9,27 @@ export type TemplateTrainingMaxDeltaInput = {
   readonly repOutTarget: number;
   readonly category: ExerciseCategory;
   readonly currentTrainingMax: number;
+  /** Owner — required to resolve a user-defined ("custom:…") progression. */
+  readonly userId?: number;
 };
 
 export function calculateTemplateTrainingMaxDelta(input: TemplateTrainingMaxDeltaInput): number {
-  const templateId = input.templateId.trim().toLowerCase();
-  if (!isTrainingTemplateId(templateId)) {
-    return calculateTmDelta(input.actualReps, input.repOutTarget, getAdjustmentPerRep(input.category));
+  const templateId = input.templateId.trim();
+  const fallback = () => calculateTmDelta(input.actualReps, input.repOutTarget, getAdjustmentPerRep(input.category));
+
+  let template: TrainingTemplate | null = null;
+  try {
+    if (input.userId != null) {
+      template = resolveTrainingTemplate(templateId, input.userId);
+    } else if (isTrainingTemplateId(templateId.toLowerCase())) {
+      template = getTrainingTemplate(templateId.toLowerCase());
+    }
+  } catch {
+    template = null; // a deleted/unresolvable template degrades to the default math
   }
 
-  const template = getTrainingTemplate(templateId);
-
-  if (!template.autoProgression) {
-    return 0;
-  }
-
+  if (!template) return fallback();
+  if (!template.autoProgression) return 0;
   if (template.progression) {
     return template.progression.calculateTrainingMaxDelta({
       actualReps: input.actualReps,
@@ -30,6 +38,5 @@ export function calculateTemplateTrainingMaxDelta(input: TemplateTrainingMaxDelt
       currentTrainingMax: input.currentTrainingMax,
     });
   }
-
-  return calculateTmDelta(input.actualReps, input.repOutTarget, getAdjustmentPerRep(input.category));
+  return fallback();
 }

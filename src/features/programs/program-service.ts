@@ -1,6 +1,6 @@
 import crypto from "node:crypto";
-import { getTemplateWeeks, getTrainingTemplate } from "@/features/training-templates/registry";
-import type { ExerciseCategory, TemplateWeek } from "@/features/training-templates/types";
+import { resolveTrainingTemplate } from "@/features/training-templates/user-templates";
+import type { ExerciseCategory, TemplateWeek, TrainingTemplate } from "@/features/training-templates/types";
 import { getSettingNumber } from "@/lib/auth";
 import { calculateWeight } from "@/lib/calculator";
 import { toLocalDateKey } from "@/lib/date-key";
@@ -188,6 +188,12 @@ function normalizeTemplateId(value: string | undefined): string {
   if (!value) return "custom";
   const templateId = value.trim().toLowerCase();
   return templateId === "" ? "custom" : templateId;
+}
+
+/** Weeks for a category from an already-resolved template (built-in or user-defined),
+ *  falling back to the main grid — mirrors registry.getTemplateWeeks without a re-lookup. */
+function weeksForCategory(template: TrainingTemplate, category: ExerciseCategory): readonly TemplateWeek[] {
+  return template.weeksByCategory[category] ?? template.weeksByCategory.main ?? [];
 }
 
 function assertProgramContext(legacyProgramId: number, userId: number): ProgramContext {
@@ -1189,7 +1195,7 @@ export const addDefinitionExerciseForDay = db.transaction(
   }): CreatedDefinitionExercise => {
     const context = assertDayContext(legacyDayId, userId);
     const templateId = normalizeTemplateId(progressionType);
-    const template = getTrainingTemplate(templateId);
+    const template = resolveTrainingTemplate(templateId, userId);
     if (!template.supportedCategories.includes(category)) {
       throw new Error(`${template.id} does not support ${category} exercises`);
     }
@@ -1252,7 +1258,7 @@ export const addDefinitionExerciseForDay = db.transaction(
     ).run(context.runId, exerciseStableKey, trainingMax);
 
     const rounding = getSettingNumber(userId, "rounding", 2.5);
-    const templateWeeks = getTemplateWeeks(template.id, category);
+    const templateWeeks = weeksForCategory(template, category);
     const insertDefinitionWeek = db.prepare(
       `
         INSERT INTO program_definition_week_settings (
@@ -1398,7 +1404,7 @@ export const updateDefinitionExerciseType = db.transaction(
       | undefined;
     if (!row) throw new Error("Exercise not found");
 
-    const template = getTrainingTemplate(normalizeTemplateId(progressionType));
+    const template = resolveTrainingTemplate(normalizeTemplateId(progressionType), userId);
     if (!template.supportedCategories.includes(category)) {
       throw new Error(`${template.id} does not support ${category} exercises`);
     }
@@ -1418,7 +1424,7 @@ export const updateDefinitionExerciseType = db.transaction(
     db.prepare("DELETE FROM week_settings WHERE exercise_id = ?").run(legacyExerciseId);
 
     const rounding = getSettingNumber(userId, "rounding", 2.5);
-    const templateWeeks = getTemplateWeeks(template.id, category);
+    const templateWeeks = weeksForCategory(template, category);
     const insertDefinitionWeek = db.prepare(
       `
         INSERT INTO program_definition_week_settings (
