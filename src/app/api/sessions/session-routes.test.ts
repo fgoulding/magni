@@ -397,6 +397,38 @@ describe("session APIs", () => {
     expect(expected.expected_max).toBe(350);
   });
 
+  it("refuses to add or edit sets on a completed session", async () => {
+    const userId = createUser("quick-locked@example.com");
+    authenticate(userId);
+
+    const session = await (await globalSessionsRoute.POST(jsonRequest({}))).json();
+    const added = await (
+      await setRoute.POST(
+        jsonRequest({ name: "Bench Press", sets: 1, reps: 5, weight: 135 }),
+        params({ sessionId: String(session.id) }),
+      )
+    ).json();
+    await sessionRoute.PATCH(jsonRequest({}), params({ sessionId: String(session.id) }));
+
+    // Completed history must be immutable.
+    const addAfter = await setRoute.POST(
+      jsonRequest({ name: "Curl", sets: 3, reps: 10, weight: 30 }),
+      params({ sessionId: String(session.id) }),
+    );
+    expect(addAfter.status).toBe(400);
+
+    const editAfter = await setRoute.PUT(
+      jsonRequest({ setId: added.sets[0].id, actualReps: 99, actualWeight: 999 }),
+      params({ sessionId: String(session.id) }),
+    );
+    expect(editAfter.status).toBe(400);
+
+    const stored = dbModule.db
+      .prepare("SELECT actual_reps FROM session_sets WHERE id = ?")
+      .get(added.sets[0].id) as { actual_reps: number | null };
+    expect(stored.actual_reps).not.toBe(99);
+  });
+
   it("refuses to finish an already-completed session", async () => {
     const userId = createUser("quick-finish-twice@example.com");
     authenticate(userId);

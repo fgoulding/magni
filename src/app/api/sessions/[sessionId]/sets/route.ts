@@ -48,9 +48,10 @@ export async function POST(request: Request, context: RouteContext) {
     }
 
     const session = db
-      .prepare("SELECT id, week_number FROM sessions WHERE id = ? AND user_id = ?")
-      .get(id, user.id) as { id: number; week_number: number } | undefined;
+      .prepare("SELECT id, week_number, status FROM sessions WHERE id = ? AND user_id = ?")
+      .get(id, user.id) as { id: number; week_number: number; status: string } | undefined;
     if (!session) return jsonError("Session not found", 404);
+    if (session.status !== "in_progress") return jsonError("Workout is not in progress", 400);
 
     const insert = db.prepare(
       `INSERT INTO session_sets (
@@ -96,8 +97,11 @@ export async function PUT(request: Request, context: RouteContext) {
       return jsonError("setId is required", 400);
     }
 
-    const session = db.prepare("SELECT id FROM sessions WHERE id = ? AND user_id = ?").get(id, user.id);
+    const session = db
+      .prepare("SELECT id, status FROM sessions WHERE id = ? AND user_id = ?")
+      .get(id, user.id) as { id: number; status: string } | undefined;
     if (!session) return jsonError("Session not found", 404);
+    if (session.status !== "in_progress") return jsonError("Workout is not in progress", 400);
 
     const sessionSet = db
       .prepare("SELECT id FROM session_sets WHERE id = ? AND session_id = ?")
