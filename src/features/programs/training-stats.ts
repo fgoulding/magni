@@ -442,9 +442,15 @@ export function getSessionPrs(userId: number, sessionId: number): SessionPr[] {
   const sessionSets = db
     .prepare(`${setQuery} WHERE s.id = ? AND s.user_id = ?`)
     .all(sessionId, userId) as SetRepWeight[];
+  // A PR is only computed for exercises in THIS session, so prior sets for other
+  // lifts are loaded then discarded. Scope to this session's exercises (uses
+  // idx_session_sets_exercise_name) instead of pulling the user's whole history.
   const priorSets = db
-    .prepare(`${setQuery} WHERE s.user_id = ? AND s.status = 'completed' AND s.id != ?`)
-    .all(userId, sessionId) as SetRepWeight[];
+    .prepare(
+      `${setQuery} WHERE s.user_id = ? AND s.status = 'completed' AND s.id != ?
+         AND ss.exercise_name IN (SELECT DISTINCT exercise_name FROM session_sets WHERE session_id = ?)`,
+    )
+    .all(userId, sessionId, sessionId) as SetRepWeight[];
   return computeSessionPrs(sessionSets, priorSets);
 }
 

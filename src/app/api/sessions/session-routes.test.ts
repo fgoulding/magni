@@ -39,6 +39,7 @@ let trainingMaxRoute: typeof import("./[sessionId]/training-max/route");
 let completeRoute: typeof import("../programs/[id]/complete-and-advance/route");
 let skipRoute: typeof import("../programs/[id]/skip-workout/route");
 let programService: typeof import("@/features/programs/program-service");
+let trainingStats: typeof import("@/features/programs/training-stats");
 
 type SeededProgram = {
   userId: number;
@@ -170,6 +171,7 @@ beforeAll(async () => {
   completeRoute = await import("../programs/[id]/complete-and-advance/route");
   skipRoute = await import("../programs/[id]/skip-workout/route");
   programService = await import("@/features/programs/program-service");
+  trainingStats = await import("@/features/programs/training-stats");
 });
 
 beforeEach(() => {
@@ -576,6 +578,39 @@ describe("session APIs", () => {
 
     const response = await setRoute.PUT(malformedJsonRequest(), params({ sessionId: String(session.id) }));
     expect(response.status).toBe(400);
+  });
+
+  it("detects session PRs without being affected by unrelated prior lifts", () => {
+    const userId = createUser("session-prs@example.com");
+    const insertSession = (status: string) =>
+      Number(
+        dbModule.db
+          .prepare(
+            `INSERT INTO sessions (user_id, program_name, day_name, week_number, status, completed, date)
+             VALUES (?, 'P', 'D', 1, ?, ?, '2026-06-01')`,
+          )
+          .run(userId, status, status === "completed" ? 1 : 0).lastInsertRowid,
+      );
+    const insertSet = (sessionId: number, name: string, reps: number, weight: number) =>
+      dbModule.db
+        .prepare(
+          `INSERT INTO session_sets (session_id, exercise_name, category, progression_type, week_number, set_number, reps, sets, rep_out_target, actual_reps, actual_weight)
+           VALUES (?, ?, 'accessory', 'custom', 1, 1, ?, 1, 0, ?, ?)`,
+        )
+        .run(sessionId, name, reps, reps, weight);
+
+    // Prior completed session: Bench 5x90, plus a huge UNRELATED Deadlift single.
+    const prior = insertSession("completed");
+    insertSet(prior, "Bench", 5, 90);
+    insertSet(prior, "Deadlift", 1, 500);
+
+    // Current session: Bench 5x100 (higher e1RM → a PR). No Deadlift here.
+    const current = insertSession("completed");
+    insertSet(current, "Bench", 5, 100);
+
+    const prs = trainingStats.getSessionPrs(userId, current);
+    expect(prs.map((p) => p.exercise)).toEqual(["Bench"]);
+    expect(prs[0]).toMatchObject({ weight: 100, reps: 5 });
   });
 
   it("refuses to finish an already-completed session", async () => {
