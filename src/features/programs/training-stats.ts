@@ -49,9 +49,11 @@ const BIG_THREE = [
 
 // --- pure helpers (unit-tested) ---
 
-/** Epley estimated one-rep max. Reps of 1 returns the weight itself. */
+/** Epley estimated one-rep max. Epley is undefined at 1 rep (it would inflate an
+ *  actual single by ~3.3%), so a single rep returns the weight lifted. */
 export function epleyE1rm(weight: number, reps: number): number {
   if (weight <= 0 || reps <= 0) return 0;
+  if (reps === 1) return weight;
   return weight * (1 + reps / 30);
 }
 
@@ -574,7 +576,10 @@ export function getUserTrainingStats(userId: number, now: Date = new Date()): Tr
             COALESCE(ss.actual_reps, ss.reps) AS reps,
             COALESCE(ss.actual_weight, ss.calculated_weight, 0) AS weight,
             COALESCE(ss.actual_reps, ss.reps) * COALESCE(ss.actual_weight, ss.calculated_weight, 0) * MAX(COALESCE(ss.sets, 1), 1) AS vol,
-            COALESCE(ss.actual_weight, ss.calculated_weight, 0) * (1 + COALESCE(ss.actual_reps, ss.reps) / 30.0) AS e1rm
+            CASE WHEN COALESCE(ss.actual_reps, ss.reps) = 1
+                 THEN COALESCE(ss.actual_weight, ss.calculated_weight, 0)
+                 ELSE COALESCE(ss.actual_weight, ss.calculated_weight, 0) * (1 + COALESCE(ss.actual_reps, ss.reps) / 30.0)
+            END AS e1rm
           FROM session_sets ss
           JOIN sessions s ON s.id = ss.session_id
           WHERE s.user_id = ? AND s.status = 'completed'

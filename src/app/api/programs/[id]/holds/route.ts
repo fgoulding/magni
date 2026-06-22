@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { createProgramRunHold } from "@/features/programs/program-service";
-import { assertSameOrigin, isUnauthorized, jsonError, numberParam } from "@/lib/api";
+import { assertSameOrigin, clampText, isUnauthorized, jsonError, numberParam } from "@/lib/api";
 import { requireUser } from "@/lib/auth";
 
 type RouteContext = {
@@ -30,7 +30,7 @@ export async function POST(request: Request, context: RouteContext) {
       legacyProgramId: programId,
       startDate: body.startDate,
       endDate: body.endDate,
-      reason: typeof body.reason === "string" ? body.reason : undefined,
+      reason: typeof body.reason === "string" ? clampText(body.reason, 1000) : undefined,
     });
 
     return NextResponse.json(hold, { status: 201 });

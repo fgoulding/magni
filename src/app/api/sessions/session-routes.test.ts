@@ -537,6 +537,30 @@ describe("session APIs", () => {
     expect(programRow.sets).toBe(5); // program row untouched
   });
 
+  it("caps an over-long set note instead of storing an unbounded blob", async () => {
+    const userId = createUser("quick-notes-cap@example.com");
+    authenticate(userId);
+
+    const session = await (await globalSessionsRoute.POST(jsonRequest({}))).json();
+    const added = await (
+      await setRoute.POST(
+        jsonRequest({ name: "Curl", sets: 1, reps: 10, weight: 30 }),
+        params({ sessionId: String(session.id) }),
+      )
+    ).json();
+
+    const response = await setRoute.PUT(
+      jsonRequest({ setId: added.sets[0].id, actualReps: 10, actualWeight: 30, notes: "x".repeat(10_000) }),
+      params({ sessionId: String(session.id) }),
+    );
+    expect(response.status).toBe(200);
+
+    const stored = dbModule.db
+      .prepare("SELECT notes FROM session_sets WHERE id = ?")
+      .get(added.sets[0].id) as { notes: string };
+    expect(stored.notes.length).toBe(4000);
+  });
+
   it("refuses to finish an already-completed session", async () => {
     const userId = createUser("quick-finish-twice@example.com");
     authenticate(userId);

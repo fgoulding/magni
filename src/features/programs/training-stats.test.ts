@@ -55,7 +55,7 @@ describe("computeSessionPrs", () => {
 
 describe("epleyE1rm", () => {
   it("returns the weight for a single rep", () => {
-    expect(epleyE1rm(200, 1)).toBeCloseTo(206.67, 1);
+    expect(epleyE1rm(200, 1)).toBe(200);
   });
 
   it("scales up with reps", () => {

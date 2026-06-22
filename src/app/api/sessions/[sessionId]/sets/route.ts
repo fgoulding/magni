@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { assertSameOrigin, jsonError, isUnauthorized, numberParam } from "@/lib/api";
+import { assertSameOrigin, clampText, jsonError, isUnauthorized, numberParam } from "@/lib/api";
 import { requireUser } from "@/lib/auth";
 import { db } from "@/lib/db";
 
@@ -121,7 +121,7 @@ export async function PUT(request: Request, context: RouteContext) {
       return jsonError("actualWeight must be a non-negative number", 400);
     }
 
-    const notes = typeof body.notes === "string" ? body.notes : "";
+    const notes = clampText(body.notes, 4000);
 
     db.prepare("UPDATE session_sets SET actual_reps = ?, actual_weight = ?, notes = ? WHERE id = ?").run(
       actualReps,

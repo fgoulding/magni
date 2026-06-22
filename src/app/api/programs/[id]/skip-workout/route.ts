@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { assertSameOrigin, jsonError, isUnauthorized, numberParam } from "@/lib/api";
+import { assertSameOrigin, clampText, jsonError, isUnauthorized, numberParam } from "@/lib/api";
 import { requireUser } from "@/lib/auth";
 import { todayLocalDateKey } from "@/lib/date-key";
 import { db } from "@/lib/db";
@@ -43,7 +43,7 @@ export async function POST(request: Request, context: RouteContext) {
     const body = (await request.json()) as SkipWorkoutBody;
     const dayId = Number(body.dayId);
     const definitionDayId = Number(body.definitionDayId);
-    const reason = typeof body.reason === "string" ? body.reason.trim() : "";
+    const reason = clampText(body.reason, 1000).trim();
 
     if (!Number.isInteger(programId) || programId <= 0) {
       return jsonError("Program not found", 404);

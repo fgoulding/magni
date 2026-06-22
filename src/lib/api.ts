@@ -13,6 +13,13 @@ export function numberParam(value: string): number {
   return /^\d+$/.test(value) ? Number(value) : Number.NaN;
 }
 
+/** Coerce an optional client-supplied string to a length-capped value. Caps
+ *  free-text fields (notes, reasons) so a single request can't write an
+ *  unbounded blob to the self-hosted SQLite DB. Non-strings become "". */
+export function clampText(value: unknown, max: number): string {
+  return typeof value === "string" ? value.slice(0, max) : "";
+}
+
 function requestOrigins(request: Request): Set<string> {
   const origins = new Set<string>();
   const requestUrl = new URL(request.url);
