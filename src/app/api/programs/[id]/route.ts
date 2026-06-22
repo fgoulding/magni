@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { archiveProgramRun, getProgramDetailForUser, updateProgramRun } from "@/features/programs/program-service";
-import { assertSameOrigin, jsonError, isUnauthorized, numberParam } from "@/lib/api";
+import { assertSameOrigin, isBadRequest, jsonError, isUnauthorized, numberParam, readJson } from "@/lib/api";
 import { requireUser } from "@/lib/auth";
 import { db } from "@/lib/db";
 
@@ -62,7 +62,7 @@ export async function PUT(request: Request, context: RouteContext) {
     const user = await requireUser();
     const { id } = await context.params;
     const programId = numberParam(id);
-    const body = (await request.json()) as ProgramUpdateBody;
+    const body = await readJson<ProgramUpdateBody>(request);
 
     const existing = db
       .prepare(
@@ -102,7 +102,11 @@ export async function PUT(request: Request, context: RouteContext) {
 
     return NextResponse.json({ success: true });
   } catch (error) {
+    if (isBadRequest(error)) return jsonError(error.message, 400);
     if (isUnauthorized(error)) return jsonError("Unauthorized", 401);
+    if (error instanceof Error && error.message === "Forbidden cross-origin request") {
+      return jsonError(error.message, 403);
+    }
     if (error instanceof Error && error.message.startsWith("scheduleWeekdays")) {
       return jsonError(error.message, 400);
     }

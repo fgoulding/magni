@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { clearSupersetMembership } from "@/features/programs/superset";
-import { assertSameOrigin, jsonError, isUnauthorized, numberParam } from "@/lib/api";
+import { assertSameOrigin, isBadRequest, jsonError, isUnauthorized, numberParam, readJson } from "@/lib/api";
 import { requireUser } from "@/lib/auth";
 import { db } from "@/lib/db";
 
@@ -42,7 +42,7 @@ export async function PUT(request: Request, context: RouteContext) {
     const clearMembership = (memberId: number, sharedKey: string | null) =>
       clearSupersetMembership(memberId, sharedKey, exercise.program_definition_id);
 
-    const body = (await request.json()) as SupersetBody;
+    const body = await readJson<SupersetBody>(request);
     const linkExerciseId =
       body.linkExerciseId === undefined || body.linkExerciseId === null
         ? null
@@ -129,7 +129,11 @@ export async function PUT(request: Request, context: RouteContext) {
 
     return NextResponse.json({ success: true, supersetGroup: group });
   } catch (error) {
+    if (isBadRequest(error)) return jsonError(error.message, 400);
     if (isUnauthorized(error)) return jsonError("Unauthorized", 401);
+    if (error instanceof Error && error.message === "Forbidden cross-origin request") {
+      return jsonError(error.message, 403);
+    }
     return jsonError("Failed to update superset", 500);
   }
 }

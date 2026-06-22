@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { assertSameOrigin, isUnauthorized, jsonError, numberParam } from "@/lib/api";
+import { assertSameOrigin, isBadRequest, isUnauthorized, jsonError, numberParam, readJson } from "@/lib/api";
 import { requireUser } from "@/lib/auth";
 import { db } from "@/lib/db";
 
@@ -52,7 +52,7 @@ export async function PUT(request: Request, context: RouteContext) {
       .get(id, user.id) as DayRow | undefined;
     if (!day) return jsonError("Day not found", 404);
 
-    const body = (await request.json()) as { items?: unknown };
+    const body = await readJson<{ items?: unknown }>(request);
     const items = parseItems(body.items);
     if (!items) return jsonError("items must be an array of { id, group }", 400);
 
@@ -112,6 +112,7 @@ export async function PUT(request: Request, context: RouteContext) {
 
     return NextResponse.json({ success: true });
   } catch (error) {
+    if (isBadRequest(error)) return jsonError(error.message, 400);
     if (isUnauthorized(error)) return jsonError("Unauthorized", 401);
     if (error instanceof Error && error.message === "Forbidden cross-origin request") {
       return jsonError(error.message, 403);

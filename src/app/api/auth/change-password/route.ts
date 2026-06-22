@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { assertSameOrigin, isUnauthorized, jsonError } from "@/lib/api";
+import { assertSameOrigin, isBadRequest, isUnauthorized, jsonError, readJson } from "@/lib/api";
 import {
   createSession,
   hashPassword,
@@ -25,7 +25,7 @@ export async function POST(request: Request) {
     assertSameOrigin(request);
     const user = await requireUser();
 
-    const body = (await request.json()) as ChangePasswordBody;
+    const body = await readJson<ChangePasswordBody>(request);
     const currentPassword = typeof body.currentPassword === "string" ? body.currentPassword : "";
     const newPassword = typeof body.newPassword === "string" ? body.newPassword : "";
 
@@ -55,6 +55,7 @@ export async function POST(request: Request) {
 
     return NextResponse.json({ success: true });
   } catch (error) {
+    if (isBadRequest(error)) return jsonError(error.message, 400);
     if (isUnauthorized(error)) return jsonError("Unauthorized", 401);
     if (error instanceof Error && error.message === "Forbidden cross-origin request") {
       return jsonError(error.message, 403);

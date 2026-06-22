@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { assertSameOrigin, isUnauthorized, jsonError } from "@/lib/api";
+import { assertSameOrigin, isUnauthorized, jsonError, readJson } from "@/lib/api";
 import { requireUser } from "@/lib/auth";
 import {
   createUserTrainingTemplate,
@@ -20,7 +20,7 @@ export async function POST(request: Request) {
   try {
     assertSameOrigin(request);
     const user = await requireUser();
-    const body = (await request.json()) as Record<string, unknown>;
+    const body = await readJson<Record<string, unknown>>(request);
     const template = createUserTrainingTemplate({
       userId: user.id,
       name: body.name,

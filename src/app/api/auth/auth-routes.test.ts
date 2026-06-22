@@ -114,6 +114,16 @@ describe("auth routes", () => {
     expect(cookieMock.store.get("auth_token")).toMatch(/^[a-f0-9]{64}$/);
   });
 
+  it("returns 400 (not 500) for a malformed JSON body", async () => {
+    const malformed = new Request("http://localhost/api/auth", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: "{ not json",
+    });
+    const response = await loginRoute.POST(malformed);
+    expect(response.status).toBe(400);
+  });
+
   it("marks auth cookies secure only for HTTPS requests", async () => {
     await registerRoute.POST(jsonRequest({ email: "secure-cookie@example.com", password: "secret123" }));
     cookieMock.store.clear();

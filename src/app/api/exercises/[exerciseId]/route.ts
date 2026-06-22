@@ -2,7 +2,7 @@ import { NextResponse } from "next/server";
 import { updateDefinitionExerciseType } from "@/features/programs/program-service";
 import { clearSupersetMembership } from "@/features/programs/superset";
 import type { ExerciseCategory } from "@/features/training-templates/types";
-import { assertSameOrigin, jsonError, isUnauthorized, numberParam } from "@/lib/api";
+import { assertSameOrigin, isBadRequest, jsonError, isUnauthorized, numberParam, readJson } from "@/lib/api";
 import { getSettingNumber, requireUser } from "@/lib/auth";
 import { calculateWeight } from "@/lib/calculator";
 import { db } from "@/lib/db";
@@ -44,7 +44,7 @@ export async function PUT(request: Request, context: RouteContext) {
     const user = await requireUser();
     const { exerciseId } = await context.params;
     const id = numberParam(exerciseId);
-    const body = (await request.json()) as ExerciseUpdateBody;
+    const body = await readJson<ExerciseUpdateBody>(request);
 
     const exercise = db
       .prepare(
@@ -183,7 +183,11 @@ export async function PUT(request: Request, context: RouteContext) {
 
     return NextResponse.json({ success: true });
   } catch (error) {
+    if (isBadRequest(error)) return jsonError(error.message, 400);
     if (isUnauthorized(error)) return jsonError("Unauthorized", 401);
+    if (error instanceof Error && error.message === "Forbidden cross-origin request") {
+      return jsonError(error.message, 403);
+    }
     return jsonError("Failed to update exercise", 500);
   }
 }

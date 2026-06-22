@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { assertSameOrigin } from "@/lib/api";
+import { assertSameOrigin, isBadRequest, readJson } from "@/lib/api";
 import { db } from "@/lib/db";
 import { createSession, hashPassword, setSessionCookie } from "@/lib/auth";
 import { isEmailAllowedToRegister } from "@/lib/registration";
@@ -23,7 +23,7 @@ export async function POST(request: Request) {
     const limited = enforceAuthRateLimit(request, "register");
     if (limited) return limited;
 
-    const body = (await request.json()) as RegisterBody;
+    const body = await readJson<RegisterBody>(request);
     const email = normalizeEmail(body.email);
 
     if (!email) {
@@ -58,6 +58,7 @@ export async function POST(request: Request) {
 
     return NextResponse.json({ id: userId, email }, { status: 201 });
   } catch (error) {
+    if (isBadRequest(error)) return NextResponse.json({ error: error.message }, { status: 400 });
     if (error instanceof Error && error.message === "Forbidden cross-origin request") {
       return NextResponse.json({ error: error.message }, { status: 403 });
     }

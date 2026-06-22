@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { assertSameOrigin, isUnauthorized, jsonError, numberParam } from "@/lib/api";
+import { assertSameOrigin, isBadRequest, isUnauthorized, jsonError, numberParam, readJson } from "@/lib/api";
 import { getSettingNumber, requireUser } from "@/lib/auth";
 import { calculateWeight } from "@/lib/calculator";
 import { db } from "@/lib/db";
@@ -103,7 +103,7 @@ export async function PUT(request: Request, context: RouteContext) {
       return jsonError("Per-week weights are only editable on manual exercises", 400);
     }
 
-    const body = (await request.json()) as { weights?: unknown };
+    const body = await readJson<{ weights?: unknown }>(request);
     if (!Array.isArray(body.weights)) {
       return jsonError("weights must be an array", 400);
     }
@@ -119,7 +119,11 @@ export async function PUT(request: Request, context: RouteContext) {
 
     return NextResponse.json({ success: true });
   } catch (error) {
+    if (isBadRequest(error)) return jsonError(error.message, 400);
     if (isUnauthorized(error)) return jsonError("Unauthorized", 401);
+    if (error instanceof Error && error.message === "Forbidden cross-origin request") {
+      return jsonError(error.message, 403);
+    }
     return jsonError("Failed to save weekly weights", 500);
   }
 }

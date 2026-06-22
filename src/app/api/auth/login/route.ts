@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { assertSameOrigin } from "@/lib/api";
+import { assertSameOrigin, isBadRequest, readJson } from "@/lib/api";
 import { db } from "@/lib/db";
 import { cleanupExpiredSessions, createSession, setSessionCookie, verifyPassword } from "@/lib/auth";
 import { enforceAuthRateLimit } from "@/lib/rate-limit";
@@ -27,7 +27,7 @@ export async function POST(request: Request) {
     const limited = enforceAuthRateLimit(request, "login");
     if (limited) return limited;
 
-    const body = (await request.json()) as LoginBody;
+    const body = await readJson<LoginBody>(request);
 
     if (typeof body.email !== "string" || typeof body.password !== "string") {
       return NextResponse.json({ error: "Email and password are required" }, { status: 400 });
@@ -52,6 +52,7 @@ export async function POST(request: Request) {
 
     return NextResponse.json({ id: user.id, email: user.email });
   } catch (error) {
+    if (isBadRequest(error)) return NextResponse.json({ error: error.message }, { status: 400 });
     if (error instanceof Error && error.message === "Forbidden cross-origin request") {
       return NextResponse.json({ error: error.message }, { status: 403 });
     }

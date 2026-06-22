@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { addDefinitionDayForRun } from "@/features/programs/program-service";
-import { assertSameOrigin, jsonError, isUnauthorized, numberParam } from "@/lib/api";
+import { assertSameOrigin, isBadRequest, jsonError, isUnauthorized, numberParam, readJson } from "@/lib/api";
 import { requireUser } from "@/lib/auth";
 
 type RouteContext = {
@@ -17,7 +17,7 @@ export async function POST(request: Request, context: RouteContext) {
     const user = await requireUser();
     const { id } = await context.params;
     const programId = numberParam(id);
-    const body = (await request.json()) as DayCreateBody;
+    const body = await readJson<DayCreateBody>(request);
 
     if (typeof body.name !== "string" || body.name.trim() === "") {
       return jsonError("name is required", 400);
@@ -34,7 +34,11 @@ export async function POST(request: Request, context: RouteContext) {
       { status: 201 },
     );
   } catch (error) {
+    if (isBadRequest(error)) return jsonError(error.message, 400);
     if (isUnauthorized(error)) return jsonError("Unauthorized", 401);
+    if (error instanceof Error && error.message === "Forbidden cross-origin request") {
+      return jsonError(error.message, 403);
+    }
     if (error instanceof Error && error.message === "Program not found") {
       return jsonError(error.message, 404);
     }
