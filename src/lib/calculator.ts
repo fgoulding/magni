@@ -17,7 +17,10 @@ export function calculateTmDelta(
 }
 
 export function applyTmDelta(currentTrainingMax: number, delta: number): number {
-  return Math.max(MIN_TRAINING_MAX, currentTrainingMax + delta);
+  // Round to 0.1 lb (the manual-override grain) so IEEE-754 residue from custom
+  // increments can't accumulate in the stored training max over many weeks.
+  const next = Math.round((currentTrainingMax + delta) * 10) / 10;
+  return Math.max(MIN_TRAINING_MAX, next);
 }
 
 export function getAdjustmentPerRep(category: string): number {

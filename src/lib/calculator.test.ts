@@ -21,6 +21,13 @@ describe("training max adjustments", () => {
     expect(applyTmDelta(10, -20)).toBe(2.5);
   });
 
+  it("rounds to 0.1 so floating-point residue can't accumulate in the stored TM", () => {
+    // 20.1 + 1.1 = 21.200000000000003 in IEEE-754; unrounded this residue
+    // compounds across weeks and leaks into stored expected_max + displayed TMs.
+    expect(applyTmDelta(20.1, 1.1)).toBe(21.2);
+    expect(applyTmDelta(20.4, 2.2)).toBe(22.6); // 22.599999999999998 unrounded
+  });
+
   it("uses smaller adjustments for aux and accessory exercises", () => {
     expect(getAdjustmentPerRep("main")).toBe(2.5);
     expect(getAdjustmentPerRep("aux")).toBe(1.25);
