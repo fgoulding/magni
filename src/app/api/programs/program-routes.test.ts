@@ -261,35 +261,43 @@ describe("program APIs", () => {
   });
 
   it("creates and cancels a hold for an owned program run", async () => {
-    const userId = createUser("program-hold-route@example.com");
-    authenticate(userId);
+    // Pin "today" inside the hold window — cancelling an ACTIVE hold only applies
+    // when today falls within it, so this must not depend on the real date.
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-06-15T12:00:00-07:00"));
+    try {
+      const userId = createUser("program-hold-route@example.com");
+      authenticate(userId);
 
-    const program = await (await programsRoute.POST(jsonRequest({ name: "Hold Program" }))).json();
-    const createResponse = await holdsRoute.POST(
-      jsonRequest({ startDate: "2026-06-08", endDate: "2026-06-21", reason: "Vacation" }),
-      params({ id: String(program.id) }),
-    );
-    const hold = await createResponse.json();
+      const program = await (await programsRoute.POST(jsonRequest({ name: "Hold Program" }))).json();
+      const createResponse = await holdsRoute.POST(
+        jsonRequest({ startDate: "2026-06-08", endDate: "2026-06-21", reason: "Vacation" }),
+        params({ id: String(program.id) }),
+      );
+      const hold = await createResponse.json();
 
-    expect(createResponse.status).toBe(201);
-    expect(hold).toMatchObject({
-      start_date: "2026-06-08",
-      end_date: "2026-06-21",
-      reason: "Vacation",
-      canceled_at: null,
-    });
+      expect(createResponse.status).toBe(201);
+      expect(hold).toMatchObject({
+        start_date: "2026-06-08",
+        end_date: "2026-06-21",
+        reason: "Vacation",
+        canceled_at: null,
+      });
 
-    const cancelResponse = await activeHoldRoute.DELETE(
-      new Request("http://localhost", { method: "DELETE" }),
-      params({ id: String(program.id) }),
-    );
-    const cancelBody = await cancelResponse.json();
+      const cancelResponse = await activeHoldRoute.DELETE(
+        new Request("http://localhost", { method: "DELETE" }),
+        params({ id: String(program.id) }),
+      );
+      const cancelBody = await cancelResponse.json();
 
-    expect(cancelResponse.status).toBe(200);
-    expect(cancelBody).toEqual({ success: true, canceled: true });
-    expect(
-      dbModule.db.prepare("SELECT canceled_at FROM program_run_holds WHERE id = ?").get(hold.id),
-    ).toEqual({ canceled_at: expect.any(String) });
+      expect(cancelResponse.status).toBe(200);
+      expect(cancelBody).toEqual({ success: true, canceled: true });
+      expect(
+        dbModule.db.prepare("SELECT canceled_at FROM program_run_holds WHERE id = ?").get(hold.id),
+      ).toEqual({ canceled_at: expect.any(String) });
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it("fetches an owned program with days, exercises, and generated week settings", async () => {

@@ -35,6 +35,7 @@ let sessionsRoute: typeof import("../programs/[id]/sessions/route");
 let globalSessionsRoute: typeof import("./route");
 let sessionRoute: typeof import("./[sessionId]/route");
 let setRoute: typeof import("./[sessionId]/sets/route");
+let trainingMaxRoute: typeof import("./[sessionId]/training-max/route");
 let completeRoute: typeof import("../programs/[id]/complete-and-advance/route");
 let skipRoute: typeof import("../programs/[id]/skip-workout/route");
 let programService: typeof import("@/features/programs/program-service");
@@ -157,6 +158,7 @@ beforeAll(async () => {
   globalSessionsRoute = await import("./route");
   sessionRoute = await import("./[sessionId]/route");
   setRoute = await import("./[sessionId]/sets/route");
+  trainingMaxRoute = await import("./[sessionId]/training-max/route");
   completeRoute = await import("../programs/[id]/complete-and-advance/route");
   skipRoute = await import("../programs/[id]/skip-workout/route");
   programService = await import("@/features/programs/program-service");
@@ -365,6 +367,34 @@ describe("session APIs", () => {
     expect(row.status).toBe("completed");
     expect(row.completed).toBe(1);
     expect(row.completed_at).toBeTruthy();
+  });
+
+  it("carries an in-workout training-max override forward to the run's expected max", async () => {
+    const seeded = seedProgram("tm-override-carry@example.com");
+    authenticate(seeded.userId);
+    const runId = dbModule.db
+      .prepare("SELECT program_run_id FROM programs WHERE id = ?")
+      .get(seeded.programId) as { program_run_id: number };
+
+    const session = await (
+      await sessionsRoute.POST(jsonRequest({ dayId: seeded.dayId }), params({ id: String(seeded.programId) }))
+    ).json();
+
+    // Override the Squat TM mid-workout WITHOUT completing the session.
+    const response = await trainingMaxRoute.PUT(
+      jsonRequest({ exerciseName: "Squat", trainingMax: 350 }),
+      params({ sessionId: String(session.id) }),
+    );
+    expect(response.status).toBe(200);
+
+    // The override must reach the run's canonical expected max (what Duplicate
+    // / start-next-cycle reads), not just the session's own sets.
+    const expected = dbModule.db
+      .prepare(
+        "SELECT expected_max FROM program_run_expected_maxes WHERE program_run_id = ? AND shared_exercise_key = 'squat'",
+      )
+      .get(runId.program_run_id) as { expected_max: number };
+    expect(expected.expected_max).toBe(350);
   });
 
   it("refuses to finish an already-completed session", async () => {
