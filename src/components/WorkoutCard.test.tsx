@@ -109,6 +109,20 @@ describe("WorkoutCard", () => {
     expect(screen.getByText("Bench Press")).toBeInTheDocument();
   });
 
+  it("shows a clean error (not a JSON parse error) when start returns a non-JSON body", async () => {
+    const user = userEvent.setup();
+    // A 500 with an HTML/empty body: response.json() would throw a SyntaxError.
+    const fetchMock = vi.fn().mockResolvedValue(new Response("Internal Server Error", { status: 500 }));
+    stubFetch(fetchMock);
+
+    render(<WorkoutCard {...makeCardProps()} />);
+    await user.click(screen.getByRole("button", { name: "Start Workout" }));
+
+    const alert = await screen.findByRole("alert");
+    expect(alert).toHaveTextContent("Could not start workout");
+    expect(alert).not.toHaveTextContent(/Unexpected token|not valid JSON|JSON\.parse/i);
+  });
+
   it("logs a set and advances to the next lift", async () => {
     const user = userEvent.setup();
     const fetchMock = vi

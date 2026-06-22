@@ -14,6 +14,18 @@ export type WorkoutSet = {
   progression_type?: string;
 };
 
+/** Parse a fetch Response's JSON body, tolerating an empty or non-JSON body
+ *  (e.g. a 500 HTML page or a 204). Returns null instead of throwing a
+ *  SyntaxError so callers can surface a clean error message, not "Unexpected
+ *  token …". */
+export async function readResponseJson<T>(response: Response): Promise<T | null> {
+  try {
+    return (await response.json()) as T;
+  } catch {
+    return null;
+  }
+}
+
 /** Bodyweight exercises carry no training max; weight is an optional added load. */
 export function isBodyweight(set: WorkoutSet): boolean {
   return set.progression_type === "bodyweight";

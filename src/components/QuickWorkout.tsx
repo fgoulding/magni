@@ -4,7 +4,7 @@ import Link from "next/link";
 import { Check, LineChart, Zap } from "lucide-react";
 import { useState } from "react";
 import { AddSessionExerciseForm } from "@/components/AddSessionExerciseForm";
-import { buildGroups, type WorkoutSet } from "@/components/workout-card-utils";
+import { buildGroups, readResponseJson, type WorkoutSet } from "@/components/workout-card-utils";
 
 type QuickSession = { id: number; sets: WorkoutSet[] };
 
@@ -35,8 +35,8 @@ export function QuickWorkout({ initialSession }: { initialSession: QuickSession 
     setError("");
     try {
       const response = await fetch("/api/sessions", { method: "POST" });
-      const body = (await response.json()) as QuickSession & { error?: string };
-      if (!response.ok || !body.id) throw new Error(body.error ?? "Could not start workout");
+      const body = await readResponseJson<QuickSession & { error?: string }>(response);
+      if (!response.ok || !body?.id) throw new Error(body?.error ?? "Could not start workout");
       setSession({ id: body.id, sets: body.sets ?? [] });
       setReps(seedReps(body));
       setWeights(seedWeights(body));
@@ -73,8 +73,8 @@ export function QuickWorkout({ initialSession }: { initialSession: QuickSession 
         }),
       });
       if (!response.ok) {
-        const body = (await response.json()) as { error?: string };
-        throw new Error(body.error ?? "Could not log set");
+        const body = await readResponseJson<{ error?: string }>(response);
+        throw new Error(body?.error ?? "Could not log set");
       }
       setLoggedIds((prev) => new Set(prev).add(set.id));
     } catch (err) {
@@ -90,9 +90,9 @@ export function QuickWorkout({ initialSession }: { initialSession: QuickSession 
     setError("");
     try {
       const response = await fetch(`/api/sessions/${session.id}`, { method: "PATCH" });
-      const body = (await response.json()) as Recap & { error?: string };
-      if (!response.ok) throw new Error(body.error ?? "Could not finish workout");
-      setRecap({ volume: body.volume ?? 0, loggedCount: body.loggedCount ?? 0, skippedCount: body.skippedCount ?? 0 });
+      const body = await readResponseJson<Recap & { error?: string }>(response);
+      if (!response.ok) throw new Error(body?.error ?? "Could not finish workout");
+      setRecap({ volume: body?.volume ?? 0, loggedCount: body?.loggedCount ?? 0, skippedCount: body?.skippedCount ?? 0 });
     } catch (err) {
       setError(err instanceof Error ? err.message : "Could not finish workout");
     } finally {
@@ -107,8 +107,8 @@ export function QuickWorkout({ initialSession }: { initialSession: QuickSession 
     try {
       const response = await fetch(`/api/sessions/${session.id}`, { method: "DELETE" });
       if (!response.ok) {
-        const body = (await response.json()) as { error?: string };
-        throw new Error(body.error ?? "Could not discard workout");
+        const body = await readResponseJson<{ error?: string }>(response);
+        throw new Error(body?.error ?? "Could not discard workout");
       }
       reset();
     } catch (err) {

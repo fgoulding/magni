@@ -2,7 +2,7 @@
 
 import { Plus } from "lucide-react";
 import { useState } from "react";
-import type { WorkoutSet } from "@/components/workout-card-utils";
+import { readResponseJson, type WorkoutSet } from "@/components/workout-card-utils";
 
 /** Adds an ad-hoc accessory exercise to the active session and reports the new sets. */
 export function AddSessionExerciseForm({
@@ -36,8 +36,8 @@ export function AddSessionExerciseForm({
           weight: weight === "" ? 0 : Number(weight),
         }),
       });
-      const body = (await response.json()) as { sets?: WorkoutSet[]; error?: string };
-      if (!response.ok || !body.sets) throw new Error(body.error ?? "Could not add exercise");
+      const body = await readResponseJson<{ sets?: WorkoutSet[]; error?: string }>(response);
+      if (!response.ok || !body?.sets) throw new Error(body?.error ?? "Could not add exercise");
       onAdded(body.sets);
       setOpen(false);
       setName("");

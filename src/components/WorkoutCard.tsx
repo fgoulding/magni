@@ -15,6 +15,7 @@ import {
   isBodyweight,
   isFlatSingle,
   lastGroupIndex,
+  readResponseJson,
   summaryDetail,
   type LastPerformance,
   type SessionResponse,
@@ -177,8 +178,8 @@ export function WorkoutCard({
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ dayId, definitionDayId, weekNumber: currentWeek, scheduledDate }),
       });
-      const body = (await response.json()) as SessionResponse & { error?: string };
-      if (!response.ok) throw new Error(body.error ?? "Could not start workout");
+      const body = await readResponseJson<SessionResponse & { error?: string }>(response);
+      if (!response.ok || !body) throw new Error(body?.error ?? "Could not start workout");
       loadSession(body);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Could not start workout");
@@ -249,8 +250,8 @@ export function WorkoutCard({
           body: JSON.stringify({ setId: set.id, actualReps: setReps, actualWeight }),
         });
         if (!response.ok) {
-          const body = (await response.json()) as { error?: string };
-          throw new Error(body.error ?? "Could not save set");
+          const body = await readResponseJson<{ error?: string }>(response);
+          throw new Error(body?.error ?? "Could not save set");
         }
         setCompletedSetIds((prev) => new Set(prev).add(set.id));
       }
@@ -275,8 +276,8 @@ export function WorkoutCard({
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ sessionId: session.id }),
       });
-      const body = (await response.json()) as { error?: string };
-      if (!response.ok) throw new Error(body.error ?? "Could not complete workout");
+      const body = await readResponseJson<{ error?: string }>(response);
+      if (!response.ok) throw new Error(body?.error ?? "Could not complete workout");
       setFinished(true);
       // Surface any personal records set this session (non-fatal if it fails).
       try {
@@ -304,8 +305,8 @@ export function WorkoutCard({
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ dayId, definitionDayId }),
       });
-      const body = (await response.json()) as { error?: string };
-      if (!response.ok) throw new Error(body.error ?? "Could not skip workout");
+      const body = await readResponseJson<{ error?: string }>(response);
+      if (!response.ok) throw new Error(body?.error ?? "Could not skip workout");
       setSkipped(true);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Could not skip workout");
@@ -326,13 +327,16 @@ export function WorkoutCard({
     setCanceling(true);
     try {
       const response = await fetch(`/api/sessions/${session.id}`, { method: "DELETE" });
-      const body = (await response.json()) as { error?: string };
-      if (!response.ok) throw new Error(body.error ?? "Could not cancel workout");
-      // Back to the idle "Start workout" state.
+      const body = await readResponseJson<{ error?: string }>(response);
+      if (!response.ok) throw new Error(body?.error ?? "Could not cancel workout");
+      // Back to the idle "Start workout" state — clear ALL per-set state so it
+      // can't bleed into the next session (weights and skips were left behind).
       setSession(null);
       setCompletedSetIds(new Set());
       setValues({});
       setAdded({});
+      setWeights({});
+      setSkippedGroupKeys(new Set());
       setCurrentGroupIdx(0);
       setConfirmingCancel(false);
       router.refresh();
@@ -576,7 +580,7 @@ export function WorkoutCard({
               {prevGroups.map((group) =>
                 isGroupSkipped(group) ? (
                   <button
-                    key={group.index}
+                    key={group.sets[0].id}
                     type="button"
                     onClick={() => unskipLift(group)}
                     className="flex w-full items-center gap-2.5 rounded-lg px-2 py-2 text-left text-sm text-faint transition-colors active:bg-surface-muted"
@@ -587,7 +591,7 @@ export function WorkoutCard({
                   </button>
                 ) : (
                   <button
-                    key={group.index}
+                    key={group.sets[0].id}
                     type="button"
                     onClick={() => selectGroup(group.index)}
                     className="flex w-full items-center gap-2.5 rounded-lg px-2 py-2 text-left text-sm text-muted transition-colors active:bg-surface-muted"
@@ -801,7 +805,7 @@ export function WorkoutCard({
               {upcomingGroups.map((group) =>
                 isGroupSkipped(group) ? (
                   <button
-                    key={group.index}
+                    key={group.sets[0].id}
                     type="button"
                     onClick={() => unskipLift(group)}
                     className="flex w-full items-center gap-2.5 rounded-lg px-2 py-2 text-left text-sm text-faint transition-colors active:bg-surface-muted"
@@ -812,7 +816,7 @@ export function WorkoutCard({
                   </button>
                 ) : (
                   <button
-                    key={group.index}
+                    key={group.sets[0].id}
                     type="button"
                     onClick={() => selectGroup(group.index)}
                     className="flex w-full items-center gap-2.5 rounded-lg px-2 py-2 text-left text-sm text-faint transition-colors active:bg-surface-muted"
