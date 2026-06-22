@@ -437,6 +437,35 @@ describe("program service", () => {
     expect(dashboard.scheduledToday[0].current_week).toBe(6);
   });
 
+  it("stops surfacing scheduled workouts once the program has run past its final week", () => {
+    const userId = createUser("service-today-complete@example.com");
+    const created = service.createProgramRun({ userId, name: "Finished", numWeeks: 7 });
+    const day = service.addDefinitionDayForRun({ userId, legacyProgramId: created.legacyProgramId, name: "Mon Day" });
+    service.addDefinitionExerciseForDay({
+      userId,
+      legacyDayId: day.legacyDayId,
+      name: "Squat",
+      trainingMax: 200,
+      category: "main",
+      progressionType: "linear",
+    });
+    service.updateProgramRun({ userId, legacyProgramId: created.legacyProgramId, scheduleWeekdays: [1] });
+    // Start 2026-05-04 (a Monday). Week 7's Monday is 2026-06-15; the program ends
+    // after that week. current_week (completion counter) stays 1.
+    service.updateProgramRun({ userId, legacyProgramId: created.legacyProgramId, startDate: "2026-05-04" });
+
+    // 2026-06-15 is the week-7 Monday → still shows.
+    const week7 = service.getTodayWorkoutDashboard(userId, new Date("2026-06-15T12:00:00-07:00"));
+    expect(week7.scheduledToday).toHaveLength(1);
+    expect(week7.scheduledToday[0].current_week).toBe(7);
+
+    // 2026-06-22 is the Monday AFTER the program's last week → no workout, and
+    // it is not nagged as missed. The program is complete.
+    const after = service.getTodayWorkoutDashboard(userId, new Date("2026-06-22T12:00:00-07:00"));
+    expect(after.scheduledToday).toEqual([]);
+    expect(after.missedWorkouts).toEqual([]);
+  });
+
   it("builds a Today dashboard with scheduled workout preview and last session", () => {
     const userId = createUser("service-today@example.com");
     const created = service.createProgramRun({ userId, name: "Dashboard Strength", numWeeks: 4 });

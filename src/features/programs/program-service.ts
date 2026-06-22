@@ -934,6 +934,20 @@ function scheduledWeekForDate(startDateKey: string | null | undefined, numWeeks:
   return Math.min(Math.max(weeksElapsed + 1, 1), Math.max(numWeeks, 1));
 }
 
+/** True once `dateKey` falls past the program's final scheduled week. The week
+ *  clamp in scheduledWeekForDate would otherwise pin a finished program at its
+ *  last week forever, so the Today card kept nagging week N day 1 after the end.
+ *  A null start date means an open-ended schedule that never "completes". */
+function isScheduleCompleteForDate(
+  startDateKey: string | null | undefined,
+  numWeeks: number,
+  dateKey: string,
+): boolean {
+  if (!startDateKey) return false;
+  const weeksElapsed = Math.floor(daysBetweenKeys(startDateKey, dateKey) / 7);
+  return weeksElapsed + 1 > Math.max(numWeeks, 1);
+}
+
 export function getTodayWorkoutDashboard(userId: number, today = new Date()): TodayWorkoutDashboard {
   const rows = getActiveProgramDaysForUser(userId);
   const todayWeekday = today.getDay();
@@ -964,6 +978,7 @@ export function getTodayWorkoutDashboard(userId: number, today = new Date()): To
           missedDay &&
           !seenMissedDays.has(missedKey) &&
           !isDateHeldForRun(holds, missedDay.program_run_id, missedDateKey) &&
+          !isScheduleCompleteForDate(missedDay.schedule_start_date, missedDay.num_weeks, missedDateKey) &&
           !hasLoggedWorkoutOnOrAfter(userId, missedDay, missedDateKey)
         ) {
           seenMissedDays.add(missedKey);
@@ -981,7 +996,11 @@ export function getTodayWorkoutDashboard(userId: number, today = new Date()): To
       }
 
       const dayRow = findScheduledDay(programRows, todayWeekday);
-      if (dayRow && !isDateHeldForRun(holds, dayRow.program_run_id, todayDateKey)) {
+      if (
+        dayRow &&
+        !isDateHeldForRun(holds, dayRow.program_run_id, todayDateKey) &&
+        !isScheduleCompleteForDate(dayRow.schedule_start_date, dayRow.num_weeks, todayDateKey)
+      ) {
         const week = scheduledWeekForDate(dayRow.schedule_start_date, dayRow.num_weeks, todayDateKey);
         scheduledToday.push(
           enrichTodayRow(userId, { ...dayRow, current_week: week }, WEEKDAY_LABELS[todayWeekday], todayDateKey),
