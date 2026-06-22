@@ -1,5 +1,13 @@
 import { NextResponse } from "next/server";
-import { assertSameOrigin, isBadRequest, jsonError, isUnauthorized, numberParam, readJson } from "@/lib/api";
+import {
+  assertSameOrigin,
+  isBadRequest,
+  isUniqueConstraintError,
+  jsonError,
+  isUnauthorized,
+  numberParam,
+  readJson,
+} from "@/lib/api";
 import { getSettingNumber, requireUser } from "@/lib/auth";
 import { calculateWeight } from "@/lib/calculator";
 import { todayLocalDateKey } from "@/lib/date-key";
@@ -186,19 +194,21 @@ export async function POST(request: Request, context: RouteContext) {
     if (!day.shared_day_key) return jsonError("Day is missing definition context", 400);
 
     const today = todayLocalDateKey();
-    const existing = db
-      .prepare(
-        `SELECT * FROM sessions
-         WHERE program_id = ?
-           AND user_id = ?
-           AND week_number = ?
-           AND date = ?
-           AND (
-             program_definition_day_id = ?
-             OR (program_definition_day_id IS NULL AND day_id = ?)
-           )`,
-      )
-      .get(programId, user.id, selectedWeekNumber, today, day.definition_day_id, day.legacy_day_id);
+    const findExistingSession = () =>
+      db
+        .prepare(
+          `SELECT * FROM sessions
+           WHERE program_id = ?
+             AND user_id = ?
+             AND week_number = ?
+             AND date = ?
+             AND (
+               program_definition_day_id = ?
+               OR (program_definition_day_id IS NULL AND day_id = ?)
+             )`,
+        )
+        .get(programId, user.id, selectedWeekNumber, today, day.definition_day_id, day.legacy_day_id);
+    const existing = findExistingSession();
     if (existing && typeof existing === "object" && "id" in existing) {
       return NextResponse.json(getSessionWithSets(Number(existing.id)));
     }
@@ -377,7 +387,21 @@ export async function POST(request: Request, context: RouteContext) {
       return getSessionWithSets(sessionId);
     });
 
-    const session = create();
+    // IMMEDIATE: hold the write lock across the existence check + insert so a
+    // concurrent start of the same day/week can't slip past into a duplicate.
+    let session;
+    try {
+      session = create.immediate();
+    } catch (error) {
+      // Lost the race to the partial unique index — return the winner's session.
+      if (isUniqueConstraintError(error)) {
+        const won = findExistingSession();
+        if (won && typeof won === "object" && "id" in won) {
+          return NextResponse.json(getSessionWithSets(Number(won.id)));
+        }
+      }
+      throw error;
+    }
     if (!session) {
       return jsonError("Cannot start a workout without exercises for the current week", 400);
     }

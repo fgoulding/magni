@@ -16,6 +16,17 @@ export function isBadRequest(error: unknown): error is BadRequestError {
   return error instanceof BadRequestError;
 }
 
+/** True for a better-sqlite3 UNIQUE-constraint violation — lets find-or-create
+ *  paths treat a lost insert race as "return the existing row" instead of a 500. */
+export function isUniqueConstraintError(error: unknown): boolean {
+  return (
+    typeof error === "object" &&
+    error !== null &&
+    "code" in error &&
+    (error as { code?: string }).code === "SQLITE_CONSTRAINT_UNIQUE"
+  );
+}
+
 /** Parse a JSON request body, turning a malformed body into a typed 400 rather
  *  than letting request.json()'s SyntaxError fall through to a generic 500. */
 export async function readJson<T>(request: Request): Promise<T> {

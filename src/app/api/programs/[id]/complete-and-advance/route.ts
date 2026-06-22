@@ -237,7 +237,10 @@ export async function POST(request: Request, context: RouteContext) {
       };
     });
 
-    return complete().response;
+    // IMMEDIATE: take the write lock up front so the read-modify-write (check
+    // completed → apply progression → advance) can't interleave with a concurrent
+    // completion of the same session and double-advance the run.
+    return complete.immediate().response;
   } catch (error) {
     if (isBadRequest(error)) return jsonError(error.message, 400);
     if (isUnauthorized(error)) return jsonError("Unauthorized", 401);

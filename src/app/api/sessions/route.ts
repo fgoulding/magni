@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { assertSameOrigin, jsonError, isUnauthorized } from "@/lib/api";
+import { assertSameOrigin, jsonError, isUnauthorized, isUniqueConstraintError } from "@/lib/api";
 import { requireUser } from "@/lib/auth";
 import { db } from "@/lib/db";
 import { todayLocalDateKey } from "@/lib/date-key";
@@ -32,7 +32,7 @@ export async function POST(request: Request) {
     } catch (error) {
       // Defense-in-depth: the partial unique index (one in-progress quick workout
       // per user/day) lost a race — return whoever won instead of erroring.
-      if (isUniqueConstraint(error)) {
+      if (isUniqueConstraintError(error)) {
         const won = findQuickWorkout(user.id, today);
         if (won) return NextResponse.json({ id: won, sets: loadSets(won) });
       }
@@ -59,15 +59,6 @@ function findQuickWorkout(userId: number, date: string): number | null {
     )
     .get(userId, date) as { id: number } | undefined;
   return row?.id ?? null;
-}
-
-function isUniqueConstraint(error: unknown): boolean {
-  return (
-    typeof error === "object" &&
-    error !== null &&
-    "code" in error &&
-    (error as { code?: string }).code === "SQLITE_CONSTRAINT_UNIQUE"
-  );
 }
 
 /** Session sets in the SessionResponse shape WorkoutCard/QuickWorkout expect. */
