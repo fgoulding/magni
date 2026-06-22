@@ -63,7 +63,10 @@ export async function POST(request: Request, context: RouteContext) {
     const createdIds = db.transaction(() => {
       const ids: number[] = [];
       for (let setNumber = 1; setNumber <= setCount; setNumber += 1) {
-        const result = insert.run(id, name, session.week_number, setNumber, reps, setCount, reps, weight);
+        // One row per physical set, so the `sets` column is 1 — NOT setCount.
+        // (Program flat rows store one row with sets=N; consumers multiply by it,
+        // so stamping setCount here once per row double-counts volume/reps by N.)
+        const result = insert.run(id, name, session.week_number, setNumber, reps, 1, reps, weight);
         ids.push(Number(result.lastInsertRowid));
       }
       return ids;

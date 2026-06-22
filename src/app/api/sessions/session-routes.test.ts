@@ -462,6 +462,81 @@ describe("session APIs", () => {
     expect(stored.actual_reps).not.toBe(99);
   });
 
+  it("counts ad-hoc multi-set exercises once per physical set (no N× inflation)", async () => {
+    const userId = createUser("quick-volume@example.com");
+    authenticate(userId);
+
+    const session = await (await globalSessionsRoute.POST(jsonRequest({}))).json();
+    const added = await (
+      await setRoute.POST(
+        jsonRequest({ name: "Curl", sets: 3, reps: 10, weight: 50 }),
+        params({ sessionId: String(session.id) }),
+      )
+    ).json();
+
+    // Each created row represents exactly ONE physical set → sets column must be 1,
+    // otherwise volume/reps get multiplied by the set count everywhere.
+    for (const set of added.sets) {
+      const row = dbModule.db.prepare("SELECT sets FROM session_sets WHERE id = ?").get(set.id) as {
+        sets: number;
+      };
+      expect(row.sets).toBe(1);
+    }
+
+    for (const set of added.sets) {
+      await setRoute.PUT(
+        jsonRequest({ setId: set.id, actualReps: 10, actualWeight: 50 }),
+        params({ sessionId: String(session.id) }),
+      );
+    }
+
+    const recap = await (await sessionRoute.PATCH(jsonRequest({}), params({ sessionId: String(session.id) }))).json();
+    // True totals: 3 sets × 10 reps × 50 lb = 1500 lb, 30 reps, 3 logged sets.
+    expect(recap.volume).toBe(1500);
+    expect(recap.exercises[0]).toMatchObject({ loggedSets: 3, totalReps: 30 });
+  });
+
+  it("backfill resets legacy ad-hoc set counts but leaves program rows intact", async () => {
+    const seeded = seedProgram("backfill-adhoc@example.com");
+    authenticate(seeded.userId);
+
+    // A real program session: its Squat row carries a program linkage and sets=5.
+    const progSession = await (
+      await sessionsRoute.POST(jsonRequest({ dayId: seeded.dayId }), params({ id: String(seeded.programId) }))
+    ).json();
+    const squat = dbModule.db
+      .prepare("SELECT id, sets FROM session_sets WHERE session_id = ? AND exercise_name = 'Squat'")
+      .get(progSession.id) as { id: number; sets: number };
+    expect(squat.sets).toBe(5);
+
+    // Simulate a LEGACY ad-hoc row (pre-fix) with no program linkage and sets=3.
+    const legacy = dbModule.db
+      .prepare(
+        `INSERT INTO session_sets (session_id, exercise_name, category, progression_type, week_number, set_number, reps, sets, rep_out_target)
+         VALUES (?, 'Curl', 'accessory', 'custom', 1, 1, 10, 3, 0)`,
+      )
+      .run(progSession.id);
+
+    // The exact backfill statement from migrations.backfillAdHocSetCounts.
+    dbModule.db.exec(`
+      UPDATE session_sets
+      SET sets = 1
+      WHERE sets > 1
+        AND program_definition_exercise_id IS NULL
+        AND program_definition_week_setting_id IS NULL
+        AND week_setting_id IS NULL;
+    `);
+
+    const adhoc = dbModule.db
+      .prepare("SELECT sets FROM session_sets WHERE id = ?")
+      .get(Number(legacy.lastInsertRowid)) as { sets: number };
+    const programRow = dbModule.db.prepare("SELECT sets FROM session_sets WHERE id = ?").get(squat.id) as {
+      sets: number;
+    };
+    expect(adhoc.sets).toBe(1); // ad-hoc reset
+    expect(programRow.sets).toBe(5); // program row untouched
+  });
+
   it("refuses to finish an already-completed session", async () => {
     const userId = createUser("quick-finish-twice@example.com");
     authenticate(userId);

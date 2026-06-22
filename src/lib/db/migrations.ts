@@ -1030,7 +1030,26 @@ export function runMigrations(db: Database.Database): void {
   backfillProgramDefinitionsAndRuns(db);
   createSessionTriggers(db);
   dedupeInProgressQuickWorkouts(db);
+  backfillAdHocSetCounts(db);
   createPerformanceIndexes(db);
+}
+
+/** Ad-hoc exercises (hot-added in a session, and Quick Workouts) are stored one
+ *  row per physical set, but historically each row stamped the whole set count in
+ *  the `sets` column — which every stats/recap/summary consumer multiplies by,
+ *  inflating volume/reps/sets by a factor of N. Program-derived rows always carry
+ *  a program linkage (definition exercise / week setting), so the absence of ALL
+ *  of those uniquely identifies an ad-hoc row. Reset those to one set each.
+ *  Idempotent: after the route fix new rows are already 1, so this is a no-op. */
+function backfillAdHocSetCounts(db: Database.Database): void {
+  db.exec(`
+    UPDATE session_sets
+    SET sets = 1
+    WHERE sets > 1
+      AND program_definition_exercise_id IS NULL
+      AND program_definition_week_setting_id IS NULL
+      AND week_setting_id IS NULL;
+  `);
 }
 
 /** Quick Workouts are program-less in-progress sessions; there should be at most
