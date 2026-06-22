@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { assertSameOrigin, jsonError, isUnauthorized, numberParam } from "@/lib/api";
+import { assertSameOrigin, isBadRequest, jsonError, isUnauthorized, numberParam, readJson } from "@/lib/api";
 import { requireUser } from "@/lib/auth";
 import { applyTmDelta } from "@/lib/calculator";
 import { db } from "@/lib/db";
@@ -83,7 +83,7 @@ export async function POST(request: Request, context: RouteContext) {
     const user = await requireUser();
     const { id } = await context.params;
     const programId = numberParam(id);
-    const body = (await request.json()) as CompletionBody;
+    const body = await readJson<CompletionBody>(request);
     const sessionId = Number(body.sessionId);
 
     if (!Number.isInteger(sessionId) || sessionId <= 0) {
@@ -239,6 +239,7 @@ export async function POST(request: Request, context: RouteContext) {
 
     return complete().response;
   } catch (error) {
+    if (isBadRequest(error)) return jsonError(error.message, 400);
     if (isUnauthorized(error)) return jsonError("Unauthorized", 401);
     return jsonError("Failed to complete session", 500);
   }

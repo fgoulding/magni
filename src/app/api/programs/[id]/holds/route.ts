@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { createProgramRunHold } from "@/features/programs/program-service";
-import { assertSameOrigin, clampText, isUnauthorized, jsonError, numberParam } from "@/lib/api";
+import { assertSameOrigin, clampText, isBadRequest, isUnauthorized, jsonError, numberParam, readJson } from "@/lib/api";
 import { requireUser } from "@/lib/auth";
 
 type RouteContext = {
@@ -19,7 +19,7 @@ export async function POST(request: Request, context: RouteContext) {
     const user = await requireUser();
     const { id } = await context.params;
     const programId = numberParam(id);
-    const body = (await request.json()) as CreateHoldBody;
+    const body = await readJson<CreateHoldBody>(request);
 
     if (typeof body.startDate !== "string" || typeof body.endDate !== "string") {
       return jsonError("startDate and endDate are required", 400);
@@ -35,6 +35,7 @@ export async function POST(request: Request, context: RouteContext) {
 
     return NextResponse.json(hold, { status: 201 });
   } catch (error) {
+    if (isBadRequest(error)) return jsonError(error.message, 400);
     if (isUnauthorized(error)) return jsonError("Unauthorized", 401);
     if (error instanceof Error) {
       if (

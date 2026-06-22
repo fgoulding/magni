@@ -9,6 +9,23 @@ export function isUnauthorized(error: unknown): boolean {
   return error instanceof UnauthorizedError;
 }
 
+/** Thrown by readJson when the request body isn't valid JSON. */
+export class BadRequestError extends Error {}
+
+export function isBadRequest(error: unknown): error is BadRequestError {
+  return error instanceof BadRequestError;
+}
+
+/** Parse a JSON request body, turning a malformed body into a typed 400 rather
+ *  than letting request.json()'s SyntaxError fall through to a generic 500. */
+export async function readJson<T>(request: Request): Promise<T> {
+  try {
+    return (await request.json()) as T;
+  } catch {
+    throw new BadRequestError("Invalid request body");
+  }
+}
+
 export function numberParam(value: string): number {
   return /^\d+$/.test(value) ? Number(value) : Number.NaN;
 }

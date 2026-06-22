@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { assertSameOrigin, clampText, jsonError, isUnauthorized, numberParam } from "@/lib/api";
+import { assertSameOrigin, clampText, isBadRequest, jsonError, isUnauthorized, numberParam, readJson } from "@/lib/api";
 import { requireUser } from "@/lib/auth";
 import { todayLocalDateKey } from "@/lib/date-key";
 import { db } from "@/lib/db";
@@ -40,7 +40,7 @@ export async function POST(request: Request, context: RouteContext) {
     const user = await requireUser();
     const { id } = await context.params;
     const programId = numberParam(id);
-    const body = (await request.json()) as SkipWorkoutBody;
+    const body = await readJson<SkipWorkoutBody>(request);
     const dayId = Number(body.dayId);
     const definitionDayId = Number(body.definitionDayId);
     const reason = clampText(body.reason, 1000).trim();
@@ -184,6 +184,7 @@ export async function POST(request: Request, context: RouteContext) {
 
     return skip().response;
   } catch (error) {
+    if (isBadRequest(error)) return jsonError(error.message, 400);
     if (isUnauthorized(error)) return jsonError("Unauthorized", 401);
     if (error instanceof Error && error.message === "Forbidden cross-origin request") {
       return jsonError(error.message, 403);

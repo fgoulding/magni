@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { assertSameOrigin, jsonError, isUnauthorized, numberParam } from "@/lib/api";
+import { assertSameOrigin, isBadRequest, jsonError, isUnauthorized, numberParam, readJson } from "@/lib/api";
 import { getSettingNumber, requireUser } from "@/lib/auth";
 import { calculateWeight } from "@/lib/calculator";
 import { todayLocalDateKey } from "@/lib/date-key";
@@ -92,7 +92,7 @@ export async function POST(request: Request, context: RouteContext) {
     const user = await requireUser();
     const { id } = await context.params;
     const programId = numberParam(id);
-    const body = (await request.json()) as SessionCreateBody;
+    const body = await readJson<SessionCreateBody>(request);
     const dayId = Number(body.dayId);
     const definitionDayId = Number(body.definitionDayId);
 
@@ -384,6 +384,7 @@ export async function POST(request: Request, context: RouteContext) {
 
     return NextResponse.json(session, { status: 201 });
   } catch (error) {
+    if (isBadRequest(error)) return jsonError(error.message, 400);
     if (isUnauthorized(error)) return jsonError("Unauthorized", 401);
     return jsonError("Failed to create session", 500);
   }

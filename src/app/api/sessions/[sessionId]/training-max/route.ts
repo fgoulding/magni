@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { assertSameOrigin, isUnauthorized, jsonError, numberParam } from "@/lib/api";
+import { assertSameOrigin, isBadRequest, isUnauthorized, jsonError, numberParam, readJson } from "@/lib/api";
 import { getSettingNumber, requireUser } from "@/lib/auth";
 import { calculateWeight } from "@/lib/calculator";
 import { db } from "@/lib/db";
@@ -31,7 +31,7 @@ export async function PUT(request: Request, context: RouteContext) {
     const { sessionId } = await context.params;
     const id = numberParam(sessionId);
 
-    const body = (await request.json()) as { exerciseName?: unknown; trainingMax?: unknown };
+    const body = await readJson<{ exerciseName?: unknown; trainingMax?: unknown }>(request);
     const exerciseName = typeof body.exerciseName === "string" ? body.exerciseName.trim() : "";
     const parsed = Number(body.trainingMax);
     if (!exerciseName) return jsonError("exerciseName is required", 400);
@@ -86,6 +86,7 @@ export async function PUT(request: Request, context: RouteContext) {
 
     return NextResponse.json({ sets: updated });
   } catch (error) {
+    if (isBadRequest(error)) return jsonError(error.message, 400);
     if (isUnauthorized(error)) return jsonError("Unauthorized", 401);
     if (error instanceof Error && error.message === "Forbidden cross-origin request") {
       return jsonError(error.message, 403);

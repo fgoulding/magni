@@ -56,6 +56,14 @@ function jsonRequest(body: unknown): Request {
   });
 }
 
+function malformedJsonRequest(): Request {
+  return new Request("http://localhost/api", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: "{ not valid json",
+  });
+}
+
 function crossOriginJsonRequest(body: unknown): Request {
   return new Request("http://localhost/api", {
     method: "POST",
@@ -559,6 +567,15 @@ describe("session APIs", () => {
       .prepare("SELECT notes FROM session_sets WHERE id = ?")
       .get(added.sets[0].id) as { notes: string };
     expect(stored.notes.length).toBe(4000);
+  });
+
+  it("returns 400 (not 500) for a malformed JSON body", async () => {
+    const userId = createUser("malformed-json@example.com");
+    authenticate(userId);
+    const session = await (await globalSessionsRoute.POST(jsonRequest({}))).json();
+
+    const response = await setRoute.PUT(malformedJsonRequest(), params({ sessionId: String(session.id) }));
+    expect(response.status).toBe(400);
   });
 
   it("refuses to finish an already-completed session", async () => {

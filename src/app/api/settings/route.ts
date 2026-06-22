@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { assertSameOrigin, jsonError, isUnauthorized } from "@/lib/api";
+import { assertSameOrigin, isBadRequest, jsonError, isUnauthorized, readJson } from "@/lib/api";
 import { getSettings, requireUser, setSetting } from "@/lib/auth";
 
 type SettingsBody = {
@@ -20,7 +20,7 @@ export async function POST(request: Request) {
   try {
     assertSameOrigin(request);
     const user = await requireUser();
-    const body = (await request.json()) as SettingsBody;
+    const body = await readJson<SettingsBody>(request);
 
     if (body.rounding !== undefined) {
       const rounding = Number(body.rounding);
@@ -32,6 +32,7 @@ export async function POST(request: Request) {
 
     return NextResponse.json({ success: true });
   } catch (error) {
+    if (isBadRequest(error)) return jsonError(error.message, 400);
     if (isUnauthorized(error)) return jsonError("Unauthorized", 401);
     return jsonError("Failed to save settings", 500);
   }

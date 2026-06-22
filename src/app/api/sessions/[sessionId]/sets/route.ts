@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { assertSameOrigin, clampText, jsonError, isUnauthorized, numberParam } from "@/lib/api";
+import { assertSameOrigin, clampText, isBadRequest, jsonError, isUnauthorized, numberParam, readJson } from "@/lib/api";
 import { requireUser } from "@/lib/auth";
 import { db } from "@/lib/db";
 
@@ -27,7 +27,7 @@ export async function POST(request: Request, context: RouteContext) {
     const user = await requireUser();
     const { sessionId } = await context.params;
     const id = numberParam(sessionId);
-    const body = (await request.json()) as AddExerciseBody;
+    const body = await readJson<AddExerciseBody>(request);
 
     const name = typeof body.name === "string" ? body.name.trim() : "";
     if (!name) return jsonError("name is required", 400);
@@ -82,6 +82,7 @@ export async function POST(request: Request, context: RouteContext) {
 
     return NextResponse.json({ sets: rows }, { status: 201 });
   } catch (error) {
+    if (isBadRequest(error)) return jsonError(error.message, 400);
     if (isUnauthorized(error)) return jsonError("Unauthorized", 401);
     return jsonError("Failed to add exercise", 500);
   }
@@ -93,7 +94,7 @@ export async function PUT(request: Request, context: RouteContext) {
     const user = await requireUser();
     const { sessionId } = await context.params;
     const id = numberParam(sessionId);
-    const body = (await request.json()) as SetUpdateBody;
+    const body = await readJson<SetUpdateBody>(request);
     const setId = Number(body.setId);
 
     if (!Number.isInteger(setId) || setId <= 0) {
@@ -140,6 +141,7 @@ export async function PUT(request: Request, context: RouteContext) {
 
     return NextResponse.json(updated);
   } catch (error) {
+    if (isBadRequest(error)) return jsonError(error.message, 400);
     if (isUnauthorized(error)) return jsonError("Unauthorized", 401);
     return jsonError("Failed to update set", 500);
   }
