@@ -21,6 +21,12 @@ db.pragma("synchronous = FULL");
 db.pragma("foreign_keys = ON");
 // Fold the WAL back into the main file periodically so it can't grow unbounded.
 db.pragma("wal_autocheckpoint = 1000");
+// Keep the hot tables (sessions / session_sets) resident: a larger page cache and
+// memory-mapped I/O cut syscalls on the scan-heavy stats/dashboard reads, which
+// matters as concurrent users grow (better-sqlite3 is synchronous, so a faster
+// scan frees the event loop sooner for everyone else).
+db.pragma("cache_size = -16000"); // ~16 MB page cache (negative value = KiB)
+db.pragma("mmap_size = 268435456"); // 256 MB memory-mapped I/O
 
 function sleep(ms: number): void {
   Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);

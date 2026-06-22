@@ -619,7 +619,7 @@ function getLastSessionDate(userId: number, programId: number): string | null {
   return row.value;
 }
 
-function getLiftPreview(userId: number, row: ProgramDaySummary): TodayLiftPreview[] {
+function getLiftPreview(userId: number, row: ProgramDaySummary, rounding?: number): TodayLiftPreview[] {
   const settings = db
     .prepare(
       `
@@ -656,14 +656,14 @@ function getLiftPreview(userId: number, row: ProgramDaySummary): TodayLiftPrevie
     weight_override: number | null;
     set_count: number;
   }[];
-  const rounding = getSettingNumber(userId, "rounding", 2.5);
+  const resolvedRounding = rounding ?? getSettingNumber(userId, "rounding", 2.5);
 
   return settings.map((setting) => ({
     name: setting.name,
     set_count: setting.set_count,
     reps: setting.reps,
     // Per-week manual weight override wins, same as the workout materialisation.
-    weight: setting.weight_override ?? calculateWeight(setting.training_max, setting.intensity_pct, rounding),
+    weight: setting.weight_override ?? calculateWeight(setting.training_max, setting.intensity_pct, resolvedRounding),
     bodyweight: setting.progression_type === "bodyweight",
   }));
 }
@@ -683,23 +683,55 @@ export function getProgramDayLiftPreview(
   } as ProgramDaySummary);
 }
 
+/** Per-request memo for the Today dashboard. The same program/day is enriched
+ *  repeatedly (each missed-lookback day + today), and last-session-date is per
+ *  program while a lift preview only varies by (day, week) — so without this the
+ *  dashboard re-runs the same MAX(date) and GROUP-BY queries many times. */
+type DashboardCache = {
+  rounding: number;
+  lastSessionDate: Map<number, string | null>;
+  liftPreview: Map<string, TodayLiftPreview[]>;
+};
+
+function newDashboardCache(userId: number): DashboardCache {
+  return {
+    rounding: getSettingNumber(userId, "rounding", 2.5),
+    lastSessionDate: new Map(),
+    liftPreview: new Map(),
+  };
+}
+
 function enrichTodayRow(
   userId: number,
   row: ProgramDaySummary,
   scheduleLabel: string,
   todayDateKey: string,
   scheduledDate?: string,
+  cache?: DashboardCache,
 ): TodayWorkoutSummary {
   const todaySession = getSessionForDate(userId, row, todayDateKey);
+
+  let lastSessionDate = cache?.lastSessionDate.get(row.program_id);
+  if (lastSessionDate === undefined) {
+    lastSessionDate = getLastSessionDate(userId, row.program_id);
+    cache?.lastSessionDate.set(row.program_id, lastSessionDate);
+  }
+
+  const previewKey = `${row.definition_day_id}:${row.current_week}`;
+  let nextLifts = cache?.liftPreview.get(previewKey);
+  if (nextLifts === undefined) {
+    nextLifts = getLiftPreview(userId, row, cache?.rounding);
+    cache?.liftPreview.set(previewKey, nextLifts);
+  }
 
   return {
     ...row,
     schedule_label: scheduleLabel,
     scheduled_date: scheduledDate,
-    last_session_date: getLastSessionDate(userId, row.program_id),
+    last_session_date: lastSessionDate,
     today_session_id: todaySession?.id ?? null,
     today_session_status: todaySession?.status ?? null,
-    next_lifts: getLiftPreview(userId, row),
+    next_lifts: nextLifts,
   };
 }
 
@@ -962,6 +994,7 @@ export function getTodayWorkoutDashboard(userId: number, today = new Date()): To
   const missedWorkouts: TodayWorkoutSummary[] = [];
   const scheduledToday: TodayWorkoutSummary[] = [];
   const otherActiveRuns: TodayWorkoutSummary[] = [];
+  const cache = newDashboardCache(userId);
 
   for (const programRows of rowsByProgram.values()) {
     const firstRow = programRows[0];
@@ -990,6 +1023,7 @@ export function getTodayWorkoutDashboard(userId: number, today = new Date()): To
               `Missed ${WEEKDAY_LABELS[missedDate.getDay()]}`,
               todayDateKey,
               missedDateKey,
+              cache,
             ),
           );
         }
@@ -1003,14 +1037,15 @@ export function getTodayWorkoutDashboard(userId: number, today = new Date()): To
       ) {
         const week = scheduledWeekForDate(dayRow.schedule_start_date, dayRow.num_weeks, todayDateKey);
         scheduledToday.push(
-          enrichTodayRow(userId, { ...dayRow, current_week: week }, WEEKDAY_LABELS[todayWeekday], todayDateKey),
+          enrichTodayRow(userId, { ...dayRow, current_week: week }, WEEKDAY_LABELS[todayWeekday], todayDateKey, undefined, cache),
         );
       }
       continue;
     }
 
     const currentDay = programRows.find((row) => row.day_number === firstRow.current_day);
-    if (currentDay) otherActiveRuns.push(enrichTodayRow(userId, currentDay, WEEKDAY_LABELS[todayWeekday], todayDateKey));
+    if (currentDay)
+      otherActiveRuns.push(enrichTodayRow(userId, currentDay, WEEKDAY_LABELS[todayWeekday], todayDateKey, undefined, cache));
   }
 
   return { missedWorkouts, scheduledToday, otherActiveRuns };

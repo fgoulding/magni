@@ -1080,6 +1080,9 @@ function createPerformanceIndexes(db: Database.Database): void {
     // At most one in-progress Quick Workout (program-less session) per user per
     // day — the DB-level guard behind POST /api/sessions' find-or-create.
     "CREATE UNIQUE INDEX IF NOT EXISTS idx_sessions_unique_quick_in_progress ON sessions(user_id, date) WHERE program_id IS NULL AND status = 'in_progress'",
+    // Per-lift history & "last performance" filter session_sets by exercise_name;
+    // without this they full-scan a user's whole set history on every Stats load.
+    "CREATE INDEX IF NOT EXISTS idx_session_sets_exercise_name ON session_sets(exercise_name, session_id)",
     "CREATE INDEX IF NOT EXISTS idx_exercises_day_archived ON exercises(day_id, archived_at)",
     "CREATE INDEX IF NOT EXISTS idx_days_program_archived ON days(program_id, archived_at)",
     "CREATE INDEX IF NOT EXISTS idx_week_settings_exercise_week ON week_settings(exercise_id, week_number)",
