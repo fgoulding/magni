@@ -2,9 +2,11 @@ import Link from "next/link";
 import { CalendarDays, ChevronRight, LineChart } from "lucide-react";
 import { redirect } from "next/navigation";
 import { ProgramHoldDialog } from "@/components/ProgramHoldForm";
+import { QuickWorkout } from "@/components/QuickWorkout";
 import { WorkoutCard } from "@/components/WorkoutCard";
 import {
   getProgramLibrary,
+  getQuickWorkoutForToday,
   getTodayWorkoutDashboard,
   type TodayLiftPreview,
   type TodayWorkoutSummary,
@@ -95,6 +97,7 @@ export default async function TodayPage() {
       run.active_hold_start_date <= todayKey &&
       run.active_hold_end_date >= todayKey,
   );
+  const quickWorkout = getQuickWorkoutForToday(user.id);
   const hasWorkouts =
     dashboard.scheduledToday.length > 0 || dashboard.otherActiveRuns.length > 0;
 
@@ -163,6 +166,7 @@ export default async function TodayPage() {
               </Link>
             </div>
           </section>
+          <QuickWorkout initialSession={quickWorkout} />
         </>
       ) : (
         <>
@@ -173,6 +177,7 @@ export default async function TodayPage() {
               {dashboard.otherActiveRuns.map((row) => renderWorkout(row, "Unscheduled run", rounding))}
             </section>
           ) : null}
+          <QuickWorkout initialSession={quickWorkout} />
         </>
       )}
       </div>

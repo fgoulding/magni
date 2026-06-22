@@ -1016,6 +1016,49 @@ export function getTodayWorkoutDashboard(userId: number, today = new Date()): To
   return { missedWorkouts, scheduledToday, otherActiveRuns };
 }
 
+export type QuickWorkoutSet = {
+  id: number;
+  exercise_name: string;
+  reps: number;
+  sets: number;
+  set_number: number;
+  rep_out_target: number;
+  calculated_weight: number;
+  actual_reps: number | null;
+  actual_weight: number | null;
+  superset_group: string | null;
+  training_max: number | null;
+  intensity_pct: number | null;
+  progression_type: string;
+};
+
+export type QuickWorkout = { id: number; sets: QuickWorkoutSet[] };
+
+/** Today's in-progress Quick Workout (a program-less session) with its sets, so
+ *  the Today page can rehydrate the inline card after a reload. Null when there
+ *  is no open quick workout for today. */
+export function getQuickWorkoutForToday(userId: number, today = new Date()): QuickWorkout | null {
+  const todayDateKey = toLocalDateKey(today);
+  const session = db
+    .prepare(
+      `SELECT id FROM sessions
+       WHERE user_id = ? AND program_id IS NULL AND status = 'in_progress' AND date = ?
+       ORDER BY id DESC LIMIT 1`,
+    )
+    .get(userId, todayDateKey) as { id: number } | undefined;
+  if (!session) return null;
+
+  const sets = db
+    .prepare(
+      `SELECT id, exercise_name, reps, sets, set_number, rep_out_target, calculated_weight,
+              actual_reps, actual_weight, superset_group, training_max, intensity_pct, progression_type
+       FROM session_sets WHERE session_id = ? ORDER BY id`,
+    )
+    .all(session.id) as QuickWorkoutSet[];
+
+  return { id: session.id, sets };
+}
+
 export function getProgramLibrary(userId: number): ProgramLibrary {
   const rows = db
     .prepare(

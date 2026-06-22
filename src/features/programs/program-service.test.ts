@@ -2,6 +2,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { beforeAll, beforeEach, describe, expect, it } from "vitest";
+import { todayLocalDateKey } from "@/lib/date-key";
 
 let dbModule: typeof import("@/lib/db");
 let service: typeof import("./program-service");
@@ -464,6 +465,44 @@ describe("program service", () => {
     const after = service.getTodayWorkoutDashboard(userId, new Date("2026-06-22T12:00:00-07:00"));
     expect(after.scheduledToday).toEqual([]);
     expect(after.missedWorkouts).toEqual([]);
+  });
+
+  it("returns today's in-progress Quick Workout (program-less session) with its sets", () => {
+    const userId = createUser("service-quick-today@example.com");
+    const today = todayLocalDateKey();
+    const insert = dbModule.db
+      .prepare(
+        `INSERT INTO sessions (program_id, user_id, day_id, program_name, day_name, week_number, status, date)
+         VALUES (NULL, ?, NULL, 'Quick Workout', 'Quick Workout', 1, 'in_progress', ?)`,
+      )
+      .run(userId, today);
+    const sessionId = Number(insert.lastInsertRowid);
+    dbModule.db
+      .prepare(
+        `INSERT INTO session_sets (session_id, exercise_name, category, progression_type, week_number, set_number, reps, sets, rep_out_target, calculated_weight)
+         VALUES (?, 'Bench Press', 'accessory', 'custom', 1, 1, 5, 1, 5, 135)`,
+      )
+      .run(sessionId);
+
+    const quick = service.getQuickWorkoutForToday(userId);
+    expect(quick).not.toBeNull();
+    expect(quick!.id).toBe(sessionId);
+    expect(quick!.sets).toHaveLength(1);
+    expect(quick!.sets[0]).toMatchObject({ exercise_name: "Bench Press", calculated_weight: 135, reps: 5 });
+  });
+
+  it("does not return a completed or program-bound session as a Quick Workout", () => {
+    const userId = createUser("service-quick-none@example.com");
+    const today = todayLocalDateKey();
+    // Completed program-less session → not surfaced.
+    dbModule.db
+      .prepare(
+        `INSERT INTO sessions (program_id, user_id, program_name, day_name, week_number, status, completed, date)
+         VALUES (NULL, ?, 'Quick Workout', 'Quick Workout', 1, 'completed', 1, ?)`,
+      )
+      .run(userId, today);
+
+    expect(service.getQuickWorkoutForToday(userId)).toBeNull();
   });
 
   it("builds a Today dashboard with scheduled workout preview and last session", () => {

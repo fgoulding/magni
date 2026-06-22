@@ -33,6 +33,7 @@ let auth: typeof import("@/lib/auth");
 let programsRoute: typeof import("../programs/route");
 let sessionsRoute: typeof import("../programs/[id]/sessions/route");
 let globalSessionsRoute: typeof import("./route");
+let sessionRoute: typeof import("./[sessionId]/route");
 let setRoute: typeof import("./[sessionId]/sets/route");
 let completeRoute: typeof import("../programs/[id]/complete-and-advance/route");
 let skipRoute: typeof import("../programs/[id]/skip-workout/route");
@@ -154,6 +155,7 @@ beforeAll(async () => {
   programsRoute = await import("../programs/route");
   sessionsRoute = await import("../programs/[id]/sessions/route");
   globalSessionsRoute = await import("./route");
+  sessionRoute = await import("./[sessionId]/route");
   setRoute = await import("./[sessionId]/sets/route");
   completeRoute = await import("../programs/[id]/complete-and-advance/route");
   skipRoute = await import("../programs/[id]/skip-workout/route");
@@ -280,6 +282,100 @@ describe("session APIs", () => {
       params({ sessionId: String(session.id) }),
     );
     expect(invalid.status).toBe(400);
+  });
+
+  it("creates a program-less Quick Workout session for today", async () => {
+    const userId = createUser("quick-create@example.com");
+    authenticate(userId);
+
+    const response = await globalSessionsRoute.POST(jsonRequest({}));
+    const session = await response.json();
+
+    expect(response.status).toBe(201);
+    expect(session.sets).toEqual([]);
+
+    const row = dbModule.db
+      .prepare(
+        "SELECT program_id, program_run_id, program_definition_id, program_name, day_name, week_number, status, date FROM sessions WHERE id = ?",
+      )
+      .get(session.id) as Record<string, unknown>;
+    expect(row).toMatchObject({
+      program_id: null,
+      program_run_id: null,
+      program_definition_id: null,
+      program_name: "Quick Workout",
+      day_name: "Quick Workout",
+      week_number: 1,
+      status: "in_progress",
+    });
+  });
+
+  it("returns the existing in-progress Quick Workout instead of starting a second one", async () => {
+    const userId = createUser("quick-idempotent@example.com");
+    authenticate(userId);
+
+    const first = await (await globalSessionsRoute.POST(jsonRequest({}))).json();
+    const secondResponse = await globalSessionsRoute.POST(jsonRequest({}));
+    const second = await secondResponse.json();
+
+    expect(secondResponse.status).toBe(200);
+    expect(second.id).toBe(first.id);
+    const count = dbModule.db
+      .prepare("SELECT COUNT(*) AS n FROM sessions WHERE user_id = ? AND program_id IS NULL")
+      .get(userId) as { n: number };
+    expect(count.n).toBe(1);
+  });
+
+  it("rejects an unauthenticated Quick Workout create", async () => {
+    const response = await globalSessionsRoute.POST(jsonRequest({}));
+    expect(response.status).toBe(401);
+  });
+
+  it("supports adding, logging, and finishing a Quick Workout end-to-end", async () => {
+    const userId = createUser("quick-flow@example.com");
+    authenticate(userId);
+
+    const session = await (await globalSessionsRoute.POST(jsonRequest({}))).json();
+
+    const added = await (
+      await setRoute.POST(
+        jsonRequest({ name: "Bench Press", sets: 3, reps: 5, weight: 135 }),
+        params({ sessionId: String(session.id) }),
+      )
+    ).json();
+    expect(added.sets).toHaveLength(3);
+
+    const logged = await setRoute.PUT(
+      jsonRequest({ setId: added.sets[0].id, actualReps: 5, actualWeight: 135 }),
+      params({ sessionId: String(session.id) }),
+    );
+    expect(logged.status).toBe(200);
+
+    const finishResponse = await sessionRoute.PATCH(
+      jsonRequest({}),
+      params({ sessionId: String(session.id) }),
+    );
+    const recap = await finishResponse.json();
+    expect(finishResponse.status).toBe(200);
+    expect(recap).toMatchObject({ status: "completed", programName: "Quick Workout" });
+
+    const row = dbModule.db
+      .prepare("SELECT status, completed, completed_at FROM sessions WHERE id = ?")
+      .get(session.id) as { status: string; completed: number; completed_at: string | null };
+    expect(row.status).toBe("completed");
+    expect(row.completed).toBe(1);
+    expect(row.completed_at).toBeTruthy();
+  });
+
+  it("refuses to finish an already-completed session", async () => {
+    const userId = createUser("quick-finish-twice@example.com");
+    authenticate(userId);
+
+    const session = await (await globalSessionsRoute.POST(jsonRequest({}))).json();
+    await sessionRoute.PATCH(jsonRequest({}), params({ sessionId: String(session.id) }));
+    const second = await sessionRoute.PATCH(jsonRequest({}), params({ sessionId: String(session.id) }));
+
+    expect(second.status).toBe(400);
   });
 
   it("starts workouts from the canonical program run week when legacy program state is stale", async () => {
