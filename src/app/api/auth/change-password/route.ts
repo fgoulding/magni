@@ -8,6 +8,7 @@ import {
   verifyPassword,
 } from "@/lib/auth";
 import { db } from "@/lib/db";
+import { enforceAuthRateLimit } from "@/lib/rate-limit";
 
 type ChangePasswordBody = {
   currentPassword?: unknown;
@@ -23,6 +24,10 @@ type ChangePasswordBody = {
 export async function POST(request: Request) {
   try {
     assertSameOrigin(request);
+    // Throttle current-password guesses even with a valid session (parity with
+    // login/register), keyed by IP.
+    const limited = enforceAuthRateLimit(request, "change-password");
+    if (limited) return limited;
     const user = await requireUser();
 
     const body = await readJson<ChangePasswordBody>(request);
