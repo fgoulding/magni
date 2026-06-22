@@ -15,24 +15,29 @@ export async function POST(request: Request) {
     const user = await requireUser();
     const today = todayLocalDateKey();
 
-    const existing = db
-      .prepare(
-        `SELECT id FROM sessions
-         WHERE user_id = ? AND program_id IS NULL AND status = 'in_progress' AND date = ?
-         ORDER BY id DESC LIMIT 1`,
-      )
-      .get(user.id, today) as { id: number } | undefined;
+    const existing = findQuickWorkout(user.id, today);
     if (existing) {
-      return NextResponse.json({ id: existing.id, sets: loadSets(existing.id) });
+      return NextResponse.json({ id: existing, sets: loadSets(existing) });
     }
 
-    const result = db
-      .prepare(
-        `INSERT INTO sessions (user_id, program_name, day_name, week_number, date)
-         VALUES (?, 'Quick Workout', 'Quick Workout', 1, ?)`,
-      )
-      .run(user.id, today);
-    const id = Number(result.lastInsertRowid);
+    let id: number;
+    try {
+      const result = db
+        .prepare(
+          `INSERT INTO sessions (user_id, program_name, day_name, week_number, date)
+           VALUES (?, 'Quick Workout', 'Quick Workout', 1, ?)`,
+        )
+        .run(user.id, today);
+      id = Number(result.lastInsertRowid);
+    } catch (error) {
+      // Defense-in-depth: the partial unique index (one in-progress quick workout
+      // per user/day) lost a race — return whoever won instead of erroring.
+      if (isUniqueConstraint(error)) {
+        const won = findQuickWorkout(user.id, today);
+        if (won) return NextResponse.json({ id: won, sets: loadSets(won) });
+      }
+      throw error;
+    }
 
     return NextResponse.json({ id, sets: loadSets(id) }, { status: 201 });
   } catch (error) {
@@ -42,6 +47,27 @@ export async function POST(request: Request) {
     }
     return jsonError("Could not start quick workout", 500);
   }
+}
+
+/** Newest in-progress program-less session for the user on `date`, if any. */
+function findQuickWorkout(userId: number, date: string): number | null {
+  const row = db
+    .prepare(
+      `SELECT id FROM sessions
+       WHERE user_id = ? AND program_id IS NULL AND status = 'in_progress' AND date = ?
+       ORDER BY id DESC LIMIT 1`,
+    )
+    .get(userId, date) as { id: number } | undefined;
+  return row?.id ?? null;
+}
+
+function isUniqueConstraint(error: unknown): boolean {
+  return (
+    typeof error === "object" &&
+    error !== null &&
+    "code" in error &&
+    (error as { code?: string }).code === "SQLITE_CONSTRAINT_UNIQUE"
+  );
 }
 
 /** Session sets in the SessionResponse shape WorkoutCard/QuickWorkout expect. */

@@ -1029,7 +1029,26 @@ export function runMigrations(db: Database.Database): void {
   ensureExerciseMaxHistoryTable(db);
   backfillProgramDefinitionsAndRuns(db);
   createSessionTriggers(db);
+  dedupeInProgressQuickWorkouts(db);
   createPerformanceIndexes(db);
+}
+
+/** Quick Workouts are program-less in-progress sessions; there should be at most
+ *  one per user per day. getQuickWorkoutForToday only ever surfaces the newest
+ *  (ORDER BY id DESC), so any older same-day in-progress duplicate is already
+ *  invisible/orphaned — remove it so the partial unique index below can be
+ *  created safely. Runs before createPerformanceIndexes for that reason. */
+function dedupeInProgressQuickWorkouts(db: Database.Database): void {
+  db.exec(`
+    DELETE FROM sessions
+    WHERE program_id IS NULL
+      AND status = 'in_progress'
+      AND id NOT IN (
+        SELECT MAX(id) FROM sessions
+        WHERE program_id IS NULL AND status = 'in_progress'
+        GROUP BY user_id, date
+      );
+  `);
 }
 
 function createPerformanceIndexes(db: Database.Database): void {
@@ -1039,6 +1058,9 @@ function createPerformanceIndexes(db: Database.Database): void {
     // Stats aggregates scan a user's completed sessions; this drives that + date windows.
     "CREATE INDEX IF NOT EXISTS idx_sessions_user_status_date ON sessions(user_id, status, date)",
     "CREATE UNIQUE INDEX IF NOT EXISTS idx_sessions_unique_definition_day ON sessions(program_run_id, user_id, program_definition_day_id, week_number, date) WHERE program_definition_day_id IS NOT NULL",
+    // At most one in-progress Quick Workout (program-less session) per user per
+    // day — the DB-level guard behind POST /api/sessions' find-or-create.
+    "CREATE UNIQUE INDEX IF NOT EXISTS idx_sessions_unique_quick_in_progress ON sessions(user_id, date) WHERE program_id IS NULL AND status = 'in_progress'",
     "CREATE INDEX IF NOT EXISTS idx_exercises_day_archived ON exercises(day_id, archived_at)",
     "CREATE INDEX IF NOT EXISTS idx_days_program_archived ON days(program_id, archived_at)",
     "CREATE INDEX IF NOT EXISTS idx_week_settings_exercise_week ON week_settings(exercise_id, week_number)",

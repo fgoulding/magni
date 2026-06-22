@@ -333,6 +333,39 @@ describe("session APIs", () => {
     expect(response.status).toBe(401);
   });
 
+  it("enforces one in-progress Quick Workout per user per day at the DB level", async () => {
+    const userId = createUser("quick-unique-index@example.com");
+    authenticate(userId);
+
+    const session = await (await globalSessionsRoute.POST(jsonRequest({}))).json();
+    const date = dbModule.db.prepare("SELECT date FROM sessions WHERE id = ?").get(session.id) as {
+      date: string;
+    };
+
+    // A second raw in-progress program-less session for the same day must be
+    // rejected by the partial unique index — this is the guard behind the
+    // find-or-create race.
+    expect(() =>
+      dbModule.db
+        .prepare(
+          `INSERT INTO sessions (user_id, program_name, day_name, week_number, status, date)
+           VALUES (?, 'Quick Workout', 'Quick Workout', 1, 'in_progress', ?)`,
+        )
+        .run(userId, date.date),
+    ).toThrow(/UNIQUE/i);
+
+    // But once the first is completed, a new one for the same day is allowed.
+    dbModule.db.prepare("UPDATE sessions SET status = 'completed', completed = 1 WHERE id = ?").run(session.id);
+    expect(() =>
+      dbModule.db
+        .prepare(
+          `INSERT INTO sessions (user_id, program_name, day_name, week_number, status, date)
+           VALUES (?, 'Quick Workout', 'Quick Workout', 1, 'in_progress', ?)`,
+        )
+        .run(userId, date.date),
+    ).not.toThrow();
+  });
+
   it("supports adding, logging, and finishing a Quick Workout end-to-end", async () => {
     const userId = createUser("quick-flow@example.com");
     authenticate(userId);
