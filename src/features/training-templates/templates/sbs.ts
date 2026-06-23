@@ -32,25 +32,30 @@ const SBS_AUX_C1: TemplateWeek[] = [
   { weekNumber: 7, intensityPct: 0, reps: 0, sets: 0, repOutTarget: 0, ramp: flatRamp(5, 8, 0.5, 18) },
 ];
 
-// SBS runs as three 7-week cycles. Each cycle adds +5% intensity to the working
-// weeks over the previous one; reps, AMRAP targets, and the final deload week are
-// unchanged. The training max still moves session-to-session off your AMRAPs.
-function shiftIntensity(weeks: readonly TemplateWeek[], addPct: number): TemplateWeek[] {
+// SBS runs as three 7-week cycles. Each cycle shifts the working weeks vs cycle 1
+// by +5% intensity, -1 rep per set, and -2 on the AMRAP target (per the official
+// SBS sheet); the final deload week is identical in every cycle. The training max
+// still moves session-to-session off your AMRAPs.
+function shiftCycle(weeks: readonly TemplateWeek[], cycle: number): TemplateWeek[] {
+  const addPct = (cycle - 1) * 0.05;
+  const repDelta = cycle - 1;
+  const targetDelta = 2 * (cycle - 1);
   return weeks.map((week, index) => {
-    // Final week is the deload — same load in every cycle.
+    // Final week is the deload — same load and reps in every cycle.
     if (index === weeks.length - 1 || !week.ramp) return { ...week };
     return {
       ...week,
       ramp: week.ramp.map((set) => ({
         ...set,
         intensityPct: Math.round((set.intensityPct + addPct) * 1000) / 1000,
+        reps: Math.max(1, set.reps - repDelta),
+        repOutTarget: Math.max(1, set.repOutTarget - targetDelta),
       })),
     };
   });
 }
 
 function sbsCycle(id: string, cycle: number) {
-  const addPct = (cycle - 1) * 0.05;
   return defineTrainingTemplate({
     id,
     name: `SBS — Cycle ${cycle}`,
@@ -61,8 +66,8 @@ function sbsCycle(id: string, cycle: number) {
     supportedCategories: ["main", "aux"],
     autoProgression: true,
     weeksByCategory: {
-      main: shiftIntensity(SBS_MAIN_C1, addPct),
-      aux: shiftIntensity(SBS_AUX_C1, addPct),
+      main: shiftCycle(SBS_MAIN_C1, cycle),
+      aux: shiftCycle(SBS_AUX_C1, cycle),
     },
   });
 }
