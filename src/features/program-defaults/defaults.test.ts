@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { parseSharedProgramSnapshot } from "@/features/shared-programs/snapshot";
-import { getProgramDefault, listProgramDefaults } from "./defaults";
+import { applySbsCycleToSnapshot, getProgramDefault, listProgramDefaults, snapshotUsesSbs } from "./defaults";
 
 describe("program defaults", () => {
   it("exposes stable keys and valid shared snapshots", () => {
@@ -78,5 +78,31 @@ describe("program defaults", () => {
     // 3 sets of 10 → a 3-set ramp so each logs its own reps + optional added weight.
     expect(pullUp.weeks[0].ramp).toHaveLength(3);
     expect(pullUp.weeks[0].ramp?.[0]).toMatchObject({ setNumber: 1, reps: 10, intensityPct: 0 });
+  });
+
+  it("re-plans SBS lifts to the chosen cycle, leaving non-SBS lifts untouched", () => {
+    const base = getProgramDefault("superset-hypertrophy-3-day")!.snapshot;
+    expect(snapshotUsesSbs(base)).toBe(true);
+
+    const cycle2 = applySbsCycleToSnapshot(base, 2);
+    const squat = cycle2.days[0].exercises.find((e) => e.name === "Squat")!;
+    // Main SBS lift now loads as cycle 2: week 1 = 5×4 @ 75% (was 5×5 @ 70%).
+    expect(squat.progressionType).toBe("sbs-c2");
+    expect(squat.weeks[0]).toMatchObject({ intensityPct: 0.75, reps: 4, sets: 5 });
+
+    // A custom/bodyweight accessory is left exactly as-is.
+    const before = base.days[0].exercises.find((e) => e.name === "Pull-Up")!;
+    const after = cycle2.days[0].exercises.find((e) => e.name === "Pull-Up")!;
+    expect(after).toEqual(before);
+
+    // Cycle 1 maps SBS lifts back to the base "sbs" progression.
+    const cycle1 = applySbsCycleToSnapshot(cycle2, 1);
+    const squatC1 = cycle1.days[0].exercises.find((e) => e.name === "Squat")!;
+    expect(squatC1.progressionType).toBe("sbs");
+    expect(squatC1.weeks[0]).toMatchObject({ intensityPct: 0.7, reps: 5 });
+  });
+
+  it("reports no SBS usage for a fully linear default", () => {
+    expect(snapshotUsesSbs(getProgramDefault("stronglifts-5x5")!.snapshot)).toBe(false);
   });
 });

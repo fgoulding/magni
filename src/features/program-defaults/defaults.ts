@@ -1,7 +1,53 @@
-import type { SharedProgramDaySnapshot, SharedProgramExerciseSlotSnapshot } from "@/features/shared-programs/types";
+import type {
+  SharedProgramDaySnapshot,
+  SharedProgramExerciseSlotSnapshot,
+  SharedProgramSnapshot,
+} from "@/features/shared-programs/types";
 import { getTemplateWeeks } from "@/features/training-templates/registry";
-import type { ExerciseCategory } from "@/features/training-templates/types";
+import type { ExerciseCategory, TemplateWeek } from "@/features/training-templates/types";
 import type { ProgramDefault } from "./types";
+
+/** SBS progression ids by cycle number, and the set of all of them. */
+const SBS_CYCLE_ID: Readonly<Record<number, string>> = { 1: "sbs", 2: "sbs-c2", 3: "sbs-c3" };
+const SBS_CYCLE_IDS = new Set(Object.values(SBS_CYCLE_ID));
+
+/** Flatten a template's weeks into the snapshot week shape (ramp-aware). */
+function snapshotWeeksFromTemplate(progressionType: string, category: ExerciseCategory): TemplateWeek[] {
+  return getTemplateWeeks(progressionType, category).map((tw) => ({
+    weekNumber: tw.weekNumber,
+    intensityPct: tw.ramp && tw.ramp.length > 0 ? tw.ramp[tw.ramp.length - 1].intensityPct : tw.intensityPct,
+    reps: tw.ramp && tw.ramp.length > 0 ? tw.ramp[0].reps : tw.reps,
+    sets: tw.ramp ? tw.ramp.length : tw.sets,
+    repOutTarget: tw.ramp && tw.ramp.length > 0 ? tw.ramp[tw.ramp.length - 1].repOutTarget : tw.repOutTarget,
+    ramp: tw.ramp,
+  }));
+}
+
+/** True when a snapshot contains any SBS-loaded lift (so a cycle choice applies). */
+export function snapshotUsesSbs(snapshot: SharedProgramSnapshot): boolean {
+  return snapshot.days.some((day) => day.exercises.some((exercise) => SBS_CYCLE_IDS.has(exercise.progressionType)));
+}
+
+/** Remap every SBS-loaded lift in a snapshot to the chosen SBS cycle (1-3) and
+ *  re-plan its weeks. Non-SBS lifts (custom/bodyweight/linear/…) are untouched. */
+export function applySbsCycleToSnapshot(snapshot: SharedProgramSnapshot, cycle: number): SharedProgramSnapshot {
+  const targetId = SBS_CYCLE_ID[cycle] ?? "sbs";
+  return {
+    ...snapshot,
+    days: snapshot.days.map((day) => ({
+      ...day,
+      exercises: day.exercises.map((exercise) =>
+        SBS_CYCLE_IDS.has(exercise.progressionType)
+          ? {
+              ...exercise,
+              progressionType: targetId,
+              weeks: snapshotWeeksFromTemplate(targetId, exercise.category),
+            }
+          : exercise,
+      ),
+    })),
+  };
+}
 
 type ExerciseDefinition = Readonly<{
   slug: string;
@@ -312,7 +358,6 @@ function createExerciseSnapshot(
   exercise: ExerciseDefinition,
 ): SharedProgramExerciseSlotSnapshot {
   const progressionType = exercise.progressionType ?? "sbs";
-  const templateWeeks = getTemplateWeeks(progressionType, exercise.category);
 
   const prescription = exercise.prescription;
   const weeks = prescription
@@ -343,16 +388,7 @@ function createExerciseSnapshot(
             repOutTarget: prescription.reps,
           },
         ]
-    : templateWeeks.length > 0
-      ? templateWeeks.map((tw) => ({
-          weekNumber: tw.weekNumber,
-          intensityPct: tw.ramp && tw.ramp.length > 0 ? tw.ramp[tw.ramp.length - 1].intensityPct : tw.intensityPct,
-          reps: tw.ramp && tw.ramp.length > 0 ? tw.ramp[0].reps : tw.reps,
-          sets: tw.ramp ? tw.ramp.length : tw.sets,
-          repOutTarget: tw.ramp && tw.ramp.length > 0 ? tw.ramp[tw.ramp.length - 1].repOutTarget : tw.repOutTarget,
-          ramp: tw.ramp,
-        }))
-      : [];
+    : snapshotWeeksFromTemplate(progressionType, exercise.category);
 
   const supersetGroup = exercise.superset
     ? `${defaultId}:${daySlug}:ss:${exercise.superset}`

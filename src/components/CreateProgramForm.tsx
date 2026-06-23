@@ -3,6 +3,7 @@
 import { useRouter } from "next/navigation";
 import { useState } from "react";
 import { ErrorBanner } from "@/components/ErrorBanner";
+import { applySbsCycleToSnapshot, snapshotUsesSbs } from "@/features/program-defaults/defaults";
 import type { ProgramDefault } from "@/features/program-defaults/types";
 import type { SharedProgramSnapshot } from "@/features/shared-programs/types";
 
@@ -51,11 +52,16 @@ export function CreateProgramForm({
   );
   const [error, setError] = useState("");
   const [submitting, setSubmitting] = useState(false);
+  // SBS runs as three 7-week cycles (same lifts, heavier loads at lower reps).
+  const [sbsCycle, setSbsCycle] = useState(1);
   const router = useRouter();
   const selectedDefault = programDefaults.find((programDefault) => programDefault.id === selectedDefaultId);
   const baseSnapshot = selectedDefault?.snapshot ?? (selectedDefaultId === "loaded" ? initialSnapshot : undefined);
-  const selectedSnapshot = baseSnapshot
-    ? { ...baseSnapshot, name, numWeeks }
+  const showsCycleChoice = baseSnapshot ? snapshotUsesSbs(baseSnapshot) : false;
+  const cycledSnapshot =
+    baseSnapshot && showsCycleChoice ? applySbsCycleToSnapshot(baseSnapshot, sbsCycle) : baseSnapshot;
+  const selectedSnapshot = cycledSnapshot
+    ? { ...cycledSnapshot, name, numWeeks }
     : undefined;
 
   const sourceButtonClass = (selected: boolean) =>
@@ -67,6 +73,7 @@ export function CreateProgramForm({
 
   function selectDefault(value: string) {
     setSelectedDefaultId(value);
+    setSbsCycle(1);
 
     if (value === "loaded" && initialSnapshot) {
       setName(initialSnapshot.name);
@@ -199,6 +206,29 @@ export function CreateProgramForm({
           A blank program starts empty. After you create it, you&rsquo;ll add training days and
           exercises in the editor.
         </p>
+      ) : null}
+
+      {showsCycleChoice ? (
+        <fieldset className="flex flex-col gap-2">
+          <legend className="text-sm font-medium">SBS cycle</legend>
+          <div className="grid grid-cols-3 gap-2">
+            {[1, 2, 3].map((cycle) => (
+              <button
+                key={cycle}
+                type="button"
+                aria-pressed={sbsCycle === cycle}
+                onClick={() => setSbsCycle(cycle)}
+                className={sourceButtonClass(sbsCycle === cycle)}
+              >
+                Cycle {cycle}
+              </button>
+            ))}
+          </div>
+          <p className="text-xs leading-5 text-muted">
+            Three 7-week blocks: each later cycle runs heavier at lower reps. Start at Cycle 1; move
+            up on the training maxes you earn.
+          </p>
+        </fieldset>
       ) : null}
 
       <label className="flex flex-col gap-1 text-sm font-medium">
