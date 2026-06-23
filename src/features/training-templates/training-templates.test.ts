@@ -67,11 +67,24 @@ describe("training template registry", () => {
       { intensityPct: 0.6, sets: 5, reps: 7, repOutTarget: 14 },
     ]);
 
-    // Cycle 3 reps/targets per the user's spec: reps 3·2·1·3·2·1, target 6·4·2·5·3·1.
-    expect(c3.slice(0, 6).map((w) => w.ramp![0].reps)).toEqual([3, 2, 1, 3, 2, 1]);
-    expect(c3.slice(0, 6).map((w) => w.ramp![0].repOutTarget)).toEqual([6, 4, 2, 5, 3, 1]);
+    // Cycle 3 Main is taken verbatim from the SBS sheet (weeks 15-21) — its second
+    // wave is heavier than a uniform shift, so it's explicit, not formula-derived.
+    const c3Main = c3.map((week) => ({
+      intensityPct: week.ramp![0].intensityPct,
+      sets: week.ramp!.length,
+      reps: week.ramp![0].reps,
+      repOutTarget: week.ramp![0].repOutTarget,
+    }));
+    expect(c3Main).toEqual([
+      { intensityPct: 0.8, sets: 5, reps: 3, repOutTarget: 6 },
+      { intensityPct: 0.85, sets: 5, reps: 2, repOutTarget: 4 },
+      { intensityPct: 0.9, sets: 5, reps: 1, repOutTarget: 2 },
+      { intensityPct: 0.85, sets: 5, reps: 2, repOutTarget: 4 },
+      { intensityPct: 0.9, sets: 5, reps: 1, repOutTarget: 2 },
+      { intensityPct: 0.95, sets: 5, reps: 1, repOutTarget: 1 },
+      { intensityPct: 0.6, sets: 5, reps: 7, repOutTarget: 14 },
+    ]);
     expect(c1[0].ramp![0]).toMatchObject({ intensityPct: 0.7, reps: 5, repOutTarget: 10 });
-    expect(c3[0].ramp![0]).toMatchObject({ intensityPct: 0.8, reps: 3, repOutTarget: 6 });
     // The deload (week 7) is identical in every cycle.
     expect(c1[6].ramp![0]).toEqual(c2[6].ramp![0]);
     expect(c1[6].ramp![0]).toEqual(c3[6].ramp![0]);
