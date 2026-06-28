@@ -43,6 +43,7 @@ let activeHoldRoute: typeof import("./[id]/holds/active/route");
 let programPage: typeof import("@/app/programs/[id]/page");
 let programsPage: typeof import("@/app/programs/page");
 let todayPage: typeof import("@/app/today/page");
+let programService: typeof import("@/features/programs/program-service");
 
 function jsonRequest(body: unknown): Request {
   return new Request("http://localhost/api", {
@@ -182,6 +183,7 @@ beforeAll(async () => {
   programPage = await import("@/app/programs/[id]/page");
   programsPage = await import("@/app/programs/page");
   todayPage = await import("@/app/today/page");
+  programService = await import("@/features/programs/program-service");
 });
 
 beforeEach(() => {
@@ -193,6 +195,32 @@ beforeEach(() => {
 });
 
 describe("program APIs", () => {
+  it("calendar lift preview shows the real set count for prescription accessories", async () => {
+    const userId = createUser("preview-superset@example.com");
+    authenticate(userId);
+    const snapshot = getProgramDefault("superset-hypertrophy-3-day")!.snapshot;
+    const created = await (
+      await programsRoute.POST(jsonRequest({ name: "SS", numWeeks: 7, snapshot }))
+    ).json();
+
+    const day = dbModule.db
+      .prepare(
+        `SELECT pdd.id FROM program_definition_days pdd
+         JOIN programs p ON p.program_definition_id = pdd.program_definition_id
+         WHERE p.id = ? AND pdd.name = 'Squat'`,
+      )
+      .get(created.id) as { id: number };
+
+    const lifts = programService.getProgramDayLiftPreview(userId, created.id, day.id, 1);
+    const incline = lifts.find((l) => l.name === "DB Incline Bench Press")!;
+    const squat = lifts.find((l) => l.name === "Squat")!;
+
+    // Main SBS lift is correct (ramp = one row per set).
+    expect(squat.set_count).toBe(5);
+    // Accessory prescribed 3×12 must preview as 3 sets, not 1.
+    expect(incline).toMatchObject({ set_count: 3, reps: 12 });
+  });
+
   it("rejects unauthenticated program requests", async () => {
     expect((await programsRoute.GET()).status).toBe(401);
     expect((await programsRoute.POST(jsonRequest({ name: "No Session" }))).status).toBe(401);

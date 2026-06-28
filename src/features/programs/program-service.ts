@@ -631,7 +631,10 @@ function getLiftPreview(userId: number, row: ProgramDaySummary, rounding?: numbe
           MAX(pdws.reps) AS reps,
           MAX(pdws.intensity_pct) AS intensity_pct,
           MAX(pdws.weight) AS weight_override,
-          COUNT(*) AS set_count
+          -- Sum the sets column rather than COUNT rows: ramp lifts store one row
+          -- per set (sets=1) while a prescription accessory is one row with sets=N,
+          -- so COUNT(*) would show a 3x12 accessory as 1x12.
+          SUM(pdws.sets) AS set_count
         FROM program_definition_exercises pde
         JOIN program_definition_week_settings pdws
           ON pdws.program_definition_exercise_id = pde.id
