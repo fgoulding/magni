@@ -1,0 +1,239 @@
+{
+  "schemaVersion": 1,
+  "name": "Manual A/B supersets",
+  "description": "",
+  "unit": "lb",
+  "cycles": 4,
+  "weekdays": [
+    1,
+    3,
+    5
+  ],
+  "startDate": "2026-09-07",
+  "weeks": [
+    {
+      "id": "bd0c45b9-827c-4fe7-9f76-619cf3b27150",
+      "name": "Week 1",
+      "block": "",
+      "deload": false,
+      "days": [
+        {
+          "id": "0b9b8a86-3139-4ca8-a68b-592cd7ed4463",
+          "name": "Day A",
+          "exercises": [
+            {
+              "id": "18233791-2c20-40b5-a9d4-a1dfbc616998",
+              "name": "Pull-up",
+              "progressionKey": "9c8fda9d-4a41-4ec0-bb94-292e8600fed2",
+              "baseLoad": 40,
+              "trainingMax": 100,
+              "supersetGroup": "A",
+              "notes": "",
+              "rule": null,
+              "sets": [
+                {
+                  "id": "7af1f931-96d8-4b3f-8f6a-b1aa17538f23",
+                  "role": "work",
+                  "repMin": 6,
+                  "repMax": 10,
+                  "loadMode": "bodyweight",
+                  "load": 0,
+                  "effortKind": "none",
+                  "effort": 0,
+                  "restSeconds": 120,
+                  "tempo": "",
+                  "notes": ""
+                },
+                {
+                  "id": "e60d6fae-1d4d-48a0-98e9-5801d747ca1f",
+                  "role": "work",
+                  "repMin": 6,
+                  "repMax": 10,
+                  "loadMode": "bodyweight",
+                  "load": 0,
+                  "effortKind": "none",
+                  "effort": 0,
+                  "restSeconds": 120,
+                  "tempo": "",
+                  "notes": ""
+                },
+                {
+                  "id": "a7d1c8ad-ca3a-4912-ad41-ec4775d1e022",
+                  "role": "work",
+                  "repMin": 6,
+                  "repMax": 10,
+                  "loadMode": "bodyweight",
+                  "load": 0,
+                  "effortKind": "none",
+                  "effort": 0,
+                  "restSeconds": 120,
+                  "tempo": "",
+                  "notes": ""
+                }
+              ]
+            },
+            {
+              "id": "6b8df3d0-24b9-4d6a-9a0f-e454a3cd96c4",
+              "name": "Push-up",
+              "progressionKey": "9dfd7d39-9f84-4605-9c55-0950a1a9ceb9",
+              "baseLoad": 40,
+              "trainingMax": 100,
+              "supersetGroup": "A",
+              "notes": "",
+              "rule": null,
+              "sets": [
+                {
+                  "id": "c74d5dcf-351f-4381-bd57-67431ddb6838",
+                  "role": "work",
+                  "repMin": 8,
+                  "repMax": 15,
+                  "loadMode": "bodyweight",
+                  "load": 0,
+                  "effortKind": "none",
+                  "effort": 0,
+                  "restSeconds": 120,
+                  "tempo": "",
+                  "notes": ""
+                },
+                {
+                  "id": "ded0b18f-9313-4519-b9d7-fd5226047aa3",
+                  "role": "work",
+                  "repMin": 8,
+                  "repMax": 15,
+                  "loadMode": "bodyweight",
+                  "load": 0,
+                  "effortKind": "none",
+                  "effort": 0,
+                  "restSeconds": 120,
+                  "tempo": "",
+                  "notes": ""
+                },
+                {
+                  "id": "4aef57bc-e6e6-45ec-9315-3c479720c79c",
+                  "role": "work",
+                  "repMin": 8,
+                  "repMax": 15,
+                  "loadMode": "bodyweight",
+                  "load": 0,
+                  "effortKind": "none",
+                  "effort": 0,
+                  "restSeconds": 120,
+                  "tempo": "",
+                  "notes": ""
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "id": "793bbc3c-94f3-4cfb-b31d-19a42a463963",
+          "name": "Day B",
+          "exercises": [
+            {
+              "id": "c094dd85-4609-4e98-bcf0-bb7556382ba5",
+              "name": "Goblet squat",
+              "progressionKey": "4b28064d-7619-40b3-8a48-3de3fb04d050",
+              "baseLoad": 40,
+              "trainingMax": 100,
+              "supersetGroup": "B",
+              "notes": "",
+              "rule": null,
+              "sets": [
+                {
+                  "id": "2b49a715-bf07-499d-8a39-1984f49d85e7",
+                  "role": "work",
+                  "repMin": 8,
+                  "repMax": 12,
+                  "loadMode": "working",
+                  "load": 0,
+                  "effortKind": "none",
+                  "effort": 0,
+                  "restSeconds": 120,
+                  "tempo": "",
+                  "notes": ""
+                },
+                {
+                  "id": "6a588bdd-0a82-4dac-937c-5f426067bc55",
+                  "role": "work",
+                  "repMin": 8,
+                  "repMax": 12,
+                  "loadMode": "working",
+                  "load": 0,
+                  "effortKind": "none",
+                  "effort": 0,
+                  "restSeconds": 120,
+                  "tempo": "",
+                  "notes": ""
+                },
+                {
+                  "id": "fd04e04e-9fa4-4539-87dc-5fcc3dfcd5b7",
+                  "role": "work",
+                  "repMin": 8,
+                  "repMax": 12,
+                  "loadMode": "working",
+                  "load": 0,
+                  "effortKind": "none",
+                  "effort": 0,
+                  "restSeconds": 120,
+                  "tempo": "",
+                  "notes": ""
+                }
+              ]
+            },
+            {
+              "id": "abc8ec5f-820e-4277-b8c4-1c9ea6327d67",
+              "name": "Dumbbell row",
+              "progressionKey": "36a385ba-92bd-49e5-bac7-479b9f62c6fe",
+              "baseLoad": 40,
+              "trainingMax": 100,
+              "supersetGroup": "B",
+              "notes": "",
+              "rule": null,
+              "sets": [
+                {
+                  "id": "2f27aec9-84dd-42d1-8180-bdacee8ae813",
+                  "role": "work",
+                  "repMin": 8,
+                  "repMax": 12,
+                  "loadMode": "working",
+                  "load": 0,
+                  "effortKind": "none",
+                  "effort": 0,
+                  "restSeconds": 120,
+                  "tempo": "",
+                  "notes": ""
+                },
+                {
+                  "id": "e73cfec5-26b8-4def-b884-f34d513cb3eb",
+                  "role": "work",
+                  "repMin": 8,
+                  "repMax": 12,
+                  "loadMode": "working",
+                  "load": 0,
+                  "effortKind": "none",
+                  "effort": 0,
+                  "restSeconds": 120,
+                  "tempo": "",
+                  "notes": ""
+                },
+                {
+                  "id": "15f973ea-b6bf-4384-b88e-479bd7848edb",
+                  "role": "work",
+                  "repMin": 8,
+                  "repMax": 12,
+                  "loadMode": "working",
+                  "load": 0,
+                  "effortKind": "none",
+                  "effort": 0,
+                  "restSeconds": 120,
+                  "tempo": "",
+                  "notes": ""
+                }
+              ]
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

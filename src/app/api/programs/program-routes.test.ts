@@ -1,8 +1,10 @@
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import Database from "better-sqlite3";
 import { isValidElement, type ReactNode } from "react";
-import { beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
+import { createUnexpiredAuthSession } from "@/__tests__/auth-fixture";
 import { getProgramDefault } from "@/features/program-defaults/defaults";
 
 const cookieMock = vi.hoisted(() => {
@@ -65,7 +67,7 @@ function createUser(email: string): number {
 }
 
 function authenticate(userId: number): void {
-  const { token } = auth.createSession(userId);
+  const token = createUnexpiredAuthSession(dbModule.db, auth, userId);
   cookieMock.store.set("auth_token", token);
 }
 
@@ -184,6 +186,10 @@ beforeAll(async () => {
   programsPage = await import("@/app/programs/page");
   todayPage = await import("@/app/today/page");
   programService = await import("@/features/programs/program-service");
+});
+
+afterEach(() => {
+  vi.useRealTimers();
 });
 
 beforeEach(() => {
@@ -593,6 +599,159 @@ describe("program APIs", () => {
     expect(text).not.toContain("Archived Day Lift");
   });
 
+  it("creates an exercise through the API when another connection writes after its context read", async () => {
+    const userId = createUser("exercise-concurrency@example.test");
+    authenticate(userId);
+    const program = programService.createProgramRun({ userId, name: "Concurrent exercise", numWeeks: 2 });
+    const lower = programService.addDefinitionDayForRun({ userId, legacyProgramId: program.legacyProgramId, name: "Lower" });
+    programService.addDefinitionExerciseForDay({ userId, legacyDayId: lower.legacyDayId, name: "Squat", trainingMax: 200, category: "main", progressionType: "linear" });
+    const upper = programService.addDefinitionDayForRun({ userId, legacyProgramId: program.legacyProgramId, name: "Upper" });
+    const db = dbModule.db;
+    const other = new Database(process.env.DB_PATH!);
+    other.pragma("busy_timeout = 0");
+    const writeOther = () => other.prepare("INSERT INTO user_settings(user_id,key,value) VALUES (?,'exercise-concurrency','saved')").run(userId);
+    const originalPrepare = db.prepare.bind(db);
+    const originalCreate = programService.addDefinitionExerciseForDay;
+    let interleaved = false;
+    let waitingWriter = false;
+    let failure: { code?: string; message: string } | undefined;
+    const prepare = vi.spyOn(db, "prepare").mockImplementation((sql: string) => {
+      if (!interleaved && sql.includes("INSERT INTO program_definition_exercises")) {
+        interleaved = true;
+        try { writeOther(); }
+        catch (error) {
+          if ((error as { code?: string }).code !== "SQLITE_BUSY") throw error;
+          waitingWriter = true;
+        }
+      }
+      return originalPrepare(sql);
+    });
+    const create = vi.spyOn(programService, "addDefinitionExerciseForDay").mockImplementation(input => {
+      try { return originalCreate(input); }
+      catch (error) {
+        failure = { code: (error as { code?: string }).code, message: (error as Error).message };
+        throw error;
+      }
+    });
+    try {
+      const response = await exercisesRoute.POST(jsonRequest({ name: "Dumbbell Row", trainingMax: 200, progressionType: "linear" }), params({ dayId: String(upper.legacyDayId) }));
+      const body = await response.json();
+      expect({ status: response.status, body, failure }).toMatchObject({ status: 201, body: { name: "Dumbbell Row", trainingMax: 200, category: "main" }, failure: undefined });
+      expect(interleaved).toBe(true);
+      if (waitingWriter) writeOther();
+      expect(db.prepare("SELECT COUNT(*) AS n FROM exercises WHERE day_id=?").get(upper.legacyDayId)).toEqual({ n: 1 });
+      const definition = db.prepare("SELECT id FROM program_definition_exercises WHERE program_definition_day_id=?").get(upper.definitionDayId) as { id: number };
+      const expectedWeeks = [1, 2].flatMap(week_number => [1, 2, 3].map(set_number => ({ week_number, set_number, reps: 5, sets: 1 })));
+      expect(db.prepare("SELECT week_number, set_number, reps, sets FROM program_definition_week_settings WHERE program_definition_exercise_id=? ORDER BY week_number,set_number").all(definition.id)).toEqual(expectedWeeks);
+      expect(db.prepare("SELECT week_number, set_number, reps, sets FROM week_settings WHERE exercise_id=? ORDER BY week_number,set_number").all(body.id)).toEqual(expectedWeeks);
+      expect(db.prepare("SELECT expected_max FROM program_run_expected_maxes WHERE program_run_id=? AND shared_exercise_key=(SELECT shared_exercise_key FROM exercises WHERE id=?)").get(program.runId, body.id)).toEqual({ expected_max: 200 });
+      expect(other.prepare("SELECT value FROM user_settings WHERE user_id=? AND key='exercise-concurrency'").get(userId)).toEqual({ value: "saved" });
+      expect(db.pragma("foreign_key_check")).toEqual([]);
+    } finally {
+      create.mockRestore();
+      prepare.mockRestore();
+      other.close();
+    }
+  });
+
+  it("serializes exercise reordering when another connection writes after its sibling read", async () => {
+    const userId = createUser("exercise-reorder-concurrency@example.test");
+    authenticate(userId);
+    const program = programService.createProgramRun({ userId, name: "Concurrent reorder", numWeeks: 2 });
+    const day = programService.addDefinitionDayForRun({ userId, legacyProgramId: program.legacyProgramId, name: "Full body" });
+    programService.addDefinitionExerciseForDay({ userId, legacyDayId: day.legacyDayId, name: "Squat", trainingMax: 200, category: "main", progressionType: "linear" });
+    const row = programService.addDefinitionExerciseForDay({ userId, legacyDayId: day.legacyDayId, name: "Dumbbell Row", trainingMax: 50, category: "main", progressionType: "linear" });
+    const db = dbModule.db;
+    const other = new Database(process.env.DB_PATH!);
+    other.pragma("busy_timeout = 0");
+    const writeOther = () => other.prepare("INSERT INTO user_settings(user_id,key,value) VALUES (?,'reorder-concurrency','saved')").run(userId);
+    const originalPrepare = db.prepare.bind(db);
+    let interleaved = false;
+    let waitingWriter = false;
+    const prepare = vi.spyOn(db, "prepare").mockImplementation((sql: string) => {
+      if (!interleaved && sql === "UPDATE exercises SET sort_order = ? WHERE id = ?") {
+        interleaved = true;
+        try { writeOther(); }
+        catch (error) {
+          if ((error as { code?: string }).code !== "SQLITE_BUSY") throw error;
+          waitingWriter = true;
+        }
+      }
+      return originalPrepare(sql);
+    });
+    try {
+      const response = await exerciseRoute.PUT(jsonRequest({ move: "up" }), params({ exerciseId: String(row.legacyExerciseId) }));
+      expect({ status: response.status, body: await response.json() }).toEqual({ status: 200, body: { success: true } });
+      expect(interleaved).toBe(true);
+      expect(waitingWriter).toBe(true);
+      writeOther();
+      const expected = [{ name: "Dumbbell Row", sort_order: 1 }, { name: "Squat", sort_order: 2 }];
+      expect(db.prepare("SELECT name,sort_order FROM exercises WHERE day_id=? ORDER BY sort_order").all(day.legacyDayId)).toEqual(expected);
+      expect(db.prepare("SELECT name,sort_order FROM program_definition_exercises WHERE program_definition_day_id=? ORDER BY sort_order").all(day.definitionDayId)).toEqual(expected);
+      expect(db.prepare("SELECT COUNT(*) AS n FROM program_run_expected_maxes WHERE program_run_id=?").get(program.runId)).toEqual({ n: 2 });
+      expect(other.prepare("SELECT value FROM user_settings WHERE user_id=? AND key='reorder-concurrency'").get(userId)).toEqual({ value: "saved" });
+      expect(db.pragma("foreign_key_check")).toEqual([]);
+    } finally {
+      prepare.mockRestore();
+      other.close();
+    }
+  });
+
+  it("logs unexpected exercise creation failures without request data or ownership noise", async () => {
+    const userId = createUser("exercise-write-log@example.test");
+    authenticate(userId);
+    const program = programService.createProgramRun({ userId, name: "Private program", numWeeks: 1 });
+    const day = programService.addDefinitionDayForRun({ userId, legacyProgramId: program.legacyProgramId, name: "Private day" });
+    const context = params({ dayId: String(day.legacyDayId) });
+    const request = () => jsonRequest({ name: "Private lift label", trainingMax: 200, progressionType: "linear" });
+    const log = vi.spyOn(console, "error").mockImplementation(() => {});
+    const create = vi.spyOn(programService, "addDefinitionExerciseForDay").mockImplementationOnce(() => {
+      throw Object.assign(new Error("database is locked"), { code: "SQLITE_BUSY_SNAPSHOT" });
+    });
+    try {
+      const response = await exercisesRoute.POST(request(), context);
+      expect(response.status).toBe(500);
+      expect(await response.json()).toEqual({ error: "Failed to create exercise" });
+      expect(log.mock.calls).toEqual([["[exercises.create] Unexpected failure", { code: "SQLITE_BUSY_SNAPSHOT", message: "database is locked" }]]);
+      expect((await exercisesRoute.POST(jsonRequest({ name: "Private lift label", trainingMax: 0 }), context)).status).toBe(400);
+      authenticate(createUser("other-exercise-write-log@example.test"));
+      expect((await exercisesRoute.POST(request(), context)).status).toBe(404);
+      cookieMock.store.clear();
+      expect((await exercisesRoute.POST(request(), context)).status).toBe(401);
+      expect(log).toHaveBeenCalledTimes(1);
+    } finally {
+      create.mockRestore();
+      log.mockRestore();
+    }
+  });
+
+  it("logs unexpected program write failures without payloads or expected ownership errors", async () => {
+    const userId = createUser("program-write-log@example.test");
+    authenticate(userId);
+    const program = programService.createProgramRun({ userId, name: "Private program label", numWeeks: 1 });
+    const context = params({ id: String(program.legacyProgramId) });
+    const log = vi.spyOn(console, "error").mockImplementation(() => {});
+    const update = vi.spyOn(programService, "updateProgramRun").mockImplementationOnce(() => {
+      throw Object.assign(new Error("database is locked"), { code: "SQLITE_BUSY_SNAPSHOT" });
+    });
+    try {
+      const response = await programRoute.PUT(jsonRequest({ name: "Private updated label", scheduleWeekdays: [1, 3] }), context);
+      expect(response.status).toBe(500);
+      expect(await response.json()).toEqual({ error: "Failed to update program" });
+      expect(log.mock.calls).toEqual([["[programs.update] Unexpected failure", { code: "SQLITE_BUSY_SNAPSHOT", message: "database is locked" }]]);
+
+      expect((await programRoute.PUT(jsonRequest({ scheduleWeekdays: [9] }), context)).status).toBe(400);
+      authenticate(createUser("other-program-write-log@example.test"));
+      expect((await programRoute.PUT(jsonRequest({ name: "Other user's edit" }), context)).status).toBe(404);
+      cookieMock.store.clear();
+      expect((await programRoute.PUT(jsonRequest({ name: "Unauthenticated edit" }), context)).status).toBe(401);
+      expect(log).toHaveBeenCalledTimes(1);
+    } finally {
+      update.mockRestore();
+      log.mockRestore();
+    }
+  });
+
   it("updates and deletes owned programs", async () => {
     const userId = createUser("program-owner@example.com");
     authenticate(userId);
@@ -710,7 +869,7 @@ describe("program APIs", () => {
 
     async function createProgramWithDay(name: string, scheduleWeekdays: number[]): Promise<void> {
       const program = await (await programsRoute.POST(jsonRequest({ name }))).json();
-      await programRoute.PUT(jsonRequest({ scheduleWeekdays }), params({ id: String(program.id) }));
+      await programRoute.PUT(jsonRequest({ scheduleWeekdays, startDate: "2026-05-30" }), params({ id: String(program.id) }));
       await daysRoute.POST(jsonRequest({ name: `${name} Day` }), params({ id: String(program.id) }));
     }
 
@@ -737,10 +896,16 @@ describe("program APIs", () => {
     const userId = createUser("today-day-map@example.com");
     authenticate(userId);
     const program = await (await programsRoute.POST(jsonRequest({ name: "Mapped Program" }))).json();
-    await programRoute.PUT(jsonRequest({ scheduleWeekdays: [1, 3, 5] }), params({ id: String(program.id) }));
-    await daysRoute.POST(jsonRequest({ name: "Monday Lower" }), params({ id: String(program.id) }));
+    await programRoute.PUT(jsonRequest({ scheduleWeekdays: [1, 3, 5], startDate: "2026-06-01" }), params({ id: String(program.id) }));
+    const monday = await (await daysRoute.POST(jsonRequest({ name: "Monday Lower" }), params({ id: String(program.id) }))).json();
     await daysRoute.POST(jsonRequest({ name: "Wednesday Upper" }), params({ id: String(program.id) }));
     await daysRoute.POST(jsonRequest({ name: "Friday Pull" }), params({ id: String(program.id) }));
+    // Monday was performed; Wednesday is the next logical slot. An unresolved
+    // Monday would deliberately remain visible as a separate missed workout.
+    dbModule.db.prepare(`INSERT INTO sessions
+      (program_id, user_id, day_id, week_number, date, status, completed, program_name, day_name)
+      VALUES (?, ?, ?, 1, '2026-06-01', 'completed', 1, 'Mapped Program', 'Monday Lower')`)
+      .run(program.id, userId, monday.id);
 
     try {
       const rendered = await todayPage.default();
@@ -759,7 +924,7 @@ describe("program APIs", () => {
     const userId = createUser("today-completed-persist@example.com");
     authenticate(userId);
     const program = await (await programsRoute.POST(jsonRequest({ name: "Completed Persist" }))).json();
-    await programRoute.PUT(jsonRequest({ scheduleWeekdays: [3] }), params({ id: String(program.id) }));
+    await programRoute.PUT(jsonRequest({ scheduleWeekdays: [3], startDate: "2026-06-03" }), params({ id: String(program.id) }));
     const day = await (await daysRoute.POST(jsonRequest({ name: "Wednesday Lower" }), params({ id: String(program.id) }))).json();
     const context = dbModule.db
       .prepare("SELECT program_definition_id, program_run_id FROM programs WHERE id = ?")
@@ -805,7 +970,7 @@ describe("program APIs", () => {
     const userId = createUser("today-definition-canonical@example.com");
     authenticate(userId);
     const program = await (await programsRoute.POST(jsonRequest({ name: "Definition Today" }))).json();
-    await programRoute.PUT(jsonRequest({ scheduleWeekdays: [3] }), params({ id: String(program.id) }));
+    await programRoute.PUT(jsonRequest({ scheduleWeekdays: [3], startDate: "2026-06-03" }), params({ id: String(program.id) }));
     const day = await (await daysRoute.POST(jsonRequest({ name: "Canonical Wednesday" }), params({ id: String(program.id) }))).json();
     dbModule.db.prepare("UPDATE days SET name = 'Stale Wednesday' WHERE id = ?").run(day.id);
 

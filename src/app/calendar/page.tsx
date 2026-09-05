@@ -1,22 +1,22 @@
+import { userDateKey } from "@/lib/user-date";
 import Link from "next/link";
+import { getOccurrences, getOccurrence, occurrenceLiftPreview } from "@/features/programs/occurrences";
 import { redirect } from "next/navigation";
 import { SessionRecapView } from "@/components/SessionRecapView";
 import { WorkoutCard } from "@/components/WorkoutCard";
 import {
-  getActiveProgramDaysForUser,
   getProgramDayLiftPreview,
-  getProgramRunHoldsForRange,
-  isDateHeldForRun,
-  type ProgramDaySummary,
   type TodayLiftPreview,
 } from "@/features/programs/program-service";
 import { getSessionRecap } from "@/features/programs/training-stats";
 import { getSettingNumber, requireUser } from "@/lib/auth";
 import { parseDateKey, toLocalDateKey } from "@/lib/date-key";
 import { db } from "@/lib/db";
+import { CalendarAgenda } from "@/components/CalendarAgenda";
+import { latestCalendarOperation } from "@/features/calendar/calendar-service";
 
 type CalendarPageProps = {
-  searchParams?: Promise<{ month?: string | string[]; train?: string | string[]; workout?: string | string[] }>;
+  searchParams?: Promise<{ month?: string | string[]; date?: string | string[]; train?: string | string[]; workout?: string | string[] }>;
 };
 
 type HistoryRow = {
@@ -41,6 +41,7 @@ type CalendarEvent = {
   href: string;
   /** The logged session, for completed/skipped events (drives the recap). */
   sessionId?: number;
+  occurrenceId?: number;
   programId?: number | null;
   dayId?: number | null;
   definitionDayId?: number | null;
@@ -49,6 +50,9 @@ type CalendarEvent = {
   currentWeek?: number;
   currentDay?: number;
   scheduledDate?: string;
+  status: string;
+  revision?: number;
+  summary?: string;
 };
 
 type CalendarDayEventSummary = Readonly<{
@@ -88,16 +92,6 @@ function calendarHref(monthStart: Date, train?: string): string {
   return train ? `${base}&workout=${encodeURIComponent(train)}` : base;
 }
 
-function parseScheduleWeekdays(value: string): number[] {
-  try {
-    const parsed = JSON.parse(value) as unknown;
-    if (!Array.isArray(parsed)) return [];
-    return parsed.filter((day): day is number => Number.isInteger(day) && day >= 0 && day <= 6);
-  } catch {
-    return [];
-  }
-}
-
 function buildMonthDays(monthStart: Date): Date[] {
   const days: Date[] = [];
   const cursor = new Date(monthStart);
@@ -111,6 +105,7 @@ function buildMonthDays(monthStart: Date): Date[] {
 }
 
 function formatLiftDetail(lift: TodayLiftPreview): string {
+  if (lift.detail) return lift.detail;
   if (lift.bodyweight) return `${lift.set_count}×${lift.reps} BW`;
   return `${lift.set_count}×${lift.reps} @ ${lift.weight} lb`;
 }
@@ -137,6 +132,7 @@ function getHistoryEvents(userId: number, monthStart: Date, monthEnd: Date): Cal
         LEFT JOIN program_definition_days pdd ON pdd.id = s.program_definition_day_id
         WHERE s.user_id = ?
           AND s.status IN ('completed', 'skipped')
+          AND s.occurrence_id IS NULL
           AND s.date BETWEEN ? AND ?
         ORDER BY s.date, s.id
       `,
@@ -147,8 +143,9 @@ function getHistoryEvents(userId: number, monthStart: Date, monthEnd: Date): Cal
     key: `history-${row.id}`,
     date: row.date,
     kind: row.status,
+    status: row.status,
     title: `${row.status === "completed" ? "Completed" : "Skipped"}: ${row.program_name} - ${row.day_name}`,
-    href: "/history",
+    href: `/calendar?month=${row.date.slice(0,7)}&workout=history-${row.id}`,
     sessionId: row.id,
     programId: row.program_id,
     dayId: row.day_id ?? row.program_definition_day_id,
@@ -161,106 +158,20 @@ function getHistoryEvents(userId: number, monthStart: Date, monthEnd: Date): Cal
   }));
 }
 
-function getScheduledEvents({
-  userId,
-  monthStart,
-  monthEnd,
-  loggedWorkoutKeys,
-}: {
-  userId: number;
-  monthStart: Date;
-  monthEnd: Date;
-  loggedWorkoutKeys: ReadonlySet<string>;
-}): CalendarEvent[] {
-  const rows = getActiveProgramDaysForUser(userId, { scheduledOnly: true });
-  const projectionStarts = rows
-    .map((row) => parseDateKey(row.schedule_start_date))
-    .filter((date): date is Date => date !== null);
-  const holdRangeStart =
-    projectionStarts.length > 0
-      ? toLocalDateKey(projectionStarts.reduce((earliest, date) => (date < earliest ? date : earliest)))
-      : toLocalDateKey(monthStart);
-  const holdRangeEnd = toLocalDateKey(monthEnd);
-  const programRunIds = [...new Set(rows.map((row) => row.program_run_id).filter((id): id is number => id !== null))];
-  const holds =
-    holdRangeStart <= holdRangeEnd
-      ? getProgramRunHoldsForRange({
-          userId,
-          startDate: holdRangeStart,
-          endDate: holdRangeEnd,
-          programRunIds,
-        })
-      : [];
-
-  const rowsByProgram = new Map<number, ProgramDaySummary[]>();
-  for (const row of rows) {
-    rowsByProgram.set(row.program_id, [...(rowsByProgram.get(row.program_id) ?? []), row]);
-  }
-
-  const events: CalendarEvent[] = [];
-  const firstProjectionDate = monthStart;
-
-  for (const programRows of rowsByProgram.values()) {
-    const sortedProgramRows = programRows.toSorted((a, b) => a.day_number - b.day_number);
-    const firstRow = sortedProgramRows[0];
-    const scheduleWeekdays = parseScheduleWeekdays(firstRow.schedule_weekdays);
-    if (scheduleWeekdays.length === 0) continue;
-
-    let slotIndex = 0;
-    const totalSlots = firstRow.num_weeks * sortedProgramRows.length;
-    const projectionStart = parseDateKey(firstRow.schedule_start_date);
-    if (!projectionStart || totalSlots <= 0) continue;
-
-    for (const date of buildDateRange(projectionStart, monthEnd)) {
-      if (slotIndex >= totalSlots) break;
-      if (!scheduleWeekdays.includes(date.getDay())) continue;
-
-      const dateKey = toLocalDateKey(date);
-      if (isDateHeldForRun(holds, firstRow.program_run_id, dateKey)) continue;
-
-      const day = sortedProgramRows[slotIndex % sortedProgramRows.length];
-      const projectedWeek = Math.floor(slotIndex / sortedProgramRows.length) + 1;
-      slotIndex += 1;
-      if (date < firstProjectionDate) continue;
-      if (loggedWorkoutKeys.has(workoutKey(dateKey, day.program_id, day.day_id))) continue;
-
-      const eventKey = `scheduled-${day.program_id}-${day.day_id}-${dateKey}`;
-
-      events.push({
-        key: eventKey,
-        date: dateKey,
-        kind: "scheduled",
-        title: `Scheduled: ${day.program_name} - ${day.day_name}`,
-        href: calendarHref(monthStart, eventKey),
-        programId: day.program_id,
-        dayId: day.day_id,
-        definitionDayId: day.definition_day_id,
-        programName: day.program_name,
-        dayName: day.day_name,
-        currentWeek: projectedWeek,
-        currentDay: day.day_number,
-        scheduledDate: dateKey,
-      });
-    }
-  }
-
-  return events;
-}
-
-function workoutKey(date: string, programId: number | null | undefined, dayId: number | null | undefined): string {
-  return `${date}:${programId ?? ""}:${dayId ?? ""}`;
-}
-
-function buildDateRange(start: Date, end: Date): Date[] {
-  const dates: Date[] = [];
-  const cursor = new Date(start);
-
-  while (cursor <= end) {
-    dates.push(new Date(cursor));
-    cursor.setDate(cursor.getDate() + 1);
-  }
-
-  return dates;
+function getScheduledEvents(userId: number, monthStart: Date, monthEnd: Date): CalendarEvent[] {
+  return getOccurrences(userId, toLocalDateKey(monthStart), toLocalDateKey(monthEnd)).map(row => {
+    const kind = row.status === "completed" || row.status === "skipped" ? row.status : "scheduled";
+    return {
+      key: `occurrence-${row.id}`, occurrenceId: row.id, date: kind === "completed" ? (row.performed_date ?? row.scheduled_date) : row.scheduled_date, kind,
+      title: `${kind === "completed" ? "Completed" : kind === "skipped" ? "Skipped" : "Scheduled"}: ${row.program_name} - ${row.day_name}`,
+      href: `/calendar?month=${(kind === "completed" ? (row.performed_date ?? row.scheduled_date) : row.scheduled_date).slice(0,7)}&workout=occurrence-${row.id}`, sessionId: row.session_id ?? undefined,
+      programId: row.program_id, dayId: row.legacy_day_id ?? row.definition_day_id,
+      definitionDayId: row.definition_day_id, programName: row.program_name, dayName: row.day_name,
+      currentWeek: row.week_number, currentDay: row.day_number, scheduledDate: row.scheduled_date,
+      status: row.status, revision: row.revision,
+      summary: occurrenceLiftPreview(row).slice(0, 3).map(lift => `${lift.name} ${formatLiftDetail(lift)}`).join(" · "),
+    };
+  });
 }
 
 function eventDotClasses(kind: CalendarEvent["kind"]): string {
@@ -315,19 +226,17 @@ export default async function CalendarPage({ searchParams }: CalendarPageProps) 
   }
 
   const params = await searchParams;
-  const today = new Date();
-  const monthStart = parseMonth(params?.month, today);
+  const today = parseDateKey(userDateKey(user.id))!;
+  const rawDate = Array.isArray(params?.date) ? params.date[0] : params?.date;
+  const queryDate = rawDate ? parseDateKey(rawDate) : null;
+  const monthStart = parseMonth(params?.month, queryDate ?? today);
   const monthEnd = new Date(monthStart.getFullYear(), monthStart.getMonth() + 1, 0);
   const monthDays = buildMonthDays(monthStart);
   const rounding = getSettingNumber(user.id, "rounding", 2.5);
+  // Ensure legacy sessions are linked before selecting standalone history.
+  const scheduledEvents = getScheduledEvents(user.id, monthStart, monthEnd);
   const historyEvents = getHistoryEvents(user.id, monthStart, monthEnd);
-  const loggedWorkoutKeys = new Set(
-    historyEvents.map((event) => workoutKey(event.scheduledDate ?? event.date, event.programId, event.dayId)),
-  );
-  const events = [
-    ...historyEvents,
-    ...getScheduledEvents({ userId: user.id, monthStart, monthEnd, loggedWorkoutKeys }),
-  ].sort((a, b) => a.date.localeCompare(b.date) || a.kind.localeCompare(b.kind));
+  const events = [...historyEvents, ...scheduledEvents].sort((a, b) => a.date.localeCompare(b.date) || a.key.localeCompare(b.key));
   const selectedWorkout = Array.isArray(params?.workout) ? params.workout[0] : (params?.workout ?? params?.train);
   const selectedEvent = events.find((event) => event.key === selectedWorkout);
   const sessionRecap =
@@ -335,7 +244,8 @@ export default async function CalendarPage({ searchParams }: CalendarPageProps) 
       ? getSessionRecap(user.id, selectedEvent.sessionId)
       : null;
   // What's in the workout, so you can see it before choosing "Do workout".
-  const selectedLifts =
+  const selectedOccurrence = selectedEvent?.occurrenceId ? getOccurrence(user.id, selectedEvent.occurrenceId) : undefined;
+  const selectedLifts = selectedOccurrence ? occurrenceLiftPreview(selectedOccurrence) :
     selectedEvent?.programId && selectedEvent.definitionDayId && selectedEvent.currentWeek
       ? getProgramDayLiftPreview(
           user.id,
@@ -351,6 +261,13 @@ export default async function CalendarPage({ searchParams }: CalendarPageProps) 
   const hasEvents = events.length > 0;
   const leadingBlanks = monthStart.getDay();
   const todayKey = toLocalDateKey(today);
+  const selectedDate = queryDate ?? (selectedEvent ? parseDateKey(selectedEvent.date)! : (today.getMonth() === monthStart.getMonth() && today.getFullYear() === monthStart.getFullYear() ? today : monthStart));
+  const weekStart = new Date(selectedDate);
+  weekStart.setDate(weekStart.getDate() - ((weekStart.getDay() + 6) % 7));
+  const weekEnd = new Date(weekStart);
+  weekEnd.setDate(weekEnd.getDate() + 6);
+  const weekScheduled = getScheduledEvents(user.id, weekStart, weekEnd);
+  const weekEvents = [...weekScheduled, ...getHistoryEvents(user.id, weekStart, weekEnd)].sort((a,b) => a.date.localeCompare(b.date));
 
   return (
     <div className="safe-x flex flex-col gap-4 py-5">
@@ -377,7 +294,10 @@ export default async function CalendarPage({ searchParams }: CalendarPageProps) 
         </div>
       </header>
 
-      <section className="overflow-hidden rounded-xl border border-line bg-surface shadow-sm">
+      <CalendarAgenda key={toLocalDateKey(weekStart)} events={weekEvents} weekStart={toLocalDateKey(weekStart)} today={todayKey} undoOperation={latestCalendarOperation(user.id)} />
+
+      <details className="overflow-hidden rounded-xl border border-line bg-surface shadow-sm">
+        <summary className="touch-target cursor-pointer px-4 py-3 text-sm font-semibold">Month overview · choose any workout</summary>
         <div className="grid grid-cols-7 border-b border-line bg-surface-muted">
           {WEEKDAY_LABELS.map((label) => (
             <div key={label} className="px-2 py-2 text-center text-xs font-semibold text-muted">
@@ -412,9 +332,10 @@ export default async function CalendarPage({ searchParams }: CalendarPageProps) 
                     <Link
                       key={event.key}
                       href={calendarHref(monthStart, event.key)}
+                      scroll={false}
                       title={event.title}
                       aria-label={`${event.title} on ${event.date}`}
-                      className="inline-flex h-7 w-7 items-center justify-center rounded-full border border-transparent hover:border-line focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-brand"
+                      className="touch-target inline-flex items-center justify-center rounded-full border border-transparent hover:border-line focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-brand"
                     >
                       <span className={`h-2.5 w-2.5 shrink-0 rounded-full ${eventDotClasses(event.kind)}`} />
                     </Link>
@@ -427,7 +348,7 @@ export default async function CalendarPage({ searchParams }: CalendarPageProps) 
             );
           })}
         </div>
-      </section>
+      </details>
 
       <div className="flex items-center gap-4 px-1">
         {[
@@ -452,7 +373,8 @@ export default async function CalendarPage({ searchParams }: CalendarPageProps) 
                 <p className="mt-0.5 text-sm text-muted">{modalDateLine(selectedEvent)}</p>
               </div>
               <Link
-                href={monthHref(monthStart)}
+                href={`${monthHref(monthStart)}&date=${toLocalDateKey(selectedDate)}`}
+                scroll={false}
                 aria-label="Close workout"
                 className="touch-target inline-flex shrink-0 items-center justify-center rounded-xl border border-line px-3 text-sm font-medium text-muted"
               >
@@ -466,6 +388,7 @@ export default async function CalendarPage({ searchParams }: CalendarPageProps) 
             ) : null}
             {selectedEvent.programId && selectedEvent.dayId && selectedEvent.currentWeek && selectedEvent.currentDay ? (
               <WorkoutCard
+                occurrenceId={selectedEvent.kind === "scheduled" ? selectedEvent.occurrenceId : undefined}
                 programId={selectedEvent.programId}
                 dayId={selectedEvent.dayId}
                 definitionDayId={selectedEvent.definitionDayId ?? undefined}
@@ -485,7 +408,7 @@ export default async function CalendarPage({ searchParams }: CalendarPageProps) 
             ) : (
               <div className="px-4 pb-4">
                 <Link
-                  href="/history"
+                  href={selectedEvent.sessionId ? `/workouts/${selectedEvent.sessionId}` : "/workouts"}
                   className="touch-target inline-flex w-full items-center justify-center rounded-xl bg-foreground px-4 text-sm font-medium text-background"
                 >
                   View history

@@ -1,0 +1,347 @@
+{
+  "schemaVersion": 1,
+  "name": "Percentage blocks",
+  "description": "",
+  "unit": "lb",
+  "cycles": 2,
+  "weekdays": [
+    1,
+    3,
+    5
+  ],
+  "startDate": "2026-09-07",
+  "weeks": [
+    {
+      "id": "c8ae5f8a-d985-45db-8a03-06c787fe3f63",
+      "name": "Week 1",
+      "block": "Build",
+      "deload": false,
+      "days": [
+        {
+          "id": "a2e674b8-7596-46ca-b421-3e4f4dfb0d01",
+          "name": "Day A",
+          "exercises": [
+            {
+              "id": "65f2dd66-9dd8-4aab-bec4-d3f4ae80c215",
+              "name": "Squat",
+              "progressionKey": "a62ca980-23fc-4272-8873-13d29fd66efe",
+              "baseLoad": 40,
+              "trainingMax": 200,
+              "supersetGroup": "",
+              "notes": "",
+              "rule": {
+                "version": 1,
+                "condition": {
+                  "type": "weekly"
+                },
+                "action": {
+                  "variable": "trainingMax",
+                  "unit": "lb",
+                  "operation": "add",
+                  "amount": 5,
+                  "rounding": {
+                    "mode": "nearest",
+                    "quantum": 2.5
+                  },
+                  "timing": "weekly"
+                },
+                "skipPolicy": "hold",
+                "partialPolicy": "hold"
+              },
+              "sets": [
+                {
+                  "id": "c27e39b0-01d3-45c0-9a30-263a7eafb34b",
+                  "role": "work",
+                  "repMin": 8,
+                  "repMax": 8,
+                  "loadMode": "percent",
+                  "load": 65,
+                  "effortKind": "none",
+                  "effort": 0,
+                  "restSeconds": 120,
+                  "tempo": "",
+                  "notes": ""
+                },
+                {
+                  "id": "db426b3e-f0b5-4908-b2fb-a086eefcebbe",
+                  "role": "work",
+                  "repMin": 8,
+                  "repMax": 8,
+                  "loadMode": "percent",
+                  "load": 65,
+                  "effortKind": "none",
+                  "effort": 0,
+                  "restSeconds": 120,
+                  "tempo": "",
+                  "notes": ""
+                },
+                {
+                  "id": "2675238e-1b78-49aa-8270-ac307f778f33",
+                  "role": "work",
+                  "repMin": 8,
+                  "repMax": 8,
+                  "loadMode": "percent",
+                  "load": 65,
+                  "effortKind": "none",
+                  "effort": 0,
+                  "restSeconds": 120,
+                  "tempo": "",
+                  "notes": ""
+                }
+              ]
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "b0d403dd-693b-49bc-b005-581d480b50c5",
+      "name": "Week 2",
+      "block": "Build",
+      "deload": false,
+      "days": [
+        {
+          "id": "e8ad2a91-24d0-4ee4-af4f-1f605c21bf3e",
+          "name": "Day A",
+          "exercises": [
+            {
+              "id": "93602a00-2568-406b-9197-ec9713abd0bd",
+              "name": "Squat",
+              "progressionKey": "a62ca980-23fc-4272-8873-13d29fd66efe",
+              "baseLoad": 40,
+              "trainingMax": 200,
+              "supersetGroup": "",
+              "notes": "",
+              "rule": {
+                "version": 1,
+                "condition": {
+                  "type": "weekly"
+                },
+                "action": {
+                  "variable": "trainingMax",
+                  "unit": "lb",
+                  "operation": "add",
+                  "amount": 5,
+                  "rounding": {
+                    "mode": "nearest",
+                    "quantum": 2.5
+                  },
+                  "timing": "weekly"
+                },
+                "skipPolicy": "hold",
+                "partialPolicy": "hold"
+              },
+              "sets": [
+                {
+                  "id": "06faaaf8-464f-4ad7-b6a7-0fd56a8b1cfc",
+                  "role": "work",
+                  "repMin": 7,
+                  "repMax": 7,
+                  "loadMode": "percent",
+                  "load": 70,
+                  "effortKind": "none",
+                  "effort": 0,
+                  "restSeconds": 120,
+                  "tempo": "",
+                  "notes": ""
+                },
+                {
+                  "id": "a1263afe-24bc-4cc9-870c-a1f9e983ffe2",
+                  "role": "work",
+                  "repMin": 7,
+                  "repMax": 7,
+                  "loadMode": "percent",
+                  "load": 70,
+                  "effortKind": "none",
+                  "effort": 0,
+                  "restSeconds": 120,
+                  "tempo": "",
+                  "notes": ""
+                },
+                {
+                  "id": "5da3af56-3afd-4823-9cf6-dabf192ad39f",
+                  "role": "work",
+                  "repMin": 7,
+                  "repMax": 7,
+                  "loadMode": "percent",
+                  "load": 70,
+                  "effortKind": "none",
+                  "effort": 0,
+                  "restSeconds": 120,
+                  "tempo": "",
+                  "notes": ""
+                }
+              ]
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "ea589f7c-249a-4c6d-bf70-97e2fb488b18",
+      "name": "Week 3",
+      "block": "Build",
+      "deload": false,
+      "days": [
+        {
+          "id": "19670fc8-4226-44e5-9248-8ba4575d1bbb",
+          "name": "Day A",
+          "exercises": [
+            {
+              "id": "0acc1f04-5de7-401e-9e92-feb01235ff1d",
+              "name": "Squat",
+              "progressionKey": "a62ca980-23fc-4272-8873-13d29fd66efe",
+              "baseLoad": 40,
+              "trainingMax": 200,
+              "supersetGroup": "",
+              "notes": "",
+              "rule": {
+                "version": 1,
+                "condition": {
+                  "type": "weekly"
+                },
+                "action": {
+                  "variable": "trainingMax",
+                  "unit": "lb",
+                  "operation": "add",
+                  "amount": 5,
+                  "rounding": {
+                    "mode": "nearest",
+                    "quantum": 2.5
+                  },
+                  "timing": "weekly"
+                },
+                "skipPolicy": "hold",
+                "partialPolicy": "hold"
+              },
+              "sets": [
+                {
+                  "id": "3d73ed43-abc8-4f92-a2bf-19e778114320",
+                  "role": "work",
+                  "repMin": 6,
+                  "repMax": 6,
+                  "loadMode": "percent",
+                  "load": 75,
+                  "effortKind": "none",
+                  "effort": 0,
+                  "restSeconds": 120,
+                  "tempo": "",
+                  "notes": ""
+                },
+                {
+                  "id": "faefed55-265c-474b-af9b-6d5e042322cd",
+                  "role": "work",
+                  "repMin": 6,
+                  "repMax": 6,
+                  "loadMode": "percent",
+                  "load": 75,
+                  "effortKind": "none",
+                  "effort": 0,
+                  "restSeconds": 120,
+                  "tempo": "",
+                  "notes": ""
+                },
+                {
+                  "id": "d4c609c4-8b36-4142-a963-ba06b9b2bd90",
+                  "role": "work",
+                  "repMin": 6,
+                  "repMax": 6,
+                  "loadMode": "percent",
+                  "load": 75,
+                  "effortKind": "none",
+                  "effort": 0,
+                  "restSeconds": 120,
+                  "tempo": "",
+                  "notes": ""
+                }
+              ]
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "fddb758a-ec13-44a0-920d-690728d1fb74",
+      "name": "Week 4",
+      "block": "Deload",
+      "deload": true,
+      "days": [
+        {
+          "id": "410052be-8555-4ccb-8f3e-39d97eb314a6",
+          "name": "Day A",
+          "exercises": [
+            {
+              "id": "3c0c6554-7a2f-45f1-b7ec-b61555423ecd",
+              "name": "Squat",
+              "progressionKey": "a62ca980-23fc-4272-8873-13d29fd66efe",
+              "baseLoad": 40,
+              "trainingMax": 200,
+              "supersetGroup": "",
+              "notes": "",
+              "rule": {
+                "version": 1,
+                "condition": {
+                  "type": "weekly"
+                },
+                "action": {
+                  "variable": "trainingMax",
+                  "unit": "lb",
+                  "operation": "add",
+                  "amount": 5,
+                  "rounding": {
+                    "mode": "nearest",
+                    "quantum": 2.5
+                  },
+                  "timing": "weekly"
+                },
+                "skipPolicy": "hold",
+                "partialPolicy": "hold"
+              },
+              "sets": [
+                {
+                  "id": "946c82ac-c9a8-4da3-b562-df2f734e2a05",
+                  "role": "work",
+                  "repMin": 5,
+                  "repMax": 5,
+                  "loadMode": "percent",
+                  "load": 50,
+                  "effortKind": "none",
+                  "effort": 0,
+                  "restSeconds": 120,
+                  "tempo": "",
+                  "notes": ""
+                },
+                {
+                  "id": "e48e1a87-004c-4e4d-87d2-9689a8ba3acc",
+                  "role": "work",
+                  "repMin": 5,
+                  "repMax": 5,
+                  "loadMode": "percent",
+                  "load": 50,
+                  "effortKind": "none",
+                  "effort": 0,
+                  "restSeconds": 120,
+                  "tempo": "",
+                  "notes": ""
+                },
+                {
+                  "id": "71649f12-fc52-4fe2-b9b5-728ae880851c",
+                  "role": "work",
+                  "repMin": 5,
+                  "repMax": 5,
+                  "loadMode": "percent",
+                  "load": 50,
+                  "effortKind": "none",
+                  "effort": 0,
+                  "restSeconds": 120,
+                  "tempo": "",
+                  "notes": ""
+                }
+              ]
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

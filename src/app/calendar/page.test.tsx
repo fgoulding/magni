@@ -2,7 +2,8 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { isValidElement, type ReactNode } from "react";
-import { beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
+import { createUnexpiredAuthSession } from "@/__tests__/auth-fixture";
 
 const cookieMock = vi.hoisted(() => {
   const store = new Map<string, string>();
@@ -31,6 +32,18 @@ vi.mock("next/headers", () => ({
 let dbModule: typeof import("@/lib/db");
 let auth: typeof import("@/lib/auth");
 let calendarPage: typeof import("./page");
+let occurrences: typeof import("@/features/programs/occurrences");
+let programService: typeof import("@/features/programs/program-service");
+
+function occurrenceAt(userId: number, programId: number, date: string) {
+  const occurrence = occurrences.getOccurrences(userId).find(row => row.program_id === programId && row.scheduled_date === date);
+  expect(occurrence, `Occurrence for program ${programId} scheduled ${date}`).toBeDefined();
+  return occurrence!;
+}
+
+function occurrenceHref(id: number) {
+  return `/calendar?month=2026-06&workout=occurrence-${id}`;
+}
 
 function collectRenderedText(node: ReactNode): string {
   if (node === null || node === undefined || typeof node === "boolean") return "";
@@ -81,7 +94,7 @@ function createUser(email: string): number {
 }
 
 function authenticate(userId: number): void {
-  const { token } = auth.createSession(userId);
+  const token = createUnexpiredAuthSession(dbModule.db, auth, userId);
   cookieMock.store.set("auth_token", token);
 }
 
@@ -168,6 +181,12 @@ beforeAll(async () => {
   dbModule = await import("@/lib/db");
   auth = await import("@/lib/auth");
   calendarPage = await import("./page");
+  occurrences = await import("@/features/programs/occurrences");
+  programService = await import("@/features/programs/program-service");
+});
+
+afterEach(() => {
+  vi.useRealTimers();
 });
 
 beforeEach(() => {
@@ -222,7 +241,7 @@ describe("CalendarPage", () => {
         "Scheduled: Shared Strength - Upper on 2026-06-03",
       ]),
     );
-    expect(collectLinks(rendered)).toContain(`/calendar?month=2026-06&workout=scheduled-${program.programId}-${program.upperDayId}-2026-06-03`);
+    expect(collectLinks(rendered)).toContain(occurrenceHref(occurrenceAt(userId, program.programId, "2026-06-03").id));
   });
 
   it("does not project archived or inactive programs into future dates", async () => {
@@ -255,10 +274,12 @@ describe("CalendarPage", () => {
     authenticate(userId);
     const program = createScheduledProgram(userId);
 
+    const futureOccurrence = occurrenceAt(userId, program.programId, "2026-06-01");
+
     const rendered = await calendarPage.default({
       searchParams: Promise.resolve({
         month: "2026-05",
-        train: `scheduled-${program.programId}-${program.lowerDayId}-2026-05-26`,
+        workout: `occurrence-${futureOccurrence.id}`,
       }),
     });
     const text = collectRenderedText(rendered);
@@ -303,11 +324,12 @@ describe("CalendarPage", () => {
 
     expect(text).not.toContain("Scheduled: Shared Strength - Lower");
     expect(text).not.toContain("Scheduled: Shared Strength - Upper");
-    expect(links).toContain(`/calendar?month=2026-06&workout=scheduled-${program.programId}-${program.lowerDayId}-2026-06-01`);
-    expect(links).toContain(`/calendar?month=2026-06&workout=scheduled-${program.programId}-${program.upperDayId}-2026-06-03`);
-    expect(links).toContain(`/calendar?month=2026-06&workout=scheduled-${program.programId}-${program.lowerDayId}-2026-06-05`);
-    expect(links).toContain(`/calendar?month=2026-06&workout=scheduled-${program.programId}-${program.upperDayId}-2026-06-08`);
-    expect(links).not.toContain(`/calendar?month=2026-06&workout=scheduled-${program.programId}-${program.lowerDayId}-2026-06-10`);
+    const slots = occurrences.getOccurrences(userId).filter(row => row.program_id === program.programId);
+    expect(slots.map(row => [row.day_name, row.week_number, row.scheduled_date])).toEqual([
+      ["Lower", 1, "2026-06-01"], ["Upper", 1, "2026-06-03"],
+      ["Lower", 2, "2026-06-05"], ["Upper", 2, "2026-06-08"],
+    ]);
+    expect(links.filter(link => link.includes("workout=occurrence-"))).toEqual(slots.map(row => occurrenceHref(row.id)));
   });
 
   it("shifts only the held run across hold dates", async () => {
@@ -317,22 +339,23 @@ describe("CalendarPage", () => {
     authenticate(userId);
     const heldProgram = createScheduledProgram(userId, { numWeeks: 1, scheduleWeekdays: "[1,3]" });
     const movingProgram = createScheduledProgram(userId, { numWeeks: 1, scheduleWeekdays: "[1,3]" });
-    dbModule.db
-      .prepare(
-        "INSERT INTO program_run_holds (program_run_id, user_id, start_date, end_date, reason) VALUES (?, ?, '2026-06-03', '2026-06-08', 'No rack')",
-      )
-      .run(heldProgram.runId, userId);
+    const beforeHold = occurrenceAt(userId, heldProgram.programId, "2026-06-03");
+    programService.createProgramRunHold({ userId, legacyProgramId: heldProgram.programId,
+      startDate: "2026-06-03", endDate: "2026-06-08", reason: "No rack" });
 
     const rendered = await calendarPage.default({
       searchParams: Promise.resolve({ month: "2026-06" }),
     });
     const links = collectLinks(rendered);
 
-    expect(links).toContain(`/calendar?month=2026-06&workout=scheduled-${heldProgram.programId}-${heldProgram.lowerDayId}-2026-06-01`);
-    expect(links).not.toContain(`/calendar?month=2026-06&workout=scheduled-${heldProgram.programId}-${heldProgram.upperDayId}-2026-06-03`);
-    expect(links).not.toContain(`/calendar?month=2026-06&workout=scheduled-${heldProgram.programId}-${heldProgram.upperDayId}-2026-06-08`);
-    expect(links).toContain(`/calendar?month=2026-06&workout=scheduled-${heldProgram.programId}-${heldProgram.upperDayId}-2026-06-10`);
-    expect(links).toContain(`/calendar?month=2026-06&workout=scheduled-${movingProgram.programId}-${movingProgram.upperDayId}-2026-06-03`);
+    const heldSlots = occurrences.getOccurrences(userId).filter(row => row.program_id === heldProgram.programId);
+    expect(heldSlots.map(row => [row.day_name, row.scheduled_date])).toEqual([
+      ["Lower", "2026-06-01"], ["Upper", "2026-06-10"],
+    ]);
+    expect(heldSlots[1]).toMatchObject({ id: beforeHold.id, week_number: beforeHold.week_number,
+      prescription_json: beforeHold.prescription_json, original_date: "2026-06-03" });
+    expect(links).toEqual(expect.arrayContaining(heldSlots.map(row => occurrenceHref(row.id))));
+    expect(links).toContain(occurrenceHref(occurrenceAt(userId, movingProgram.programId, "2026-06-03").id));
   });
 
   it("does not duplicate a scheduled workout after it is already logged today", async () => {
@@ -366,14 +389,18 @@ describe("CalendarPage", () => {
       )
       .run(session.lastInsertRowid);
 
+    const completedOccurrence = occurrenceAt(userId, program.programId, "2026-06-01");
+    expect(completedOccurrence.session_id).toBe(Number(session.lastInsertRowid));
     const rendered = await calendarPage.default({
-      searchParams: Promise.resolve({ month: "2026-06", workout: `history-${session.lastInsertRowid}` }),
+      searchParams: Promise.resolve({ month: "2026-06", workout: `occurrence-${completedOccurrence.id}` }),
     });
     const text = collectRenderedText(rendered);
     const startLabels = collectWorkoutStartLabels(rendered);
     const ariaLabels = collectAriaLabels(rendered);
 
     expect(ariaLabels).toContain("Completed: Shared Strength - Lower on 2026-06-29");
+    expect(ariaLabels.filter(label => label === "Completed: Shared Strength - Lower on 2026-06-29")).toHaveLength(1);
+    expect(ariaLabels).not.toContain("Scheduled: Shared Strength - Lower on 2026-06-01");
     expect(text).not.toContain("Scheduled: Shared Strength - Lower 2026-06-29");
     expect(text).toContain("Completed workout");
     expect(startLabels).toContain("Repeat workout");
@@ -385,11 +412,12 @@ describe("CalendarPage", () => {
     const userId = createUser("calendar-train-today@example.com");
     authenticate(userId);
     const program = createScheduledProgram(userId);
+    const selectedOccurrence = occurrenceAt(userId, program.programId, "2026-06-01");
 
     const rendered = await calendarPage.default({
       searchParams: Promise.resolve({
         month: "2026-06",
-        workout: `scheduled-${program.programId}-${program.lowerDayId}-2026-06-01`,
+        workout: `occurrence-${selectedOccurrence.id}`,
       }),
     });
     const text = collectRenderedText(rendered).replace(/\s+/g, " ");

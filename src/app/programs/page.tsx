@@ -10,6 +10,7 @@ import {
   getProgramLibrary,
   type ProgramLibraryItem,
 } from "@/features/programs/program-service";
+import { listEditorDrafts } from "@/features/program-editor/repository";
 import { requireUser } from "@/lib/auth";
 
 const WEEKDAY_LABELS = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
@@ -36,7 +37,7 @@ function sourceLabel(program: ProgramLibraryItem): string {
   return "Custom";
 }
 
-function renderProgramCard(program: ProgramLibraryItem) {
+function renderProgramCard(program: ProgramLibraryItem, draftId?: string) {
   const active = program.is_active === 1;
   return (
     <article key={program.id} className="card overflow-hidden">
@@ -93,14 +94,14 @@ function renderProgramCard(program: ProgramLibraryItem) {
 
       <div className="grid grid-cols-3 border-t border-line text-sm font-semibold text-muted">
         <Link
-          href={`/programs/${program.id}`}
+          href={draftId ? `/programs/editor/${draftId}` : `/programs/${program.id}`}
           className="touch-target inline-flex items-center justify-center gap-1.5 border-r border-line transition-colors active:bg-surface-muted"
         >
           <Dumbbell aria-hidden="true" size={15} className="text-brand-strong" />
           Edit
         </Link>
         <Link
-          href={`/programs/new?from=${program.id}`}
+          href={draftId ? `/programs/editor/new?from=${draftId}` : `/programs/new?from=${program.id}`}
           className="touch-target inline-flex items-center justify-center gap-1.5 border-r border-line transition-colors active:bg-surface-muted"
         >
           <Copy aria-hidden="true" size={15} className="text-faint" />
@@ -130,6 +131,7 @@ export default async function ProgramsPage() {
   }
 
   const library = getProgramLibrary(user.id);
+  const drafts = listEditorDrafts(user.id);
   const latestMaxes = getLatestTrainingMaxes(user.id);
 
   return (
@@ -142,15 +144,17 @@ export default async function ProgramsPage() {
         <div className="flex shrink-0 items-center gap-2">
           <TrainingMaxesModal maxes={latestMaxes} />
           <Link
-            href="/programs/new"
+            href="/programs/editor/new"
             className="touch-target inline-flex items-center justify-center gap-1.5 rounded-xl bg-brand px-4 text-sm font-semibold text-white transition-colors active:bg-brand-strong"
           >
             <Plus aria-hidden="true" size={16} />
-            New
+            Create
           </Link>
         </div>
       </header>
 
+      <section className="card p-4"><h2 className="display text-2xl">Design your training</h2><p className="mt-2 text-sm leading-6 text-muted">Start blank or customize a preset. Build weeks, edit every set, and preview your progression before activation.</p><div className="mt-3 flex flex-wrap gap-2"><Link href="/programs/editor/new" className="touch-target inline-flex items-center rounded-xl bg-brand px-4 text-sm font-semibold text-white">Custom program</Link><Link href="/programs/new" className="touch-target inline-flex items-center rounded-xl border border-line px-4 text-sm font-semibold">Original training systems</Link></div></section>
+      {drafts.length ? <section className="flex flex-col gap-3"><h2 className="eyebrow text-xs text-faint">Your drafts</h2>{drafts.map(draft => <Link key={draft.id} href={`/programs/editor/${draft.id}`} className="card touch-target flex items-center justify-between gap-3 p-4"><div className="min-w-0"><h3 className="display truncate text-xl">{draft.document.name || "Untitled program"}</h3><p className="mt-1 text-xs text-muted">{draft.document.weeks.length} week(s) · {draft.activatedProgramId ? "Active version saved" : "Draft"}</p></div><span className="text-sm font-semibold text-brand-strong">Open</span></Link>)}</section> : null}
       {library.definitions.length === 0 ? (
         <section className="flex min-h-80 flex-col items-center justify-center rounded-2xl border border-dashed border-line px-6 text-center">
           <Library aria-hidden="true" className="text-brand/40" size={34} />
@@ -167,7 +171,7 @@ export default async function ProgramsPage() {
               {library.definitions.length}
             </span>
           </div>
-          {library.definitions.map((program) => renderProgramCard(program))}
+          {library.definitions.map((program) => renderProgramCard(program, drafts.find(draft => draft.activatedProgramId === program.id)?.id))}
         </section>
       )}
     </div>

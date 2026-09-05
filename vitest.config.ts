@@ -11,6 +11,7 @@ export default defineConfig({
     include: ["src/**/*.{test,spec}.{ts,tsx}"],
     exclude: ["node_modules/**", ".next/**", ".git/**", ".worktrees/**", "tests/**"],
     fileParallelism: false,
+    setupFiles: ["src/__tests__/isolate-database.ts"],
     coverage: {
       provider: "v8",
       reporter: ["text", "json-summary"],

@@ -1,0 +1,92 @@
+// @vitest-environment jsdom
+import '@testing-library/jest-dom/vitest';
+import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { QuickWorkoutEditor } from '@/components/QuickWorkoutEditor';
+import { QuickExercisePicker } from '@/components/QuickExercisePicker';
+import { WorkoutHistoryDetail } from '@/components/WorkoutHistoryDetail';
+vi.mock('next/navigation',()=>({useRouter:()=>({push:vi.fn(),refresh:vi.fn()})}));
+const response=(body:unknown,status=200)=>new Response(JSON.stringify(body),{status,headers:{'Content-Type':'application/json'}});
+function fixture() { return { id:200,name:'Upper',date:'2026-09-01',unit:'lb' as const,revision:1,status:'completed' as const,program_id:null,program_name:'',day_name:'Upper',volume:400,loggedSets:1,totalSets:1,recap:null,corrections:[],sets:[{id:201,exercise_name:'Row',exercise_key:'row-a',sort_order:1,notes:'',editor_json:null,reps:10,sets:1,set_number:1,rep_out_target:10,calculated_weight:40,actual_reps:10,actual_weight:40,superset_group:null}]}; }
+beforeEach(()=>{ const data=new Map<string,string>(); vi.stubGlobal('localStorage',{ getItem:(key:string)=>data.get(key)??null,setItem:(key:string,value:string)=>data.set(key,value),removeItem:(key:string)=>data.delete(key) }); });
+afterEach(()=>{cleanup();vi.restoreAllMocks();vi.unstubAllGlobals();});
+describe('workout draft protection',()=>{
+ it('prevents structural edits while their save acknowledgement is pending',async()=>{
+   let resolve!:(response:Response)=>void;
+   vi.stubGlobal('fetch',vi.fn(()=>new Promise<Response>(done=>{resolve=done;})));
+   const source=fixture(); render(<QuickWorkoutEditor session={source} disabled={false} onChanged={vi.fn()} onError={vi.fn()}/>);
+   fireEvent.click(screen.getByRole('button',{name:'Edit workout'}));
+   fireEvent.change(screen.getByLabelText('Workout name'),{target:{value:'First name'}});
+   fireEvent.click(screen.getByRole('button',{name:'Save workout changes'}));
+   expect(screen.getByLabelText('Workout name')).toBeDisabled();
+   expect(screen.getByLabelText('Workout date')).toBeDisabled();
+   expect(screen.getByLabelText('Exercise name 1')).toBeDisabled();
+   await act(async()=>resolve(response({...source,name:'First name',revision:2})));
+   expect(localStorage.getItem('magni.quick.200.structure')).toBeNull();
+ });
+ it('prevents correction edits while their save acknowledgement is pending',async()=>{
+   let resolve!:(response:Response)=>void;
+   const preview={progressionEffect:'Future progression unchanged.',comparisons:[]};
+   vi.stubGlobal('fetch',vi.fn().mockResolvedValueOnce(response(preview)).mockImplementationOnce(()=>new Promise<Response>(done=>{resolve=done;})));
+   const source=fixture(); render(<WorkoutHistoryDetail initialSession={source} today='2026-09-05'/>);
+   fireEvent.click(screen.getByRole('button',{name:'Correct workout'}));
+   fireEvent.change(screen.getByLabelText('Correct reps for set 1'),{target:{value:'8'}});
+   fireEvent.click(screen.getByRole('button',{name:'Preview correction'}));
+   fireEvent.click(await screen.findByRole('button',{name:'Save correction'}));
+   expect(screen.getByLabelText('Correct reps for set 1')).toBeDisabled();
+   expect(screen.getByLabelText('Correct workout date')).toBeDisabled();
+   expect(screen.getByLabelText('Correction note')).toBeDisabled();
+   await act(async()=>resolve(response({...preview,session:{...source,revision:2,sets:[{...source.sets[0],actual_reps:8}]}})));
+   expect(localStorage.getItem('magni.workout.200.correction')).toBeNull();
+ });
+ it('allows correcting a rejected fractional rep prescription',async()=>{
+   const error=vi.fn(); const onAdded=vi.fn();
+   const fetcher=vi.fn().mockResolvedValueOnce(response([])).mockResolvedValueOnce(response({error:'Use whole reps from 1 to 1,000.'},400)).mockResolvedValueOnce(response({sets:fixture().sets,sessionRevision:2}));
+   vi.stubGlobal('fetch',fetcher);
+   render(<QuickExercisePicker sessionId={200} unit='lb' disabled={false} onAdded={onAdded} onError={error}/>);
+   fireEvent.click(screen.getByRole('button',{name:'Add exercise'}));
+   fireEvent.change(screen.getByLabelText('New exercise name'),{target:{value:'Row'}});
+   fireEvent.change(screen.getByLabelText('New exercise reps'),{target:{value:'1.5'}});
+   fireEvent.click(screen.getByRole('button',{name:'Add to workout'}));
+   await waitFor(()=>expect(error).toHaveBeenCalledWith('Use whole reps from 1 to 1,000.'));
+   expect(screen.getByLabelText('New exercise reps')).toBeEnabled();
+   expect(screen.getByLabelText('New exercise reps')).toHaveValue(1.5);
+   expect(screen.getByLabelText('New exercise name')).toHaveValue('Row');
+   const rejected=JSON.parse(fetcher.mock.calls[1][1].body);
+   fireEvent.change(screen.getByLabelText('New exercise reps'),{target:{value:'10'}});
+   fireEvent.click(screen.getByRole('button',{name:'Add to workout'}));
+   await waitFor(()=>expect(onAdded).toHaveBeenCalled());
+   const corrected=JSON.parse(fetcher.mock.calls[2][1].body);
+   expect(corrected.prescription).toEqual(Array.from({length:3},()=>({reps:10,weight:0})));
+   expect(corrected.requestKey).not.toBe(rejected.requestKey);
+   expect(localStorage.getItem('magni.quick.200.new-exercise')).toBeNull();
+ });
+ it('preserves the exact addition retry after an uncertain response',async()=>{
+   const fetcher=vi.fn().mockResolvedValueOnce(response([])).mockResolvedValueOnce(response({error:'Response lost'},503)).mockResolvedValueOnce(response({sets:fixture().sets,sessionRevision:2}));
+   vi.stubGlobal('fetch',fetcher);
+   const onAdded=vi.fn();
+   render(<QuickExercisePicker sessionId={200} unit='lb' disabled={false} onAdded={onAdded} onError={vi.fn()}/>);
+   fireEvent.click(screen.getByRole('button',{name:'Add exercise'}));
+   fireEvent.change(screen.getByLabelText('New exercise name'),{target:{value:'Row'}});
+   fireEvent.click(screen.getByRole('button',{name:'Add to workout'}));
+   const retry=await screen.findByRole('button',{name:'Retry adding exercise'});
+   expect(screen.getByLabelText('New exercise name')).toBeDisabled();
+   fireEvent.click(retry);
+   await waitFor(()=>expect(onAdded).toHaveBeenCalled());
+   expect(fetcher.mock.calls[2][1].body).toBe(fetcher.mock.calls[1][1].body);
+ });
+ it('keeps separately added same-name exercises independently editable',async()=>{
+   const source=fixture();source.sets.push({...source.sets[0],id:202,exercise_key:'row-b',sort_order:2});
+   const fetcher=vi.fn().mockResolvedValue(response({...source,revision:2}));vi.stubGlobal('fetch',fetcher);
+   render(<QuickWorkoutEditor session={source} disabled={false} onChanged={vi.fn()} onError={vi.fn()}/>);
+   fireEvent.click(screen.getByRole('button',{name:'Edit workout'}));
+   fireEvent.change(screen.getByLabelText('Exercise name 2'),{target:{value:'Cable row'}});
+   expect(screen.getByLabelText('Exercise name 1')).toHaveValue('Row');
+   fireEvent.click(screen.getByRole('button',{name:'Move exercise 2 up'}));
+   fireEvent.click(screen.getByRole('button',{name:'Save workout changes'}));
+   await waitFor(()=>expect(screen.getByRole('button',{name:'Edit workout'})).toBeInTheDocument());
+   const body=JSON.parse(fetcher.mock.calls[0][1].body);
+   expect(body.exerciseNames).toEqual({'202':'Cable row'});
+   expect(body.order).toEqual([202,201]);
+ });
+});

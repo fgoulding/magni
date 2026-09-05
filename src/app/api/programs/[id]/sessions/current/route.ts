@@ -17,6 +17,7 @@ export async function GET(request: Request, context: RouteContext) {
     const programId = numberParam(id);
 
     const url = new URL(request.url);
+    const occurrenceId = Number(url.searchParams.get("occurrenceId"));
     const dayId = Number(url.searchParams.get("dayId"));
     const definitionDayId = Number(url.searchParams.get("definitionDayId"));
     const week = Number(url.searchParams.get("week"));
@@ -26,7 +27,7 @@ export async function GET(request: Request, context: RouteContext) {
       .get(programId, user.id);
     if (!program) return jsonError("Program not found", 404);
 
-    const session = db
+    const session = (occurrenceId > 0 ? db.prepare("SELECT * FROM sessions WHERE occurrence_id = ? AND program_id = ? AND user_id = ? AND status = 'in_progress'").get(occurrenceId, programId, user.id) : db
       .prepare(
         `
           SELECT * FROM sessions
@@ -47,7 +48,7 @@ export async function GET(request: Request, context: RouteContext) {
         ...(Number.isInteger(week) && week > 0
           ? [programId, user.id, week, definitionDayId, dayId]
           : [programId, user.id, definitionDayId, dayId]),
-      ) as Record<string, unknown> | undefined;
+      )) as Record<string, unknown> | undefined;
 
     if (!session) return NextResponse.json(null);
 

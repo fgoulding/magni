@@ -2,7 +2,7 @@
 
 import { Check, Circle, Dumbbell, SkipForward, Trophy } from "lucide-react";
 import { useRouter } from "next/navigation";
-import { type ReactNode, useEffect, useState } from "react";
+import { type ReactNode, useEffect, useMemo, useState, useSyncExternalStore, useTransition } from "react";
 import { AddSessionExerciseForm } from "@/components/AddSessionExerciseForm";
 import { ErrorBanner } from "@/components/ErrorBanner";
 import { WorkoutTmEditor, type TmUpdatedSet } from "@/components/WorkoutTmEditor";
@@ -10,6 +10,8 @@ import { calculateWeight } from "@/lib/calculator";
 import {
   buildGroups,
   buildSummaryRows,
+  editorMetadata,
+  setUnit,
   formatTonnage,
   groupExerciseNames,
   isBodyweight,
@@ -20,16 +22,21 @@ import {
   type LastPerformance,
   type SessionResponse,
   type WorkoutGroup,
+  type WorkoutSet,
 } from "@/components/workout-card-utils";
+
+import { isDraftVolatile, parseDrafts, readDraftSnapshot, subscribeDrafts, writeDrafts, type SetDraft, type ActualBaseline } from "@/components/planned-workout-drafts";
 
 /** Compact "last time" line, e.g. "5/5/8 @ 225 lb" or "12/12/12 BW +25". */
 function formatLastPerformance(last: LastPerformance): string {
   const scheme = last.reps.join("/");
-  if (last.bodyweight) return `${scheme} BW${last.topWeight > 0 ? ` +${last.topWeight}` : ""}`;
-  return `${scheme} @ ${last.topWeight} lb`;
+  if (last.bodyweight) return `${scheme} BW${last.topWeight > 0 ? ` +${last.topWeight} ${last.unit ?? "lb"}` : ""}`;
+  return `${scheme} @ ${last.topWeight} ${last.unit ?? "lb"}`;
 }
 
 export function WorkoutCard({
+  occurrenceId,
+  resumeSessionId,
   programId,
   dayId,
   definitionDayId,
@@ -48,6 +55,9 @@ export function WorkoutCard({
   liftsLabel = "Today's lifts",
   rounding = 2.5,
 }: {
+  occurrenceId?: number;
+  /** Exact legacy session selected from History; resume never creates a substitute. */
+  resumeSessionId?: number;
   programId: number;
   dayId: number;
   definitionDayId?: number;
@@ -80,6 +90,7 @@ export function WorkoutCard({
   // Main lifts edit weight via the training max instead, so they're excluded.
   const [weights, setWeights] = useState<Record<number, number>>({});
   const [completedSetIds, setCompletedSetIds] = useState<Set<number>>(new Set());
+  const [editingGroupKeys, setEditingGroupKeys] = useState<Set<number>>(new Set());
   // Lifts the user chose to skip this session, keyed by the group's leading set
   // id. Client-only: skipped lifts are simply left unlogged, so the recap marks
   // them skipped at finish. A full reload resets this (the lift returns as "to do").
@@ -87,8 +98,17 @@ export function WorkoutCard({
   const [error, setError] = useState("");
   const [submitting, setSubmitting] = useState(false);
   const [saving, setSaving] = useState(false);
+  const [savingIds, setSavingIds] = useState<Set<number>>(new Set());
+  const [failedIds, setFailedIds] = useState<Set<number>>(new Set());
+  const [conflicts, setConflicts] = useState<Record<number, ActualBaseline>>({});
+  const [storageWarning, setStorageWarning] = useState(false);
+  const [progressionDecisions, setProgressionDecisions] = useState<{ progressionKey: string; exerciseName: string; result: { explanation: string } }[]>([]);
+  const draftSnapshot = useSyncExternalStore(subscribeDrafts, () => readDraftSnapshot(session?.id), () => null);
+  const drafts = useMemo(() => parseDrafts(draftSnapshot), [draftSnapshot]);
+  const hasPending = session?.sets.some((set) => drafts[set.id]) ?? false;
   const [skipping, setSkipping] = useState(false);
   const [completing, setCompleting] = useState(false);
+  const [refreshingCompletion, startCompletionRefresh] = useTransition();
   const [canceling, setCanceling] = useState(false);
   const [confirmingCancel, setConfirmingCancel] = useState(false);
   const [finished, setFinished] = useState(false);
@@ -102,7 +122,9 @@ export function WorkoutCard({
   const prevGroups = groups.slice(0, currentGroupIdx);
   const upcomingGroups = groups.slice(currentGroupIdx + 1);
   const isLastGroup = currentGroupIdx === lastGroupIndex(groups);
-  const summaryRows = buildSummaryRows(session?.sets ?? [], completedSetIds, values, weights, added);
+  const unit = (session?.sets[0] ? editorMetadata(session.sets[0])?.unit : undefined) ?? session?.unit ?? "lb";
+  // Summaries describe acknowledged actuals; pending edits never inflate performed volume.
+  const summaryRows = buildSummaryRows(session?.sets ?? [], completedSetIds, {}, {}, {}, unit);
   const totalTonnage = summaryRows.reduce((sum, row) => sum + row.tonnage, 0);
   const totalSets = completedSetIds.size;
   const liftCount = summaryRows.length;
@@ -140,9 +162,11 @@ export function WorkoutCard({
           .map((set) => [set.id, set.actual_weight as number]),
       ),
     );
-    const firstUnfinished = gs.findIndex((group) => {
+    const restored = parseDrafts(readDraftSnapshot(body.id));
+    const firstPending = gs.findIndex((group) => group.sets.some((set) => restored[set.id]));
+    const firstUnfinished = firstPending >= 0 ? firstPending : gs.findIndex((group) => {
       const last = group.sets[group.sets.length - 1];
-      return group.sets.length > 1 ? !logged.has(last.id) : !group.sets.every((s) => logged.has(s.id));
+      return group.sets.some((set) => set.editor_json) ? !group.sets.every((set) => logged.has(set.id)) : group.sets.length > 1 ? !logged.has(last.id) : !group.sets.every((s) => logged.has(s.id));
     });
     setCurrentGroupIdx(firstUnfinished === -1 ? Math.max(0, gs.length - 1) : firstUnfinished);
   }
@@ -153,33 +177,38 @@ export function WorkoutCard({
     if (session || finished || skipped) return;
     let active = true;
     const params = new URLSearchParams({
+      occurrenceId: String(occurrenceId ?? ""),
       dayId: String(dayId),
       definitionDayId: String(definitionDayId ?? ""),
       week: String(currentWeek),
     });
-    fetch(`/api/programs/${programId}/sessions/current?${params.toString()}`)
+    fetch(resumeSessionId ? `/api/sessions/${resumeSessionId}` : `/api/programs/${programId}/sessions/current?${params.toString()}`)
       .then((response) => (response.ok ? response.json() : null))
-      .then((data: SessionResponse | null) => {
+      .then((data: (SessionResponse & { status?: string }) | null) => {
+        if (resumeSessionId && (!data || data.id !== resumeSessionId || data.status !== "in_progress" || !Array.isArray(data.sets))) {
+          throw new Error("Could not resume this exact workout. Retry or return to its history.");
+        }
         if (active && data && data.sets) loadSession(data);
       })
-      .catch(() => {});
+      .catch(() => { if (active && resumeSessionId) setError("Could not resume this exact workout. Retry or return to its history."); });
     return () => {
       active = false;
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [programId, dayId, definitionDayId, currentWeek]);
+  }, [programId, dayId, definitionDayId, currentWeek, occurrenceId, resumeSessionId]);
 
   async function startSession() {
     setError("");
     setSubmitting(true);
     try {
-      const response = await fetch(`/api/programs/${programId}/sessions`, {
+      const response = resumeSessionId ? await fetch(`/api/sessions/${resumeSessionId}`, { method: "GET" }) : await fetch(`/api/programs/${programId}/sessions`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ dayId, definitionDayId, weekNumber: currentWeek, scheduledDate }),
+        body: JSON.stringify({ occurrenceId, dayId, definitionDayId, weekNumber: currentWeek, scheduledDate }),
       });
-      const body = await readResponseJson<SessionResponse & { error?: string }>(response);
+      const body = await readResponseJson<SessionResponse & { error?: string; status?: string }>(response);
       if (!response.ok || !body) throw new Error(body?.error ?? "Could not start workout");
+      if (resumeSessionId && (body.id !== resumeSessionId || body.status !== "in_progress" || !Array.isArray(body.sets))) throw new Error("Could not resume this exact workout. Retry or return to its history.");
       loadSession(body);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Could not start workout");
@@ -233,41 +262,109 @@ export function WorkoutCard({
     );
   }
 
-  async function logSet() {
-    if (!session || !currentGroup) return;
-    setError("");
-    setSaving(true);
+  function inputValues(set: WorkoutSet): SetDraft {
+    return drafts[set.id] ?? {
+      expectedActual: { reps: set.actual_reps, weight: set.actual_weight },
+      reps: String(values[set.id] ?? set.actual_reps ?? set.rep_out_target),
+      weight: String(isBodyweight(set) ? (added[set.id] ?? set.actual_weight ?? set.calculated_weight ?? 0) : (weights[set.id] ?? set.actual_weight ?? set.calculated_weight)),
+    };
+  }
 
+  function editSet(set: WorkoutSet, field: keyof SetDraft, value: string) {
+    if (!session) return;
+    const next = { ...inputValues(set), expectedActual: inputValues(set).expectedActual ?? { reps: set.actual_reps, weight: set.actual_weight }, [field]: value };
+    if (!writeDrafts(session.id, { ...parseDrafts(readDraftSnapshot(session.id)), [set.id]: next })) setStorageWarning(true);
+    setFailedIds((prev) => new Set([...prev].filter((id) => id !== set.id)));
+  }
+
+  function discardSetChanges(set: WorkoutSet) {
+    if (!session || savingIds.has(set.id)) return;
+    const latest = parseDrafts(readDraftSnapshot(session.id));
+    delete latest[set.id];
+    writeDrafts(session.id, latest);
+    setConflicts((prev) => { const next = { ...prev }; delete next[set.id]; return next; });
+    setFailedIds((prev) => new Set([...prev].filter((id) => id !== set.id)));
+  }
+
+  async function saveSets(sets: WorkoutSet[], advance = false, overrides: Record<number, SetDraft> = {}) {
+    if (!session || savingIds.size || saving) return;
+    setError("");
+    const submissions = sets.map((set) => ({ set, draft: overrides[set.id] ?? inputValues(set) }));
+    for (const { draft } of submissions) {
+      if (!/^\d+$/.test(draft.reps) || !Number.isSafeInteger(Number(draft.reps))) {
+        setError("Enter whole reps, including 0 for a performed set with no reps."); return;
+      }
+      if (!draft.weight.trim() || !Number.isFinite(Number(draft.weight)) || Number(draft.weight) < 0) {
+        setError("Enter a weight of 0 or more."); return;
+      }
+    }
+    const pending = parseDrafts(readDraftSnapshot(session.id));
+    for (const { set, draft } of submissions) pending[set.id] = draft;
+    if (!writeDrafts(session.id, pending)) setStorageWarning(true);
+    setSaving(true);
+    setSavingIds(new Set(sets.map((set) => set.id)));
+    let savingId = sets[0]?.id;
     try {
-      for (const set of currentGroup.sets) {
-        const setReps = values[set.id] ?? set.rep_out_target;
-        // Bodyweight: each set's own added weight. Otherwise an edited working
-        // weight (supersets/custom) if present, else the prescribed weight.
-        const actualWeight = isBodyweight(set) ? (added[set.id] ?? 0) : (weights[set.id] ?? set.calculated_weight);
+      for (const { set, draft } of submissions) {
+        savingId = set.id;
+        const actualReps = Number(draft.reps);
+        const actualWeight = Number(draft.weight);
         const response = await fetch(`/api/sessions/${session.id}/sets`, {
-          method: "PUT",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ setId: set.id, actualReps: setReps, actualWeight }),
+          method: "PUT", headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ setId: set.id, actualReps, actualWeight, expectedActual: draft.expectedActual ?? { reps: set.actual_reps, weight: set.actual_weight } }),
         });
         if (!response.ok) {
           const body = await readResponseJson<{ error?: string }>(response);
+          if (response.status === 409) {
+            const latestResponse = await fetch(`/api/sessions/${session.id}`);
+            const latest = await readResponseJson<SessionResponse>(latestResponse);
+            const changed = latestResponse.ok ? latest?.sets.find((row) => row.id === set.id) : undefined;
+            if (changed) {
+              setConflicts((prev) => ({ ...prev, [set.id]: { reps: changed.actual_reps, weight: changed.actual_weight } }));
+              setSession((prev) => prev ? { ...prev, sets: prev.sets.map((row) => row.id === set.id ? { ...row, actual_reps: changed.actual_reps, actual_weight: changed.actual_weight } : row) } : prev);
+              setValues((prev) => ({ ...prev, [set.id]: changed.actual_reps ?? set.rep_out_target }));
+              setWeights((prev) => ({ ...prev, [set.id]: changed.actual_weight ?? set.calculated_weight }));
+              setAdded((prev) => ({ ...prev, [set.id]: changed.actual_weight ?? set.calculated_weight }));
+              setCompletedSetIds((prev) => { const next = new Set(prev); if (changed.actual_reps == null) next.delete(set.id); else next.add(set.id); return next; });
+            }
+          }
           throw new Error(body?.error ?? "Could not save set");
         }
+        const acknowledgement = await readResponseJson<{ success?: boolean; actual_reps?: number; actual_weight?: number }>(response);
+        if (acknowledgement?.success !== true && !(acknowledgement?.actual_reps === actualReps && acknowledgement?.actual_weight === actualWeight)) throw new Error("Could not confirm the saved set. Retry to recover the result.");
+        setSession((prev) => prev ? { ...prev, sets: prev.sets.map((row) => row.id === set.id ? { ...row, actual_reps: actualReps, actual_weight: actualWeight } : row) } : prev);
+        setValues((prev) => ({ ...prev, [set.id]: actualReps }));
+        if (isBodyweight(set)) setAdded((prev) => ({ ...prev, [set.id]: actualWeight }));
+        else setWeights((prev) => ({ ...prev, [set.id]: actualWeight }));
         setCompletedSetIds((prev) => new Set(prev).add(set.id));
+        setFailedIds((prev) => new Set([...prev].filter((id) => id !== set.id)));
+        const latest = parseDrafts(readDraftSnapshot(session.id));
+        if (latest[set.id]?.reps === draft.reps && latest[set.id]?.weight === draft.weight) {
+          delete latest[set.id];
+        } else if (latest[set.id] && JSON.stringify(latest[set.id].expectedActual) === JSON.stringify(draft.expectedActual)) {
+          latest[set.id] = { ...latest[set.id], expectedActual: { reps: actualReps, weight: actualWeight } };
+        }
+        writeDrafts(session.id, latest);
+        setConflicts((prev) => { const next = { ...prev }; delete next[set.id]; return next; });
+        setSavingIds((prev) => new Set([...prev].filter((id) => id !== set.id)));
       }
-
-      if (!isLastGroup) {
-        setCurrentGroupIdx((i) => i + 1);
-      }
+      if (advance) setEditingGroupKeys((prev) => new Set([...prev].filter((key) => key !== sets[0]?.id)));
+      if (advance && !isLastGroup && !sets.some((set) => parseDrafts(readDraftSnapshot(session.id))[set.id])) setCurrentGroupIdx((i) => i + 1);
     } catch (err) {
+      if (savingId != null) setFailedIds((prev) => new Set(prev).add(savingId));
       setError(err instanceof Error ? err.message : "Could not save set");
     } finally {
+      setSavingIds(new Set());
       setSaving(false);
     }
   }
 
+  async function logSet() {
+    if (currentGroup) await saveSets(currentGroup.sets, true);
+  }
+
   async function complete() {
-    if (!session) return;
+    if (!session || saving || hasPending) return;
     setError("");
     setCompleting(true);
     try {
@@ -276,9 +373,18 @@ export function WorkoutCard({
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ sessionId: session.id }),
       });
-      const body = await readResponseJson<{ error?: string }>(response);
+      const body = await readResponseJson<{ error?: string; success?: boolean; progressionDecisions?: typeof progressionDecisions }>(response);
       if (!response.ok) throw new Error(body?.error ?? "Could not complete workout");
-      setFinished(true);
+      if (body?.success !== true) throw new Error("Could not confirm completion. Retry finishing to recover the saved result.");
+      setProgressionDecisions(body?.progressionDecisions ?? []);
+      writeDrafts(session.id, {});
+      // Today can replace this card with its saved recap. Commit the local
+      // completion and refreshed route together so navigation never starts
+      // from a transient, already-complete view during that replacement.
+      startCompletionRefresh(() => {
+        setFinished(true);
+        router.refresh();
+      });
       // Surface any personal records set this session (non-fatal if it fails).
       try {
         const prResponse = await fetch(`/api/sessions/${session.id}/prs`);
@@ -303,11 +409,12 @@ export function WorkoutCard({
       const response = await fetch(`/api/programs/${programId}/skip-workout`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ dayId, definitionDayId }),
+        body: JSON.stringify({ occurrenceId, dayId, definitionDayId }),
       });
       const body = await readResponseJson<{ error?: string }>(response);
       if (!response.ok) throw new Error(body?.error ?? "Could not skip workout");
       setSkipped(true);
+      router.refresh();
     } catch (err) {
       setError(err instanceof Error ? err.message : "Could not skip workout");
     } finally {
@@ -331,8 +438,10 @@ export function WorkoutCard({
       if (!response.ok) throw new Error(body?.error ?? "Could not cancel workout");
       // Back to the idle "Start workout" state — clear ALL per-set state so it
       // can't bleed into the next session (weights and skips were left behind).
+      writeDrafts(session.id, {});
       setSession(null);
       setCompletedSetIds(new Set());
+      setEditingGroupKeys(new Set());
       setValues({});
       setAdded({});
       setWeights({});
@@ -379,18 +488,15 @@ export function WorkoutCard({
     setCurrentGroupIdx(group.index);
   }
 
-  // Re-open a logged group for editing (e.g. to fix a wrong rep count). Clearing
-  // it from completedSetIds re-enables the inputs, pre-filled with the logged
-  // values; logging again overwrites the saved set.
+  // Opening the editor does not remove acknowledged work from the recap.
   function editGroup(group: WorkoutGroup) {
-    setCompletedSetIds((prev) => {
-      const next = new Set(prev);
-      for (const set of group.sets) next.delete(set.id);
-      return next;
-    });
+    setEditingGroupKeys((prev) => new Set(prev).add(groupKey(group)));
   }
 
   function allSetsInGroupLogged(group: WorkoutGroup): boolean {
+    if (editingGroupKeys.has(groupKey(group))) return false;
+    if (group.sets.some((set) => drafts[set.id] || savingIds.has(set.id))) return false;
+    if (group.sets.some((set) => set.editor_json)) return group.sets.every((set) => completedSetIds.has(set.id));
     if (group.sets.length > 1) return completedSetIds.has(group.sets[group.sets.length - 1].id);
     return group.sets.every((s) => completedSetIds.has(s.id));
   }
@@ -473,7 +579,7 @@ export function WorkoutCard({
             <p className="display mt-2.5 text-6xl leading-[0.9] text-foreground">
               {formatTonnage(totalTonnage)}
             </p>
-            <p className="eyebrow mt-1.5 text-[11px] text-faint">lb moved</p>
+            <p className="eyebrow mt-1.5 text-[11px] text-faint">{unit} moved</p>
             {totalSets > 0 && (
               <div className="mt-4 flex items-stretch divide-x divide-line rounded-xl bg-surface-muted">
                 <div className="px-5 py-2">
@@ -487,6 +593,12 @@ export function WorkoutCard({
               </div>
             )}
           </div>
+          {progressionDecisions.length > 0 && (
+            <div className="mt-5 rounded-xl border border-line bg-surface-muted p-3.5">
+              <p className="eyebrow text-xs text-brand-strong">Progression</p>
+              {progressionDecisions.map((decision) => <div key={decision.progressionKey} className="mt-3 text-sm"><p className="font-semibold">{decision.exerciseName}</p><p className="mt-1 text-muted">{decision.result.explanation}</p></div>)}
+            </div>
+          )}
           {prs.length > 0 && (
             <div className="mt-5 rounded-xl border border-brand-line bg-brand-soft p-3.5">
               <p className="eyebrow flex items-center gap-1.5 text-[11px] text-brand-strong">
@@ -517,7 +629,7 @@ export function WorkoutCard({
                   <span className="text-right text-muted">
                     {summaryDetail(row)}
                     <span className="block font-display text-xs tracking-tight text-faint">
-                      {formatTonnage(row.tonnage)} lb total
+                      {formatTonnage(row.tonnage)} {row.unit} total
                     </span>
                   </span>
                 </li>
@@ -550,7 +662,7 @@ export function WorkoutCard({
           </div>
         </div>
       ) : (
-        <div className="border-t border-line">
+        <fieldset disabled={completing || refreshingCompletion} className="min-w-0 border-0 border-t border-line p-0">
           {/* Progress header */}
           <div className="px-4 pt-3.5">
             <div className="flex items-center justify-between">
@@ -558,7 +670,7 @@ export function WorkoutCard({
                 Exercise {Math.min(currentGroupIdx + 1, groups.length)} of {groups.length}
               </span>
               <span className="font-display text-xs tracking-tight text-muted">
-                {formatTonnage(totalTonnage)} lb · {totalSets} {totalSets === 1 ? "set" : "sets"}
+                {formatTonnage(totalTonnage)} {unit} · {totalSets} {totalSets === 1 ? "set" : "sets"}
               </span>
             </div>
             <div className="mt-2 h-1.5 overflow-hidden rounded-full bg-surface-muted">
@@ -569,6 +681,7 @@ export function WorkoutCard({
             </div>
           </div>
 
+          {storageWarning || isDraftVolatile(session.id) ? <p role="status" className="px-4 pt-3 text-sm text-muted">Device storage is unavailable. Keep this page open until your pending sets are saved.</p> : null}
           {error ? (
             <div className="px-4 pt-3">
               <ErrorBanner message={error} />
@@ -655,6 +768,7 @@ export function WorkoutCard({
                     })}
                   </div>
                   {!currentGroup.supersetGroup &&
+                  !currentGroup.sets.some((set) => set.editor_json) &&
                   currentGroup.sets[0].training_max &&
                   !isBodyweight(currentGroup.sets[0]) ? (
                     <WorkoutTmEditor
@@ -668,13 +782,56 @@ export function WorkoutCard({
                   ) : null}
                 </div>
 
-                {isFlatSingle(currentGroup) ? (
+                {currentGroup.sets.some((set) => set.editor_json) ? (
+                  <div className="mt-4 flex flex-col gap-3">
+                    {currentGroup.sets.map((set, index) => {
+                      const editor = editorMetadata(set);
+                      const spec = editor?.set;
+                      const number = index + 1;
+                      const rowUnit = setUnit(set, unit);
+                      const pending = Boolean(drafts[set.id]);
+                      const rowSaving = savingIds.has(set.id);
+                      const rowFailed = failedIds.has(set.id);
+                      const saved = completedSetIds.has(set.id) && !pending && !rowSaving;
+                      const role = spec?.role ?? "work";
+                      const roleLabel = role === "amrap" ? "AMRAP" : role[0].toUpperCase() + role.slice(1);
+                      const range = set.reps === set.rep_out_target ? String(set.reps) : `${set.reps}–${set.rep_out_target}`;
+                      const loadLabel = isBodyweight(set) ? `BW${set.calculated_weight > 0 ? ` +${set.calculated_weight} ${rowUnit}` : ""}` : `${set.calculated_weight} ${rowUnit}`;
+                      return (
+                        <div key={set.id} className="rounded-xl border border-line bg-surface p-3">
+                          <div className="flex items-start justify-between gap-2">
+                            <p className="text-sm font-semibold">{currentGroup.supersetGroup ? `${set.exercise_name} · ` : ""}Set {number}</p>
+                            <span role="status" className={`text-xs font-semibold ${saved ? "text-success-ink" : "text-muted"}`}>{rowSaving ? "Saving…" : rowFailed ? "Save failed" : pending ? "Unsaved" : saved ? "Saved" : "Not logged"}</span>
+                          </div>
+                          <p className="mt-1 text-sm text-muted">{roleLabel} · {range} reps · {loadLabel}</p>
+                          {spec ? <p className="mt-1 text-xs text-muted">{[spec.effortKind !== "none" ? `${spec.effortKind.toUpperCase()} ${spec.effort}` : "", `Rest ${spec.restSeconds} s`, spec.tempo ? `Tempo ${spec.tempo}` : ""].filter(Boolean).join(" · ")}</p> : null}
+                          {spec?.notes ? <p className="mt-2 text-sm text-muted">{spec.notes}</p> : null}
+                          <div className="mt-3 grid grid-cols-2 gap-2">
+                            <label className="min-w-0 text-xs font-semibold text-muted">Reps
+                              <input type="number" min={0} step={1} value={inputValues(set).reps} onChange={(event) => editSet(set, "reps", event.target.value)} aria-label={`${set.exercise_name} set ${number} reps`} className="touch-target mt-1 w-full rounded-lg border border-line bg-surface px-2 py-2 text-center font-display text-xl text-foreground outline-none focus:border-brand" />
+                            </label>
+                            <label className="min-w-0 text-xs font-semibold text-muted">{isBodyweight(set) ? "Added weight" : "Weight"} ({rowUnit})
+                              <input type="number" min={0} step="any" value={inputValues(set).weight} onChange={(event) => editSet(set, "weight", event.target.value)} aria-label={`${set.exercise_name} set ${number} weight (${rowUnit})`} className="touch-target mt-1 w-full rounded-lg border border-line bg-surface px-2 py-2 text-center font-display text-xl text-foreground outline-none focus:border-brand" />
+                            </label>
+                          </div>
+                          <button type="button" aria-label={`Save set ${number}`} aria-pressed={saved} disabled={saving || Boolean(conflicts[set.id])} onClick={() => saveSets([set])} className={`touch-target mt-3 w-full rounded-lg px-3 py-2 text-base font-semibold disabled:opacity-50 ${saved ? "bg-success-soft text-success-ink" : "bg-brand text-white active:bg-brand-strong"}`}>{saved ? "Saved" : "Save set"}</button>
+                          {conflicts[set.id] ? <div className="mt-3 rounded-lg border border-warn-line bg-warn-soft p-2 text-sm text-warn-ink">
+                            <p>Saved elsewhere: {conflicts[set.id].reps == null ? "unperformed" : `${conflicts[set.id].reps} reps at ${conflicts[set.id].weight ?? 0} ${rowUnit}`}.</p>
+                            <button type="button" disabled={saving} onClick={() => discardSetChanges(set)} className="touch-target mt-2 w-full rounded-lg border border-line bg-surface px-2 text-sm font-semibold text-muted">Use saved values</button>
+                            <button type="button" aria-label={`Keep my set ${number} edits`} disabled={saving} onClick={() => saveSets([set], false, { [set.id]: { ...inputValues(set), expectedActual: conflicts[set.id] } })} className="touch-target mt-2 w-full rounded-lg border border-line bg-surface px-2 text-sm font-semibold text-muted">Keep my edits</button>
+                          </div> : null}
+                          {pending && !rowSaving ? <button type="button" aria-label={`Discard set ${number} changes`} onClick={() => discardSetChanges(set)} className="touch-target mt-1 w-full rounded-lg px-3 py-2 text-sm font-semibold text-muted">Discard changes</button> : null}
+                        </div>
+                      );
+                    })}
+                  </div>
+                ) : isFlatSingle(currentGroup) ? (
                   <>
                     <div className="mt-2.5 flex items-end gap-2.5">
                       <span className="display text-5xl leading-none">
                         {currentGroup.sets[0].calculated_weight}
                       </span>
-                      <span className="mb-1 text-sm font-semibold text-muted">lb</span>
+                      <span className="mb-1 text-sm font-semibold text-muted">{unit}</span>
                       <span className="mb-1 ml-auto rounded-full bg-surface/80 px-2.5 py-1 font-display text-sm tracking-tight">
                         {currentGroup.sets.length} × {currentGroup.sets[0].reps}
                       </span>
@@ -685,9 +842,9 @@ export function WorkoutCard({
                         <span className="eyebrow text-[10px] text-muted">Reps</span>
                         <input
                           type="number"
-                          value={values[currentSet.id] ?? currentSet.rep_out_target}
+                          value={inputValues(currentSet).reps}
                           onChange={(event) =>
-                            setValues({ ...values, [currentSet.id]: Number(event.target.value) })
+                            editSet(currentSet, "reps", event.target.value)
                           }
                           min={0}
                           className="touch-target w-full rounded-xl border border-line bg-surface px-3 py-3 text-center font-display text-3xl tracking-tight outline-none transition-colors focus:border-brand"
@@ -706,7 +863,7 @@ export function WorkoutCard({
                           <p className="font-display text-xs tracking-tight text-muted">
                             {set.sets > 1 ? `${set.sets} × ` : ""}
                             {set.reps} @{" "}
-                            {isBodyweight(set) ? `BW${added[set.id] ? ` +${added[set.id]}` : ""}` : `${set.calculated_weight} lb`}
+                            {isBodyweight(set) ? `BW${added[set.id] ? ` +${added[set.id]}` : ""}` : `${set.calculated_weight} ${unit}`}
                           </p>
                         </div>
                         {allSetsInGroupLogged(currentGroup) ? (
@@ -720,12 +877,12 @@ export function WorkoutCard({
                                   min={0}
                                   step={0.5}
                                   placeholder="0"
-                                  value={added[set.id] ?? ""}
-                                  onChange={(event) => setAdded({ ...added, [set.id]: Number(event.target.value) })}
+                                  value={inputValues(set).weight}
+                                  onChange={(event) => editSet(set, "weight", event.target.value)}
                                   aria-label={`${set.exercise_name} added weight`}
                                   className="touch-target w-14 rounded-xl border border-line bg-surface px-2 py-2 text-center font-display text-xl tracking-tight outline-none transition-colors focus:border-brand"
                                 />
-                                <span className="text-xs text-faint">+lb</span>
+                                <span className="text-xs text-faint">+{unit}</span>
                               </label>
                             ) : (
                               <label className="flex items-center gap-1">
@@ -733,21 +890,21 @@ export function WorkoutCard({
                                   type="number"
                                   min={0}
                                   step={2.5}
-                                  value={weights[set.id] ?? set.calculated_weight}
-                                  onChange={(event) => setWeights({ ...weights, [set.id]: Number(event.target.value) })}
+                                  value={inputValues(set).weight}
+                                  onChange={(event) => editSet(set, "weight", event.target.value)}
                                   aria-label={`${set.exercise_name} weight`}
                                   className="touch-target w-16 rounded-xl border border-line bg-surface px-2 py-2 text-center font-display text-xl tracking-tight outline-none transition-colors focus:border-brand"
                                 />
-                                <span className="text-xs text-faint">lb</span>
+                                <span className="text-xs text-faint">{unit}</span>
                               </label>
                             )}
                             <label className="flex items-center gap-1.5">
                               <input
                                 type="number"
                                 min={0}
-                                value={values[set.id] ?? set.rep_out_target}
+                                value={inputValues(set).reps}
                                 onChange={(event) =>
-                                  setValues({ ...values, [set.id]: Number(event.target.value) })
+                                  editSet(set, "reps", event.target.value)
                                 }
                                 aria-label={`${set.exercise_name} reps`}
                                 className="touch-target w-16 rounded-xl border border-line bg-surface px-2 py-2 text-center font-display text-xl tracking-tight outline-none transition-colors focus:border-brand"
@@ -761,7 +918,17 @@ export function WorkoutCard({
                   </div>
                 )}
 
-                {allSetsInGroupLogged(currentGroup) ? (
+                {!currentGroup.sets.some((set) => set.editor_json) ? currentGroup.sets.filter((set) => conflicts[set.id]).map((set) => (
+                  <div key={set.id} className="mt-3 rounded-lg border border-warn-line bg-warn-soft p-3 text-sm text-warn-ink">
+                    <p>{set.exercise_name} set {set.set_number}: saved elsewhere as {conflicts[set.id].reps == null ? "unperformed" : `${conflicts[set.id].reps} reps at ${conflicts[set.id].weight ?? 0} ${setUnit(set, unit)}`}.</p>
+                    <button type="button" disabled={saving} onClick={() => discardSetChanges(set)} className="touch-target mt-2 w-full rounded-lg border border-line bg-surface px-2 font-semibold text-muted">Use saved values</button>
+                    <button type="button" disabled={saving} onClick={() => saveSets([set], false, { [set.id]: { ...inputValues(set), expectedActual: conflicts[set.id] } })} className="touch-target mt-2 w-full rounded-lg border border-line bg-surface px-2 font-semibold text-muted">Keep my edits</button>
+                  </div>
+                )) : null}
+
+                {currentGroup.sets.some((set) => set.editor_json) ? (
+                  !isLastGroup ? <button type="button" onClick={() => setCurrentGroupIdx((i) => i + 1)} className="touch-target mt-3 w-full rounded-xl border border-line bg-surface px-4 py-2.5 text-sm font-semibold text-muted">Next lift</button> : null
+                ) : allSetsInGroupLogged(currentGroup) ? (
                   <div className="mt-3 flex items-center justify-between gap-3">
                     <span className="inline-flex items-center gap-1.5 text-sm font-semibold text-success-ink">
                       <Check aria-hidden="true" size={15} strokeWidth={3} />
@@ -825,7 +992,7 @@ export function WorkoutCard({
                     <span className="truncate text-muted">{groupExerciseNames(group).join(" + ")}</span>
                     <span className="ml-auto font-display tracking-tight">
                       {group.sets.length} set{group.sets.length > 1 ? "s" : ""} · {group.sets[0].reps} @{" "}
-                      {group.sets[0].calculated_weight} lb
+                      {group.sets[0].calculated_weight} {setUnit(group.sets[0], unit)}
                     </span>
                   </button>
                 ),
@@ -846,29 +1013,20 @@ export function WorkoutCard({
           />
 
           <div className="flex flex-col gap-2 px-4 pb-4 pt-3">
+            {hasPending ? <p className="text-xs text-muted">Save pending edits before finishing. Sets left unlogged stay unperformed.</p> : null}
             <div className="flex gap-2">
-              {showSkip ? (
-                <button
-                  type="button"
-                  disabled={skipping}
-                  onClick={skipWorkout}
-                  className="touch-target rounded-xl border border-line bg-surface px-4 py-2.5 text-sm font-semibold text-faint transition-colors active:bg-surface-muted disabled:opacity-50"
-                >
-                  Skip workout
-                </button>
-              ) : null}
               <button
                 type="button"
-                disabled={completing}
+                disabled={completing || refreshingCompletion || saving || hasPending}
                 onClick={complete}
                 className="touch-target flex-1 rounded-xl bg-foreground px-4 py-2.5 text-sm font-semibold text-background transition-colors active:opacity-90 disabled:opacity-50"
               >
-                {completing ? "Finishing…" : "Finish Workout"}
+                {completing || refreshingCompletion ? "Finishing…" : "Finish Workout"}
               </button>
             </div>
             <button
               type="button"
-              disabled={canceling}
+              disabled={canceling || saving}
               onClick={cancelWorkout}
               onBlur={() => setConfirmingCancel(false)}
               className={`touch-target rounded-xl px-4 py-2 text-xs font-medium transition-colors disabled:opacity-50 ${
@@ -882,7 +1040,7 @@ export function WorkoutCard({
                   : "Cancel workout"}
             </button>
           </div>
-        </div>
+        </fieldset>
       )}
     </section>
   );

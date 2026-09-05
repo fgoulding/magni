@@ -1,14 +1,18 @@
+import { ensureScheduledOccurrences, getOccurrence, syncOccurrencePosition } from "@/features/programs/occurrences";
 import { NextResponse } from "next/server";
 import { assertSameOrigin, clampText, isBadRequest, jsonError, isUnauthorized, numberParam, readJson } from "@/lib/api";
 import { requireUser } from "@/lib/auth";
-import { todayLocalDateKey } from "@/lib/date-key";
+import { userDateKey } from "@/lib/user-date";
 import { db } from "@/lib/db";
+import { applyEditorCompletion } from "@/features/program-editor/execution";
+import { EditorRepositoryError } from "@/features/program-editor/repository";
 
 type RouteContext = {
   params: Promise<{ id: string }>;
 };
 
 type SkipWorkoutBody = {
+  occurrenceId?: unknown;
   dayId?: unknown;
   definitionDayId?: unknown;
   reason?: unknown;
@@ -19,6 +23,7 @@ type ProgramRow = {
   current_week: number;
   program_definition_id: number | null;
   program_run_id: number | null;
+  editor_version_id: number | null;
   name: string;
 };
 
@@ -41,8 +46,11 @@ export async function POST(request: Request, context: RouteContext) {
     const { id } = await context.params;
     const programId = numberParam(id);
     const body = await readJson<SkipWorkoutBody>(request);
-    const dayId = Number(body.dayId);
-    const definitionDayId = Number(body.definitionDayId);
+    ensureScheduledOccurrences.immediate(user.id);
+    const occurrence = body.occurrenceId != null ? getOccurrence(user.id, Number(body.occurrenceId)) : undefined;
+    if (body.occurrenceId != null && (!occurrence || occurrence.program_id !== programId)) return jsonError("Workout not found", 404);
+    const dayId = occurrence?.legacy_day_id ?? Number(body.dayId);
+    const definitionDayId = occurrence?.definition_day_id ?? Number(body.definitionDayId);
     const reason = clampText(body.reason, 1000).trim();
 
     if (!Number.isInteger(programId) || programId <= 0) {
@@ -65,6 +73,7 @@ export async function POST(request: Request, context: RouteContext) {
               COALESCE(pr.current_week, p.current_week) AS current_week,
               p.program_definition_id,
               p.program_run_id,
+              pr.editor_version_id,
               COALESCE(pr.name, p.name) AS name
             FROM programs p
             LEFT JOIN program_runs pr ON pr.id = p.program_run_id
@@ -78,6 +87,7 @@ export async function POST(request: Request, context: RouteContext) {
       if (!program) {
         return { response: jsonError("Program not found", 404) };
       }
+      if (program.editor_version_id && !occurrence) return { response: jsonError("Choose a scheduled workout occurrence to skip this editor program", 400) };
 
       if (!program.program_definition_id) {
         return { response: jsonError("Program is missing definition/run context", 400) };
@@ -126,8 +136,8 @@ export async function POST(request: Request, context: RouteContext) {
         return { response: jsonError("Day not found", 404) };
       }
 
-      const today = todayLocalDateKey();
-      const existing = getSkippedSession({
+      const today = userDateKey(user.id);
+      const existing = occurrence ? db.prepare("SELECT * FROM sessions WHERE occurrence_id = ? AND user_id = ?").get(occurrence.id, user.id) as SessionRow | undefined : getSkippedSession({
         programId,
         userId: user.id,
         dayId: day.legacy_day_id,
@@ -138,7 +148,8 @@ export async function POST(request: Request, context: RouteContext) {
 
       if (existing) {
         if (existing.status === "skipped") {
-          return { response: NextResponse.json(existing) };
+          const progressionDecisions = applyEditorCompletion({ userId: user.id, sessionId: existing.id });
+          return { response: NextResponse.json({ ...existing, ...(progressionDecisions.length ? { progressionDecisions } : {}) }) };
         }
 
         return { response: jsonError("Workout already started for this day", 409) };
@@ -160,8 +171,10 @@ export async function POST(request: Request, context: RouteContext) {
               date,
               status,
               skipped_at,
-              skip_reason
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'skipped', datetime('now'), ?)
+              skip_reason,
+              scheduled_date,
+              occurrence_id
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'skipped', datetime('now'), ?, ?, ?)
           `,
         )
         .run(
@@ -173,17 +186,22 @@ export async function POST(request: Request, context: RouteContext) {
           program.program_run_id,
           program.name,
           day.name,
-          program.current_week,
+          occurrence?.week_number ?? program.current_week,
           today,
           reason,
+          occurrence?.scheduled_date ?? null,
+          occurrence?.id ?? null,
         );
       const session = getSessionById(Number(result.lastInsertRowid));
+      const progressionDecisions = applyEditorCompletion({ userId: user.id, sessionId: session.id });
+      if (occurrence) syncOccurrencePosition(user.id, programId);
 
-      return { response: NextResponse.json(session, { status: 201 }) };
+      return { response: NextResponse.json({ ...session, ...(progressionDecisions.length ? { progressionDecisions } : {}) }, { status: 201 }) };
     });
 
-    return skip().response;
+    return skip.immediate().response;
   } catch (error) {
+    if (error instanceof EditorRepositoryError) return jsonError(error.message, error.status);
     if (isBadRequest(error)) return jsonError(error.message, 400);
     if (isUnauthorized(error)) return jsonError("Unauthorized", 401);
     if (error instanceof Error && error.message === "Forbidden cross-origin request") {

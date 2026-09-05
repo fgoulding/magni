@@ -84,6 +84,11 @@ export async function POST(request: Request, context: RouteContext) {
     if (error instanceof Error && error.message === "Day not found") {
       return jsonError(error.message, 404);
     }
+    const code = typeof error === "object" && error !== null && "code" in error && typeof error.code === "string" ? error.code : "UNKNOWN";
+    console.error("[exercises.create] Unexpected failure", {
+      code,
+      message: error instanceof Error ? error.message : "Unknown error",
+    });
     return jsonError("Failed to create exercise", 500);
   }
 }

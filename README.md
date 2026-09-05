@@ -5,22 +5,22 @@ A self-hosted, iOS-first progressive web app for building strength programs, sta
 ## Current Scope
 
 - Email and password auth with HTTP-only sessions.
-- User-scoped programs, days, exercises, and generated week settings.
-- SBS-style generated progression plus custom progression without automatic TM changes.
-- Daily workout start, set logging, resilient failed-save retry, completion, and week/day advancement.
-- History and settings views.
+- Direct program workspace with autosaved drafts, blocks/weeks, reusable days, per-set prescriptions, copy, bulk edits and undo.
+- Configurable progression with readable rules, outcome previews, shared or independent lift state, and immutable activated versions. Original training systems remain available.
+- Weekly calendar with stable workout identity, move/swap, touch drag, duplicate, skip, group shifts and undo.
+- Planned and unplanned workouts, retained pending edits, conflict resolution and safe retries.
+- Chronological history, corrections, repeat workouts, reusable routines and statistics from performed sets.
 - iOS PWA shell with manifest, touch icons, safe area spacing, install guidance, and bottom navigation.
 
 ## iOS PWA Notes
 
-This app is built around what iOS PWAs can reliably do today:
+The responsive browser workflows are verified with iPhone WebKit, including enlarged text, themes, touch controls and retained pending edits. Unsaved values stay on the device and completion waits for acknowledged saves; a connection is required to save and finish. This is not a fully offline app. Physical installed-PWA suspend/resume and update checks remain a separate release gate.
 
-- Safari and home-screen installed PWAs can run the full app, persist auth cookies, and use local responsive UI.
-- Push notifications, background sync, durable offline writes, and advanced install prompts remain more limited on iOS than in native apps.
-- The app should treat network loss during workout logging carefully. Failed set saves are preserved in the UI and can be retried.
-- A future offline mode should queue writes locally and reconcile them with the server before allowing workout completion.
+## Program Workspace
 
-If native-only capabilities become core requirements, the likely next step is a thin native wrapper or React Native/Expo app backed by the same API and database model. For the current workout logging workflow, a PWA is still a practical first build.
+Open **Programs → Custom program** to start blank, customize one of six presets or resume a draft. Structure, Prescriptions, Progression & preview, and Review & activate are separate sections; advanced settings are collapsed. Activation freezes a version for training. Later draft changes do not silently change active or historical prescriptions.
+
+Program files are optional: import/export a versioned JSON file from **Presets and program files**. See [the format and examples](docs/program-files.md). Complete programs can also be authored directly in the UI.
 
 ## Tech Stack
 
@@ -63,25 +63,21 @@ Training templates are the first supported extension point. See [CONTRIBUTING.md
 
 ## Verification
 
-Run the checks before merging:
+Run the complete release gate before merging or publishing:
 
 ```bash
-npm run test
-npm run test:coverage
-npm run typecheck
-npm run lint
-npm run build
-npm audit --omit=dev
+node scripts/release-check.mjs
 ```
 
-Coverage thresholds are enforced in `vitest.config.ts`.
+This runs the production dependency audit, typecheck, strict lint, all tests with the existing coverage thresholds, a production build, both browser projects and release-policy/maintenance checks. Each test suite and browser run uses disposable data. See [release verification](deploy/RELEASE.md) for evidence, image identity, backups, staging and rollout gates.
 
 ## Product Notes
 
 - Set logging only records performance. It does not adjust training maxes until the workout is completed.
 - Completion is idempotent so a retry does not double-apply progression.
 - Auto progression requires logged reps for generated sets.
-- Custom progression exercises do not auto-adjust training maxes.
+- Editor progression follows the configured rule. The original manual custom progression option retains its existing behavior.
+- Corrections update recorded actuals and statistics, preserve prescriptions and show a hypothetical progression comparison; they do not retroactively rewrite progression or completed downstream workouts.
 - Program and history APIs are scoped to the authenticated user.
 
 ## Demo data

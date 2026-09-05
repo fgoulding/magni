@@ -29,6 +29,7 @@ export type CategorySlice = Readonly<{ category: string; volume: number; pct: nu
 
 export type TrainingStats = Readonly<{
   hasData: boolean;
+  usesKilograms?: boolean;
   totals: { sessions: number; sets: number; reps: number; volume: number };
   bigThree: LiftStat[];
   weeklyVolume: WeeklyPoint[];
@@ -270,6 +271,7 @@ export type LiftPr = Readonly<{ date: string; e1rm: number; weight: number; reps
 export type LiftDetail = Readonly<{
   name: string;
   hasData: boolean;
+  usesKilograms?: boolean;
   maxWeight: number;
   bestE1rm: number;
   bestE1rmDate: string | null;
@@ -369,6 +371,10 @@ export function buildLiftDetail(rows: readonly StatSetRow[], name: string): Lift
 
 // --- DB entry points ---
 
+// A prescription is not a performed set. All set-derived history below requires
+// recorded actual_reps; missing actual_weight contributes no external-load volume,
+// matching the recap. Keep sets=N support for legacy flat rows logged as a group.
+
 export function getUserLiftDetail(userId: number, name: string): LiftDetail {
   const rows = db
     .prepare(
@@ -377,12 +383,12 @@ export function getUserLiftDetail(userId: number, name: string): LiftDetail {
           s.date AS date,
           ss.exercise_name AS exercise,
           ss.category AS category,
-          COALESCE(ss.actual_reps, ss.reps) AS reps,
-          COALESCE(ss.actual_weight, ss.calculated_weight, 0) AS weight,
+          ss.actual_reps AS reps,
+          (COALESCE(ss.actual_weight, 0) * CASE WHEN s.unit = 'kg' THEN 2.2046226218487757 ELSE 1 END) AS weight,
           MAX(COALESCE(ss.sets, 1), 1) AS sets
         FROM session_sets ss
         JOIN sessions s ON s.id = ss.session_id
-        WHERE s.user_id = ? AND s.status = 'completed' AND ss.exercise_name = ? COLLATE NOCASE
+        WHERE s.user_id = ? AND s.status = 'completed' AND ss.actual_reps IS NOT NULL AND ss.exercise_name = ? COLLATE NOCASE
       `,
     )
     .all(userId, name) as StatSetRow[];
@@ -421,7 +427,7 @@ export function computeSessionPrs(
   for (const [exercise, b] of best) {
     const prior = priorBest.get(exercise) ?? 0;
     if (prior > 0 && b.e1rm > prior + 0.001) {
-      prs.push({ exercise, e1rm: round(b.e1rm), weight: round(b.weight), reps: b.reps });
+      prs.push({ exercise, e1rm: round(b.e1rm), weight: b.weight, reps: b.reps });
     }
   }
   return prs.sort((a, b) => b.e1rm - a.e1rm);
@@ -434,24 +440,26 @@ export function computeSessionPrs(
 export function getSessionPrs(userId: number, sessionId: number): SessionPr[] {
   const setQuery = `
     SELECT ss.exercise_name AS exercise,
-      COALESCE(ss.actual_reps, ss.reps) AS reps,
-      COALESCE(ss.actual_weight, ss.calculated_weight, 0) AS weight
+      ss.actual_reps AS reps,
+      (COALESCE(ss.actual_weight, 0) * CASE WHEN s.unit = 'kg' THEN 2.2046226218487757 ELSE 1 END) AS weight
     FROM session_sets ss
     JOIN sessions s ON s.id = ss.session_id
   `;
   const sessionSets = db
-    .prepare(`${setQuery} WHERE s.id = ? AND s.user_id = ?`)
+    .prepare(`${setQuery} WHERE s.id = ? AND s.user_id = ? AND ss.actual_reps IS NOT NULL`)
     .all(sessionId, userId) as SetRepWeight[];
   // A PR is only computed for exercises in THIS session, so prior sets for other
   // lifts are loaded then discarded. Scope to this session's exercises (uses
   // idx_session_sets_exercise_name) instead of pulling the user's whole history.
   const priorSets = db
     .prepare(
-      `${setQuery} WHERE s.user_id = ? AND s.status = 'completed' AND s.id != ?
+      `${setQuery} WHERE s.user_id = ? AND s.status = 'completed' AND ss.actual_reps IS NOT NULL AND s.id != ?
          AND ss.exercise_name IN (SELECT DISTINCT exercise_name FROM session_sets WHERE session_id = ?)`,
     )
     .all(userId, sessionId, sessionId) as SetRepWeight[];
-  return computeSessionPrs(sessionSets, priorSets);
+  const currentUnit = (db.prepare("SELECT unit FROM sessions WHERE id=? AND user_id=?").get(sessionId, userId) as { unit: string } | undefined)?.unit;
+  const factor = currentUnit === "kg" ? 2.2046226218487757 : 1;
+  return computeSessionPrs(sessionSets, priorSets).map((pr) => ({ ...pr, weight: Number((pr.weight / factor).toFixed(4)), e1rm: Math.round(pr.e1rm / factor) }));
 }
 
 // How far back we load individual SET rows for the windowed charts (weekly
@@ -520,12 +528,12 @@ export function getUserTrainingStats(userId: number, now: Date = new Date()): Tr
           s.date AS date,
           ss.exercise_name AS exercise,
           ss.category AS category,
-          COALESCE(ss.actual_reps, ss.reps) AS reps,
-          COALESCE(ss.actual_weight, ss.calculated_weight, 0) AS weight,
+          ss.actual_reps AS reps,
+          (COALESCE(ss.actual_weight, 0) * CASE WHEN s.unit = 'kg' THEN 2.2046226218487757 ELSE 1 END) AS weight,
           MAX(COALESCE(ss.sets, 1), 1) AS sets
         FROM session_sets ss
         JOIN sessions s ON s.id = ss.session_id
-        WHERE s.user_id = ? AND s.status = 'completed' AND s.date >= ?
+        WHERE s.user_id = ? AND s.status = 'completed' AND ss.actual_reps IS NOT NULL AND s.date >= ?
       `,
     )
     .all(userId, windowStart) as StatSetRow[];
@@ -547,11 +555,11 @@ export function getUserTrainingStats(userId: number, now: Date = new Date()): Tr
       `
         SELECT
           COALESCE(SUM(MAX(COALESCE(ss.sets, 1), 1)), 0) AS sets,
-          COALESCE(SUM(COALESCE(ss.actual_reps, ss.reps) * MAX(COALESCE(ss.sets, 1), 1)), 0) AS reps,
-          COALESCE(SUM(COALESCE(ss.actual_reps, ss.reps) * COALESCE(ss.actual_weight, ss.calculated_weight, 0) * MAX(COALESCE(ss.sets, 1), 1)), 0) AS volume
+          COALESCE(SUM(ss.actual_reps * MAX(COALESCE(ss.sets, 1), 1)), 0) AS reps,
+          COALESCE(SUM(ss.actual_reps * (COALESCE(ss.actual_weight, 0) * CASE WHEN s.unit = 'kg' THEN 2.2046226218487757 ELSE 1 END) * MAX(COALESCE(ss.sets, 1), 1)), 0) AS volume
         FROM session_sets ss
         JOIN sessions s ON s.id = ss.session_id
-        WHERE s.user_id = ? AND s.status = 'completed'
+        WHERE s.user_id = ? AND s.status = 'completed' AND ss.actual_reps IS NOT NULL
       `,
     )
     .get(userId) as { sets: number; reps: number; volume: number };
@@ -560,10 +568,10 @@ export function getUserTrainingStats(userId: number, now: Date = new Date()): Tr
     .prepare(
       `
         SELECT ss.category AS category,
-               COALESCE(SUM(COALESCE(ss.actual_reps, ss.reps) * COALESCE(ss.actual_weight, ss.calculated_weight, 0) * MAX(COALESCE(ss.sets, 1), 1)), 0) AS volume
+               COALESCE(SUM(ss.actual_reps * (COALESCE(ss.actual_weight, 0) * CASE WHEN s.unit = 'kg' THEN 2.2046226218487757 ELSE 1 END) * MAX(COALESCE(ss.sets, 1), 1)), 0) AS volume
         FROM session_sets ss
         JOIN sessions s ON s.id = ss.session_id
-        WHERE s.user_id = ? AND s.status = 'completed'
+        WHERE s.user_id = ? AND s.status = 'completed' AND ss.actual_reps IS NOT NULL
         GROUP BY ss.category
       `,
     )
@@ -579,18 +587,18 @@ export function getUserTrainingStats(userId: number, now: Date = new Date()): Tr
             ss.exercise_name AS name,
             ss.category AS category,
             s.date AS date,
-            COALESCE(ss.actual_reps, ss.reps) AS reps,
-            COALESCE(ss.actual_weight, ss.calculated_weight, 0) AS weight,
-            COALESCE(ss.actual_reps, ss.reps) * COALESCE(ss.actual_weight, ss.calculated_weight, 0) * MAX(COALESCE(ss.sets, 1), 1) AS vol,
-            CASE WHEN COALESCE(ss.actual_reps, ss.reps) = 1
-                 THEN COALESCE(ss.actual_weight, ss.calculated_weight, 0)
-                 ELSE COALESCE(ss.actual_weight, ss.calculated_weight, 0) * (1 + COALESCE(ss.actual_reps, ss.reps) / 30.0)
+            ss.actual_reps AS reps,
+            (COALESCE(ss.actual_weight, 0) * CASE WHEN s.unit = 'kg' THEN 2.2046226218487757 ELSE 1 END) AS weight,
+            ss.actual_reps * (COALESCE(ss.actual_weight, 0) * CASE WHEN s.unit = 'kg' THEN 2.2046226218487757 ELSE 1 END) * MAX(COALESCE(ss.sets, 1), 1) AS vol,
+            CASE WHEN ss.actual_reps = 1
+                 THEN (COALESCE(ss.actual_weight, 0) * CASE WHEN s.unit = 'kg' THEN 2.2046226218487757 ELSE 1 END)
+                 ELSE (COALESCE(ss.actual_weight, 0) * CASE WHEN s.unit = 'kg' THEN 2.2046226218487757 ELSE 1 END) * (1 + ss.actual_reps / 30.0)
             END AS e1rm
           FROM session_sets ss
           JOIN sessions s ON s.id = ss.session_id
-          WHERE s.user_id = ? AND s.status = 'completed'
-            AND COALESCE(ss.actual_weight, ss.calculated_weight, 0) > 0
-            AND COALESCE(ss.actual_reps, ss.reps) > 0
+          WHERE s.user_id = ? AND s.status = 'completed' AND ss.actual_reps IS NOT NULL
+            AND (COALESCE(ss.actual_weight, 0) * CASE WHEN s.unit = 'kg' THEN 2.2046226218487757 ELSE 1 END) > 0
+            AND ss.actual_reps > 0
         ),
         ranked AS (
           SELECT name, category, reps, weight, e1rm,
@@ -620,6 +628,7 @@ export function getUserTrainingStats(userId: number, now: Date = new Date()): Tr
 
   return {
     hasData: totals.sessions > 0 && totals.sets > 0,
+    usesKilograms: !!db.prepare("SELECT 1 FROM sessions WHERE user_id=? AND status='completed' AND unit='kg' LIMIT 1").get(userId),
     totals,
     bigThree: buildBigThree(perLiftRows, recentRows),
     weeklyVolume: windowed.weeklyVolume,
@@ -642,6 +651,7 @@ export type RecapExercise = Readonly<{
 
 export type SessionRecap = Readonly<{
   status: string;
+  unit: "lb" | "kg";
   date: string;
   programName: string;
   dayName: string;
@@ -658,6 +668,7 @@ export function getSessionRecap(userId: number, sessionId: number): SessionRecap
       `
         SELECT
           s.status AS status,
+          s.unit AS unit,
           s.date AS date,
           COALESCE(NULLIF(s.program_name, ''), p.name, '') AS programName,
           COALESCE(NULLIF(s.day_name, ''), d.name, pdd.name, '') AS dayName
@@ -669,14 +680,14 @@ export function getSessionRecap(userId: number, sessionId: number): SessionRecap
       `,
     )
     .get(sessionId, userId) as
-    | { status: string; date: string; programName: string; dayName: string }
+    | { status: string; unit: "lb" | "kg"; date: string; programName: string; dayName: string }
     | undefined;
   if (!session) return null;
 
   const rows = db
     .prepare(
       `
-        SELECT exercise_name AS name, progression_type AS progressionType,
+        SELECT exercise_name AS name, CASE WHEN json_valid(editor_json) AND json_extract(editor_json,'$.set.loadMode') IN ('bodyweight','added') THEN 'bodyweight' ELSE progression_type END AS progressionType,
                actual_reps AS actualReps, actual_weight AS actualWeight, sets AS setCount
         FROM session_sets
         WHERE session_id = ?
@@ -722,13 +733,14 @@ export function getSessionRecap(userId: number, sessionId: number): SessionRecap
       skipped: agg.reps.length === 0,
       loggedSets: agg.reps.length,
       totalReps: agg.reps.reduce((sum, r) => sum + r, 0),
-      topWeight: round(agg.topWeight),
+      topWeight: agg.topWeight,
       repScheme: agg.reps.join("/"),
     };
   });
 
   return {
     status: session.status,
+    unit: session.unit,
     date: session.date,
     programName: session.programName,
     dayName: session.dayName,
@@ -742,6 +754,7 @@ export function getSessionRecap(userId: number, sessionId: number): SessionRecap
 // --- "Last time" reference: the most recent prior completed performance per lift ---
 
 export type LastPerformance = Readonly<{
+  unit: "lb" | "kg";
   date: string;
   reps: number[];
   topWeight: number;
@@ -760,18 +773,18 @@ export function getLastPerformanceByExercise(userId: number, sessionId: number):
             ss.exercise_name AS name,
             ss.set_number AS setNumber,
             ss.actual_reps AS reps,
-            COALESCE(ss.actual_weight, ss.calculated_weight, 0) AS weight,
+            COALESCE(ss.actual_weight, 0) AS weight,
             ss.sets AS setCount,
-            ss.progression_type AS progressionType,
+            CASE WHEN json_valid(ss.editor_json) AND json_extract(ss.editor_json,'$.set.loadMode') IN ('bodyweight','added') THEN 'bodyweight' ELSE ss.progression_type END AS progressionType,
+            s.unit AS unit,
             s.date AS date,
             DENSE_RANK() OVER (PARTITION BY ss.exercise_name ORDER BY s.date DESC, s.id DESC) AS sessionRank
           FROM session_sets ss
           JOIN sessions s ON s.id = ss.session_id
-          WHERE s.user_id = ? AND s.status = 'completed' AND s.id <> ?
-            AND ss.actual_reps IS NOT NULL
+          WHERE s.user_id = ? AND s.status = 'completed' AND ss.actual_reps IS NOT NULL AND s.id <> ?
             AND ss.exercise_name IN (SELECT DISTINCT exercise_name FROM session_sets WHERE session_id = ?)
         )
-        SELECT name, setNumber, reps, weight, setCount, progressionType, date
+        SELECT name, setNumber, reps, weight, setCount, progressionType, unit, date
         FROM ranked WHERE sessionRank = 1
         ORDER BY name, setNumber
       `,
@@ -782,18 +795,19 @@ export function getLastPerformanceByExercise(userId: number, sessionId: number):
     weight: number;
     setCount: number;
     progressionType: string;
+    unit: "lb" | "kg";
     date: string;
   }[];
 
-  const result: Record<string, { date: string; reps: number[]; topWeight: number; bodyweight: boolean }> = {};
+  const result: Record<string, { date: string; unit: "lb" | "kg"; reps: number[]; topWeight: number; bodyweight: boolean }> = {};
   for (const row of rows) {
     const name = row.name.trim();
     if (!name) continue;
     const entry =
-      result[name] ?? (result[name] = { date: row.date, reps: [], topWeight: 0, bodyweight: row.progressionType === "bodyweight" });
+      result[name] ?? (result[name] = { date: row.date, unit: row.unit, reps: [], topWeight: 0, bodyweight: row.progressionType === "bodyweight" });
     const count = row.setCount > 0 ? row.setCount : 1;
     for (let i = 0; i < count; i += 1) entry.reps.push(row.reps);
-    entry.topWeight = Math.max(entry.topWeight, Math.round(row.weight));
+    entry.topWeight = Math.max(entry.topWeight, row.weight);
   }
   return result;
 }

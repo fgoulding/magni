@@ -38,7 +38,7 @@ export default async function StatsPage({ searchParams }: StatsPageProps) {
 
   const tiles = [
     { label: "Workouts", value: formatNumber(stats.totals.sessions) },
-    { label: "Volume lb", value: formatCompact(stats.totals.volume) },
+    { label: stats.usesKilograms ? "Volume lb equiv." : "Volume lb", value: formatCompact(stats.totals.volume) },
     { label: "This week", value: formatNumber(stats.frequency.thisWeek) },
   ];
 
@@ -49,6 +49,8 @@ export default async function StatsPage({ searchParams }: StatsPageProps) {
         <h1 className="display text-4xl">Statistics</h1>
       </header>
 
+      <Link href="/workouts" className="touch-target inline-flex items-center self-start rounded-xl border border-line px-3 text-sm font-semibold text-brand-strong">Workout history</Link>
+      {stats.usesKilograms && <p className="text-xs text-muted">Combined volume, loads and estimated maxes use lb equivalent. Each workout retains its original units in History.</p>}
       {!stats.hasData ? (
         <section className="card flex min-h-72 flex-col items-center justify-center px-6 text-center">
           <TrendingUp aria-hidden="true" className="text-brand/40" size={34} />

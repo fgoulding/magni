@@ -1,0 +1,100 @@
+{
+  "schemaVersion": 1,
+  "name": "Top set and back-offs",
+  "description": "",
+  "unit": "lb",
+  "cycles": 4,
+  "weekdays": [
+    1,
+    3,
+    5
+  ],
+  "startDate": "2026-09-07",
+  "weeks": [
+    {
+      "id": "8880e6e4-14cc-43c2-b459-9cf5c04f3367",
+      "name": "Week 1",
+      "block": "",
+      "deload": false,
+      "days": [
+        {
+          "id": "eb43e3dc-f5bd-440b-81ce-9f7c53a8cef1",
+          "name": "Day A",
+          "exercises": [
+            {
+              "id": "783205ab-3e97-4f55-8e2e-61a397502b95",
+              "name": "Squat",
+              "progressionKey": "5c084dae-c5ee-4470-994a-5d3374ce8443",
+              "baseLoad": 135,
+              "trainingMax": 100,
+              "supersetGroup": "",
+              "notes": "",
+              "rule": {
+                "version": 1,
+                "condition": {
+                  "type": "designated_set",
+                  "setId": "ec36c052-e5c9-456c-8615-89856d097138",
+                  "targetReps": 8
+                },
+                "action": {
+                  "variable": "load",
+                  "unit": "lb",
+                  "operation": "add",
+                  "amount": 2.5,
+                  "rounding": {
+                    "mode": "nearest",
+                    "quantum": 2.5
+                  },
+                  "timing": "per_exposure"
+                },
+                "skipPolicy": "hold",
+                "partialPolicy": "hold"
+              },
+              "sets": [
+                {
+                  "id": "ec36c052-e5c9-456c-8615-89856d097138",
+                  "role": "top",
+                  "repMin": 5,
+                  "repMax": 8,
+                  "loadMode": "working",
+                  "load": 0,
+                  "effortKind": "rpe",
+                  "effort": 8,
+                  "restSeconds": 120,
+                  "tempo": "",
+                  "notes": ""
+                },
+                {
+                  "id": "b81df2fe-a0ec-4f5d-aae2-80383f342d3d",
+                  "role": "backoff",
+                  "repMin": 8,
+                  "repMax": 8,
+                  "loadMode": "fixed",
+                  "load": 115,
+                  "effortKind": "rir",
+                  "effort": 2,
+                  "restSeconds": 120,
+                  "tempo": "",
+                  "notes": ""
+                },
+                {
+                  "id": "709eeb69-f367-447a-8164-c0a78433311f",
+                  "role": "backoff",
+                  "repMin": 8,
+                  "repMax": 8,
+                  "loadMode": "fixed",
+                  "load": 115,
+                  "effortKind": "rir",
+                  "effort": 2,
+                  "restSeconds": 120,
+                  "tempo": "",
+                  "notes": ""
+                }
+              ]
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

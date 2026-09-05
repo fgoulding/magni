@@ -8,7 +8,7 @@ export const dynamic = "force-dynamic";
 export function GET() {
   try {
     db.prepare("SELECT 1").get();
-    return NextResponse.json({ status: "ok" });
+    return NextResponse.json({ status: "ok", revision: process.env.APP_REVISION ?? "local-unreleased" });
   } catch {
     return NextResponse.json({ status: "error" }, { status: 503 });
   }

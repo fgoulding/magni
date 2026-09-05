@@ -2,10 +2,13 @@
 
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { useState } from "react";
+import { useState, useSyncExternalStore } from "react";
 import { ErrorBanner } from "@/components/ErrorBanner";
 
+const subscribeHydration = () => () => {};
+
 export function AuthForm({ mode }: { mode: "login" | "register" }) {
+  const hydrated = useSyncExternalStore(subscribeHydration, () => true, () => false);
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [error, setError] = useState("");
@@ -14,6 +17,7 @@ export function AuthForm({ mode }: { mode: "login" | "register" }) {
 
   async function submit(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
+    if (!hydrated || submitting) return;
     setError("");
     setSubmitting(true);
 
@@ -54,6 +58,7 @@ export function AuthForm({ mode }: { mode: "login" | "register" }) {
         Email
         <input
           type="email"
+          disabled={!hydrated || submitting}
           value={email}
           onChange={(event) => setEmail(event.target.value)}
           autoComplete="email"
@@ -66,6 +71,7 @@ export function AuthForm({ mode }: { mode: "login" | "register" }) {
         Password
         <input
           type="password"
+          disabled={!hydrated || submitting}
           value={password}
           onChange={(event) => setPassword(event.target.value)}
           autoComplete={mode === "login" ? "current-password" : "new-password"}
@@ -77,7 +83,7 @@ export function AuthForm({ mode }: { mode: "login" | "register" }) {
 
       <button
         type="submit"
-        disabled={submitting}
+        disabled={!hydrated || submitting}
         className="touch-target rounded-xl bg-brand px-4 text-base font-semibold text-white transition-colors active:bg-brand-strong disabled:opacity-50"
       >
         {submitting ? "Working…" : mode === "login" ? "Log in" : "Create account"}

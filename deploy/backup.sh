@@ -14,26 +14,19 @@ OUT_DIR=${OUT_DIR:-backups}
 KEEP_DAYS=${KEEP_DAYS:-30}
 mkdir -p "$OUT_DIR"
 
-# 1. Online backup — a consistent snapshot even under concurrent writes (NOT a
-#    raw cp, which can copy a torn page mid-write).
-docker compose exec -T app node -e "require('better-sqlite3')(process.env.DB_PATH).backup('/data/backup.tmp.db').then(()=>process.exit(0)).catch(e=>{console.error(e);process.exit(1)})"
-
-# 2. Verify the snapshot BEFORE keeping it, so a corrupt source can't quietly
-#    rotate away your good backups.
-CHECK=$(docker compose exec -T app node -e "process.stdout.write(require('better-sqlite3')('/data/backup.tmp.db',{readonly:true}).pragma('quick_check',{simple:true}))")
-if [ "$CHECK" != "ok" ]; then
-  echo "ABORT: snapshot failed integrity check ($CHECK). Keeping existing backups." >&2
-  docker compose exec -T app rm -f /data/backup.tmp.db
-  exit 1
-fi
-
-# 3. Copy it to the host, compress, clean up the in-volume temp.
-docker compose cp app:/data/backup.tmp.db "$OUT_DIR/workouts-$TS.db"
-docker compose exec -T app rm -f /data/backup.tmp.db
-gzip -f "$OUT_DIR/workouts-$TS.db"
+# The same verified maintenance command is exercised by the local recovery tests.
+REMOTE="/data/backup-$TS-$$.tmp.db"
+cleanup() { docker compose exec -T app rm -f "$REMOTE" "$REMOTE.json" >/dev/null 2>&1 || true; }
+trap cleanup EXIT HUP INT TERM
+docker compose exec -T app node scripts/database-maintenance.mjs backup --database /data/workouts.db --output "$REMOTE"
+docker compose cp "app:$REMOTE" "$OUT_DIR/workouts-$TS-$$.db"
+docker compose cp "app:$REMOTE.json" "$OUT_DIR/workouts-$TS-$$.db.json"
+gzip -f "$OUT_DIR/workouts-$TS-$$.db"
+# Mark success only after the verified snapshot has reached host storage.
+docker compose exec -T app cp "$REMOTE.json" /data/backup-status.json
 
 # 4. Rotate: drop local snapshots older than KEEP_DAYS.
-find "$OUT_DIR" -name 'workouts-*.db.gz' -mtime +"$KEEP_DAYS" -delete 2>/dev/null || true
+find "$OUT_DIR" \( -name 'workouts-*.db.gz' -o -name 'workouts-*.db.json' \) -mtime +"$KEEP_DAYS" -delete 2>/dev/null || true
 
-echo "Backup OK: $OUT_DIR/workouts-$TS.db.gz (verified; keeping ${KEEP_DAYS} days locally)"
+echo "Backup OK: $OUT_DIR/workouts-$TS-$$.db.gz (verified; keeping ${KEEP_DAYS} days locally)"
 echo "NOTE: copy $OUT_DIR/ OFF this box — a backup on the same disk won't survive a disk failure."

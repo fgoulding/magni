@@ -2,7 +2,7 @@ import { Check, X } from "lucide-react";
 import type { SessionRecap } from "@/features/programs/training-stats";
 
 function formatNumber(value: number): string {
-  return new Intl.NumberFormat("en-US", { maximumFractionDigits: 0 }).format(value);
+  return new Intl.NumberFormat("en-US", { maximumFractionDigits: 20 }).format(value);
 }
 
 /** What a completed/skipped workout actually did — logged sets per exercise + skips. */
@@ -22,7 +22,7 @@ export function SessionRecapView({ recap }: { recap: SessionRecap }) {
           {recap.loggedCount} done
           {recap.skippedCount > 0 ? ` · ${recap.skippedCount} skipped` : ""}
         </span>
-        <span className="font-display tracking-tight">{formatNumber(recap.volume)} lb volume</span>
+        <span className="font-display tracking-tight">{formatNumber(recap.volume)} {recap.unit} volume</span>
       </div>
       <ul className="flex flex-col divide-y divide-line">
         {recap.exercises.map((exercise) => (
@@ -39,7 +39,7 @@ export function SessionRecapView({ recap }: { recap: SessionRecap }) {
               <span className="shrink-0 text-xs font-medium text-faint">Skipped</span>
             ) : (
               <span className="shrink-0 font-display text-sm tracking-tight text-muted">
-                {exercise.repScheme} {exercise.bodyweight ? "BW" : `@ ${formatNumber(exercise.topWeight)} lb`}
+                {exercise.repScheme} {exercise.bodyweight ? `BW${exercise.topWeight > 0 ? ` + ${formatNumber(exercise.topWeight)} ${recap.unit}` : ""}` : `@ ${formatNumber(exercise.topWeight)} ${recap.unit}`}
               </span>
             )}
           </li>

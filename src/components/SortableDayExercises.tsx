@@ -253,17 +253,17 @@ function StandaloneExercise({
   disabled: boolean;
   onSuperset: () => void;
 }) {
-  const sortable = useSortable({ id });
+  const { setNodeRef, setActivatorNodeRef, attributes, listeners, transform, transition, isDragging } = useSortable({ id });
   return (
     <div
-      ref={sortable.setNodeRef}
-      style={dragStyle(sortable)}
+      ref={setNodeRef}
+      style={dragStyle({ transform, transition, isDragging })}
       className="rounded-xl bg-surface-muted p-3"
     >
       <ExerciseRow
         exercise={exercise}
-        gripRef={sortable.setActivatorNodeRef}
-        gripProps={{ ...sortable.attributes, ...sortable.listeners }}
+        gripRef={setActivatorNodeRef}
+        gripProps={{ ...attributes, ...listeners }}
         leadingAction={
           canSuperset ? (
             <RowIconButton
@@ -299,7 +299,7 @@ function SupersetBlock({
   onPopOut: (exId: number) => void;
   onReorder: (activeId: number, overId: number) => void;
 }) {
-  const sortable = useSortable({ id });
+  const { setNodeRef, setActivatorNodeRef, attributes, listeners, transform, transition, isDragging } = useSortable({ id });
   const [activeMember, setActiveMember] = useState<number | null>(null);
   const sensors = useSensors(
     useSensor(PointerSensor, { activationConstraint: { distance: 6 } }),
@@ -308,19 +308,19 @@ function SupersetBlock({
   const activeMemberData = activeMember != null ? members.find((m) => m.id === activeMember) : null;
   return (
     <div
-      ref={sortable.setNodeRef}
-      style={dragStyle(sortable)}
+      ref={setNodeRef}
+      style={dragStyle({ transform, transition, isDragging })}
       className="rounded-2xl border border-brand-line bg-brand-soft/40 p-2"
     >
       <div className="mb-1 flex items-center justify-between gap-2 px-1">
         <div className="flex items-center gap-1.5">
           <button
             type="button"
-            ref={sortable.setActivatorNodeRef}
+            ref={setActivatorNodeRef}
             aria-label="Drag superset to reorder"
             className="touch-target -ml-1 inline-flex cursor-grab items-center text-brand-strong/70 active:cursor-grabbing"
-            {...sortable.attributes}
-            {...sortable.listeners}
+            {...attributes}
+            {...listeners}
           >
             <GripVertical aria-hidden="true" size={16} />
           </button>
@@ -393,13 +393,13 @@ function BlockMember({
   disabled: boolean;
   onPopOut: () => void;
 }) {
-  const sortable = useSortable({ id: `m-${exercise.id}` });
+  const { setNodeRef, setActivatorNodeRef, attributes, listeners, transform, transition, isDragging } = useSortable({ id: `m-${exercise.id}` });
   return (
-    <div ref={sortable.setNodeRef} style={dragStyle(sortable)} className="rounded-xl bg-surface p-3">
+    <div ref={setNodeRef} style={dragStyle({ transform, transition, isDragging })} className="rounded-xl bg-surface p-3">
       <ExerciseRow
         exercise={exercise}
-        gripRef={sortable.setActivatorNodeRef}
-        gripProps={{ ...sortable.attributes, ...sortable.listeners }}
+        gripRef={setActivatorNodeRef}
+        gripProps={{ ...attributes, ...listeners }}
         leadingAction={
           <RowIconButton onClick={onPopOut} disabled={disabled} label={`Remove ${exercise.name} from the superset`}>
             <Unlink2 aria-hidden="true" size={15} />
@@ -422,7 +422,7 @@ function titleCase(value: string): string {
   return value.charAt(0).toUpperCase() + value.slice(1);
 }
 
-function dragStyle(sortable: ReturnType<typeof useSortable>) {
+function dragStyle(sortable: Pick<ReturnType<typeof useSortable>, "transform" | "transition" | "isDragging">) {
   return {
     transform: CSS.Transform.toString(sortable.transform),
     transition: sortable.transition,

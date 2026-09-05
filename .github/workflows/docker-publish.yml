@@ -1,4 +1,4 @@
-# Build the image in CI and push it to GitHub Container Registry (GHCR).
+# Verify the exact checkout before publishing its image to GHCR.
 #
 #   push to main  -> publishes :latest  (Watchtower on the server auto-redeploys)
 #   push a v* tag -> publishes :vX.Y.Z   (a pinned, rollback-able release)
@@ -8,6 +8,7 @@
 name: Publish image
 
 on:
+  pull_request: {}
   workflow_dispatch: {}
   push:
     branches:
@@ -15,9 +16,58 @@ on:
     tags:
       - "v*"
 
+permissions:
+  contents: read
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
 jobs:
-  build-and-push:
+  verify:
+    name: Verify release candidate
     runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      CI: "true"
+      NEXT_TELEMETRY_DISABLED: "1"
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+
+      - name: Install locked dependencies
+        run: npm ci
+
+      - name: Install Chromium and WebKit with operating-system dependencies
+        run: npx playwright install --with-deps chromium webkit
+
+      - name: Run every release check
+        run: node scripts/release-check.mjs
+
+      - name: Upload verification evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-checks-${{ github.sha }}-${{ github.run_attempt }}
+          include-hidden-files: true
+          retention-days: 30
+          path: |
+            .playwright/release-checks/*.json
+            .playwright/release-checks/*.log
+            coverage/coverage-summary.json
+            .playwright/e2e-results.xml
+            .playwright/e2e-report/
+            .playwright/test-results/
+
+  build-and-push:
+    needs: verify
+    if: github.event_name != 'pull_request' && (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/v'))
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
     permissions:
       contents: read
       packages: write
@@ -39,19 +89,59 @@ jobs:
         uses: docker/metadata-action@v5
         with:
           images: ghcr.io/${{ github.repository }}
+          # A v* tag must not implicitly overwrite the auto-deployed latest tag.
+          flavor: latest=false
           tags: |
             type=ref,event=tag
-            type=raw,value=latest,enable={{is_default_branch}}
+            type=sha,format=long
+            type=raw,value=latest,enable={{is_default_branch}},priority=50
+          labels: |
+            org.opencontainers.image.revision=${{ github.sha }}
+            org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }}
 
       - name: Build and push
+        id: publish
         uses: docker/build-push-action@v6
         with:
           context: .
           push: true
+          build-args: APP_REVISION=${{ github.sha }}
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
+          provenance: mode=max
           # Cache every layer (incl. the apt + `npm ci` deps stage) in the GitHub
           # Actions cache. Subsequent builds reuse them, so a transient apt/npm
           # network hiccup no longer fails the build once a good cache exists.
           cache-from: type=gha
           cache-to: type=gha,mode=max
+
+      - name: Record published image
+        env:
+          IMAGE_DIGEST: ${{ steps.publish.outputs.digest }}
+          IMAGE_TAGS: ${{ steps.meta.outputs.tags }}
+          IMAGE_VERSION: ${{ steps.meta.outputs.version }}
+        run: |
+          node --input-type=module <<'NODE'
+          import { writeFileSync, appendFileSync } from 'node:fs';
+          const result = {
+            commit: process.env.GITHUB_SHA,
+            ref: process.env.GITHUB_REF,
+            version: process.env.IMAGE_VERSION,
+            tags: process.env.IMAGE_TAGS.split('\n').filter(Boolean),
+            digest: process.env.IMAGE_DIGEST,
+            verifiedRun: `${process.env.GITHUB_SERVER_URL}/${process.env.GITHUB_REPOSITORY}/actions/runs/${process.env.GITHUB_RUN_ID}`,
+            runAttempt: process.env.GITHUB_RUN_ATTEMPT,
+          };
+          if (!/^sha256:[a-f0-9]{64}$/.test(result.digest)) throw new Error('Missing immutable image digest');
+          const pinnedImage = `ghcr.io/${process.env.GITHUB_REPOSITORY.toLowerCase()}@${result.digest}`;
+          writeFileSync('published-image.json', JSON.stringify({ ...result, pinnedImage }, null, 2));
+          appendFileSync(process.env.GITHUB_STEP_SUMMARY, `Verified commit: ${result.commit}\n\nPinned image: \`${pinnedImage}\`\n`);
+          NODE
+
+      - name: Upload immutable image identity
+        uses: actions/upload-artifact@v4
+        with:
+          name: published-image-${{ github.sha }}-${{ github.run_attempt }}
+          path: published-image.json
+          if-no-files-found: error
+          retention-days: 90

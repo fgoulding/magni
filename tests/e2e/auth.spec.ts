@@ -1,11 +1,15 @@
 import { expect, test } from "@playwright/test";
 import { login, logout, register, registerViaApi } from "./helpers";
 
-test("registers, logs out, and logs back in", async ({ page }) => {
+test("registers, logs out, and logs back in", async ({ page }, info) => {
   const user = await register(page, "auth");
 
   await expect(page.getByText(user.email)).toBeVisible();
   await logout(page);
+  await expect(page.getByLabel("Email")).toBeEnabled();
+  await expect(page.getByLabel("Password")).toBeEnabled();
+  await expect(page.getByRole("button", { name: "Log in", exact: true })).toBeEnabled();
+  await page.screenshot({ path: info.outputPath("auth-ready.png"), fullPage: true, animations: "disabled" });
 
   await login(page, user.email, user.password);
   await expect(page.getByText(user.email)).toBeVisible();

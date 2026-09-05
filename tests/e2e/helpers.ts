@@ -80,7 +80,7 @@ export async function currentWeekdayLabel(page: Page): Promise<string> {
 
 export async function createProgram(page: Page, name: string): Promise<void> {
   await goToTab(page, "Programs");
-  await page.getByRole("link", { name: "New" }).click();
+  await page.getByRole("link", { name: "Original training systems" }).click();
   await expect(page).toHaveURL(/\/programs\/new$/);
   await expect(page.getByRole("heading", { name: "New program" })).toBeVisible();
   await page.getByLabel("Program name").fill(name);
@@ -104,10 +104,15 @@ export async function addDay(page: Page, name: string): Promise<void> {
   const response = await responsePromise;
   expect(response.ok()).toBe(true);
   await expect(page.getByText(name, { exact: true })).toBeVisible();
+  const dayToggle = page.getByRole("button").filter({ has: page.getByText(name, { exact: true }) });
+  await expect(dayToggle).toHaveAttribute("aria-expanded", "false");
+  await dayToggle.click();
+  await expect(dayToggle).toHaveAttribute("aria-expanded", "true");
 }
 
 export async function addLinearExercise(page: Page, name: string, trainingMax: string): Promise<void> {
   const form = page.locator("form").filter({ has: page.getByRole("heading", { name: "Add exercise" }) }).last();
+  if (!(await form.isVisible())) await page.getByRole("button", { name: "Add exercise", exact: true }).last().click();
   await form.getByPlaceholder("Squat").fill(name);
   await form.getByLabel("Training max").fill(trainingMax);
   await form.getByLabel("Progression").selectOption("linear");
@@ -117,8 +122,7 @@ export async function addLinearExercise(page: Page, name: string, trainingMax: s
   await form.getByRole("button", { name: "Add" }).click();
   const response = await responsePromise;
   expect(response.ok()).toBe(true);
-  // Progression id renders lowercase in the exercise meta (the picker shows "Linear").
-  await expect(page.getByText("linear", { exact: true }).first()).toBeVisible();
+  await expect(page.getByText(`Main · Linear · TM ${trainingMax}`, { exact: true })).toBeVisible();
 }
 
 export async function scheduleForToday(page: Page): Promise<string> {
@@ -151,10 +155,14 @@ export async function completeVisibleWorkout(page: Page, startButtonName = "Star
   await expect(page.getByRole("heading", { name: "Squat" })).toBeVisible();
 
   await page.getByRole("button", { name: "Log Set" }).click();
-  await expect(page.getByText("3 sets logged")).toBeVisible();
+  await expect(page.getByText("3,000 lb · 3 sets", { exact: true })).toBeVisible();
+  await expect(page.getByText("Logged", { exact: true })).toBeVisible();
   await page.getByRole("button", { name: "Finish Workout" }).click();
 
   await expect(page.getByText("Workout complete")).toBeVisible();
+  if (new URL(page.url()).pathname === "/today") {
+    await expect(page.getByText("Workout complete today", { exact: true })).toBeVisible();
+  }
   await expect(page.getByText("Squat").first()).toBeVisible();
   await expect(page.getByText("15 reps @ 200 lb")).toBeVisible();
   await expect(page.getByText("3,000 lb total")).toBeVisible();

@@ -1,0 +1,98 @@
+{
+  "schemaVersion": 1,
+  "name": "Double progression",
+  "description": "",
+  "unit": "lb",
+  "cycles": 4,
+  "weekdays": [
+    1,
+    3,
+    5
+  ],
+  "startDate": "2026-09-07",
+  "weeks": [
+    {
+      "id": "0566b77f-cb5c-4cb5-a72d-fc1d447838a0",
+      "name": "Week 1",
+      "block": "",
+      "deload": false,
+      "days": [
+        {
+          "id": "c0dcc637-f1d7-40cb-8c8c-e6607971645c",
+          "name": "Day A",
+          "exercises": [
+            {
+              "id": "5b42e2fb-465c-4bdf-8364-d1a1718e9c08",
+              "name": "Dumbbell row",
+              "progressionKey": "9d789d5e-bb0f-4067-a829-c129b4897369",
+              "baseLoad": 40,
+              "trainingMax": 100,
+              "supersetGroup": "",
+              "notes": "",
+              "rule": {
+                "version": 1,
+                "condition": {
+                  "type": "double_progression"
+                },
+                "action": {
+                  "variable": "load",
+                  "unit": "lb",
+                  "operation": "add",
+                  "amount": 2.5,
+                  "rounding": {
+                    "mode": "nearest",
+                    "quantum": 2.5
+                  },
+                  "timing": "per_exposure"
+                },
+                "skipPolicy": "hold",
+                "partialPolicy": "hold"
+              },
+              "sets": [
+                {
+                  "id": "47f81493-5b90-4a92-9e9b-ed2c4f64dc6d",
+                  "role": "work",
+                  "repMin": 8,
+                  "repMax": 12,
+                  "loadMode": "working",
+                  "load": 0,
+                  "effortKind": "none",
+                  "effort": 0,
+                  "restSeconds": 120,
+                  "tempo": "",
+                  "notes": ""
+                },
+                {
+                  "id": "620b5152-03f4-4a0e-9f6e-98f3ac922a9d",
+                  "role": "work",
+                  "repMin": 8,
+                  "repMax": 12,
+                  "loadMode": "working",
+                  "load": 0,
+                  "effortKind": "none",
+                  "effort": 0,
+                  "restSeconds": 120,
+                  "tempo": "",
+                  "notes": ""
+                },
+                {
+                  "id": "92564155-70dc-4c67-9f17-660b3df800cb",
+                  "role": "work",
+                  "repMin": 8,
+                  "repMax": 12,
+                  "loadMode": "working",
+                  "load": 0,
+                  "effortKind": "none",
+                  "effort": 0,
+                  "restSeconds": 120,
+                  "tempo": "",
+                  "notes": ""
+                }
+              ]
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

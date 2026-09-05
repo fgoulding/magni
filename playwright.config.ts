@@ -1,6 +1,7 @@
 import { defineConfig, devices } from "@playwright/test";
 
-const PORT = Number(process.env.E2E_PORT ?? 3000);
+const PORT = Number(process.env.E2E_PORT ?? 3108);
+if (!Number.isInteger(PORT) || PORT < 1 || PORT > 65535) throw new Error("E2E_PORT must be a valid TCP port");
 const baseURL = `http://localhost:${PORT}`;
 
 export default defineConfig({
@@ -10,10 +11,14 @@ export default defineConfig({
   retries: process.env.CI ? 2 : 0,
   workers: 1,
   outputDir: ".playwright/test-results",
-  reporter: [["list"]],
+  reporter: [
+    ["list"],
+    ["html", { outputFolder: ".playwright/e2e-report", open: "never" }],
+    ["junit", { outputFile: ".playwright/e2e-results.xml" }],
+  ],
   use: {
     baseURL,
-    trace: "on-first-retry",
+    trace: process.env.E2E_NAV_DIAGNOSTICS ? "retain-on-failure" : "on-first-retry",
   },
   projects: [
     {
@@ -26,9 +31,10 @@ export default defineConfig({
     },
   ],
   webServer: {
-    command: `mkdir -p .playwright && rm -f .playwright/e2e.sqlite .playwright/e2e.sqlite-* && DB_PATH=.playwright/e2e.sqlite /opt/homebrew/bin/npm run dev -- --webpack --hostname localhost --port ${PORT}`,
+    command: "node scripts/release-check.e2e-server.mjs",
     url: `${baseURL}/login`,
-    reuseExistingServer: !process.env.CI,
+    reuseExistingServer: false,
+    gracefulShutdown: { signal: "SIGTERM", timeout: 5_000 },
     timeout: 120_000,
   },
 });

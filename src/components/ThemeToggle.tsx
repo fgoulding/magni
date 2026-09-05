@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useSyncExternalStore } from "react";
 
 type Theme = "system" | "light" | "dark";
 
@@ -9,6 +9,29 @@ const OPTIONS: { value: Theme; label: string }[] = [
   { value: "light", label: "Light" },
   { value: "dark", label: "Dark" },
 ];
+
+const THEME_CHANGE_EVENT = "magni-theme-change";
+
+function getTheme(): Theme {
+  const saved = localStorage.getItem("theme");
+  return saved === "light" || saved === "dark" ? saved : "system";
+}
+
+function getServerTheme(): Theme {
+  return "system";
+}
+
+function subscribeToTheme(onChange: () => void) {
+  const onStorage = (event: StorageEvent) => {
+    if (event.key === "theme" || event.key === null) onChange();
+  };
+  window.addEventListener("storage", onStorage);
+  window.addEventListener(THEME_CHANGE_EVENT, onChange);
+  return () => {
+    window.removeEventListener("storage", onStorage);
+    window.removeEventListener(THEME_CHANGE_EVENT, onChange);
+  };
+}
 
 /** Resolve a preference to a concrete theme and apply it to <html> + status bar. */
 function apply(theme: Theme) {
@@ -22,14 +45,11 @@ function apply(theme: Theme) {
 }
 
 export function ThemeToggle() {
-  const [theme, setTheme] = useState<Theme>("system");
+  const theme = useSyncExternalStore(subscribeToTheme, getTheme, getServerTheme);
 
   useEffect(() => {
-    setTheme((localStorage.getItem("theme") as Theme) || "system");
-  }, []);
-
-  // In System mode, follow live OS changes.
-  useEffect(() => {
+    apply(theme);
+    // In System mode, follow live OS changes.
     if (theme !== "system") return;
     const query = window.matchMedia("(prefers-color-scheme: dark)");
     const onChange = () => apply("system");
@@ -38,8 +58,8 @@ export function ThemeToggle() {
   }, [theme]);
 
   function choose(next: Theme) {
-    setTheme(next);
     localStorage.setItem("theme", next);
+    window.dispatchEvent(new Event(THEME_CHANGE_EVENT));
     apply(next);
   }
 

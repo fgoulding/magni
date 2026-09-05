@@ -20,6 +20,8 @@ RUN npm run build
 
 # ---- runner: minimal production image ----
 FROM node:22-bookworm-slim AS runner
+ARG APP_REVISION=local-unreleased
+ENV APP_REVISION=$APP_REVISION
 WORKDIR /app
 ENV NODE_ENV=production \
     NEXT_TELEMETRY_DISABLED=1 \

@@ -3,7 +3,7 @@
 import "@testing-library/jest-dom/vitest";
 import { cleanup, render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { WorkoutCard } from "@/components/WorkoutCard";
 
 const routerMock = vi.hoisted(() => ({
@@ -13,6 +13,11 @@ const routerMock = vi.hoisted(() => ({
 vi.mock("next/navigation", () => ({
   useRouter: () => routerMock,
 }));
+
+beforeEach(() => {
+  const storage = new Map<string, string>();
+  vi.stubGlobal("localStorage", { getItem: (key: string) => storage.get(key) ?? null, setItem: (key: string, value: string) => storage.set(key, value), removeItem: (key: string) => storage.delete(key) });
+});
 
 afterEach(() => {
   cleanup();
@@ -149,7 +154,7 @@ describe("WorkoutCard", () => {
       "/api/sessions/42/sets",
       expect.objectContaining({
         method: "PUT",
-        body: JSON.stringify({ setId: 7, actualReps: 5, actualWeight: 225 }),
+        body: JSON.stringify({ setId: 7, actualReps: 5, actualWeight: 225, expectedActual: { reps: null, weight: null } }),
       }),
     );
   });
@@ -179,7 +184,7 @@ describe("WorkoutCard", () => {
 
     expect(await screen.findByText("Workout complete")).toBeInTheDocument();
     expect(screen.getByText("Squat")).toBeInTheDocument();
-    expect(routerMock.refresh).not.toHaveBeenCalled();
+    expect(routerMock.refresh).toHaveBeenCalledTimes(1);
   });
 
   it("summarizes completed workout reps per set with entered reps only on the final set", async () => {

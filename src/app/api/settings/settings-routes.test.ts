@@ -89,4 +89,12 @@ describe("settings routes", () => {
     expect((await settingsRoute.GET()).status).toBe(401);
     expect((await settingsRoute.POST(jsonRequest({ rounding: 5 }))).status).toBe(401);
   });
+  it("persists a valid timezone for only its owner and rejects unknown zones", async () => {
+    const user = dbModule.db.prepare("INSERT INTO users(email,password_hash) VALUES ('zone@example.test','hash')").run();
+    const { token } = auth.createSession(Number(user.lastInsertRowid));
+    cookieMock.store.set("auth_token", token);
+    expect((await settingsRoute.POST(jsonRequest({ timezone: "America/Los_Angeles" }))).status).toBe(200);
+    expect(await (await settingsRoute.GET()).json()).toMatchObject({ timezone: "America/Los_Angeles" });
+    expect((await settingsRoute.POST(jsonRequest({ timezone: "Mars/Olympus" }))).status).toBe(400);
+  });
 });

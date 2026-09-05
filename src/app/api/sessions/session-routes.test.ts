@@ -1,7 +1,8 @@
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
+import { createUnexpiredAuthSession } from "@/__tests__/auth-fixture";
 import { getProgramDefault } from "@/features/program-defaults/defaults";
 
 const cookieMock = vi.hoisted(() => {
@@ -88,7 +89,7 @@ function createUser(email: string): number {
 }
 
 function authenticate(userId: number): void {
-  const { token } = auth.createSession(userId);
+  const token = createUnexpiredAuthSession(dbModule.db, auth, userId);
   cookieMock.store.set("auth_token", token);
 }
 
@@ -174,6 +175,10 @@ beforeAll(async () => {
   trainingStats = await import("@/features/programs/training-stats");
 });
 
+afterEach(() => {
+  vi.useRealTimers();
+});
+
 beforeEach(() => {
   cookieMock.store.clear();
   vi.clearAllMocks();
@@ -184,7 +189,7 @@ beforeEach(() => {
 
 describe("session APIs", () => {
   it("rejects unauthenticated session history requests", async () => {
-    const response = await globalSessionsRoute.GET();
+    const response = await globalSessionsRoute.GET(new Request("http://localhost/api/sessions"));
 
     expect(response.status).toBe(401);
   });
@@ -199,7 +204,7 @@ describe("session APIs", () => {
       .run(seeded.programId, seeded.userId, seeded.dayId, "Program", "Day 1");
     dbModule.db.prepare("UPDATE programs SET archived_at = datetime('now'), is_active = 0 WHERE id = ?").run(seeded.programId);
 
-    const response = await globalSessionsRoute.GET();
+    const response = await globalSessionsRoute.GET(new Request("http://localhost/api/sessions"));
     const sessions = (await response.json()) as { program_name: string; day_name: string }[];
 
     expect(response.status).toBe(200);
@@ -343,37 +348,19 @@ describe("session APIs", () => {
     expect(response.status).toBe(401);
   });
 
-  it("enforces one in-progress Quick Workout per user per day at the DB level", async () => {
-    const userId = createUser("quick-unique-index@example.com");
+  it("serializes repeated quick starts while preserving a separate new workout after finish", async () => {
+    const userId = createUser("quick-serialized@example.com");
     authenticate(userId);
-
-    const session = await (await globalSessionsRoute.POST(jsonRequest({}))).json();
-    const date = dbModule.db.prepare("SELECT date FROM sessions WHERE id = ?").get(session.id) as {
-      date: string;
-    };
-
-    // A second raw in-progress program-less session for the same day must be
-    // rejected by the partial unique index — this is the guard behind the
-    // find-or-create race.
-    expect(() =>
-      dbModule.db
-        .prepare(
-          `INSERT INTO sessions (user_id, program_name, day_name, week_number, status, date)
-           VALUES (?, 'Quick Workout', 'Quick Workout', 1, 'in_progress', ?)`,
-        )
-        .run(userId, date.date),
-    ).toThrow(/UNIQUE/i);
-
-    // But once the first is completed, a new one for the same day is allowed.
-    dbModule.db.prepare("UPDATE sessions SET status = 'completed', completed = 1 WHERE id = ?").run(session.id);
-    expect(() =>
-      dbModule.db
-        .prepare(
-          `INSERT INTO sessions (user_id, program_name, day_name, week_number, status, date)
-           VALUES (?, 'Quick Workout', 'Quick Workout', 1, 'in_progress', ?)`,
-        )
-        .run(userId, date.date),
-    ).not.toThrow();
+    const responses = await Promise.all(Array.from({ length: 5 }, () => globalSessionsRoute.POST(jsonRequest({}))));
+    const results = await Promise.all(responses.map(response => response.json()));
+    expect(new Set(results.map(result => result.id)).size).toBe(1);
+    expect(dbModule.db.prepare("SELECT COUNT(*) AS n FROM sessions WHERE user_id=?").get(userId)).toEqual({ n: 1 });
+    const id = results[0].id;
+    dbModule.db.prepare("UPDATE sessions SET status = 'completed', completed = 1 WHERE id = ?").run(id);
+    const next = await globalSessionsRoute.POST(jsonRequest({}));
+    expect(next.status).toBe(201);
+    expect((await next.json()).id).not.toBe(id);
+    expect(dbModule.db.prepare("SELECT COUNT(*) AS n FROM sessions WHERE user_id=?").get(userId)).toEqual({ n: 2 });
   });
 
   it("supports adding, logging, and finishing a Quick Workout end-to-end", async () => {
@@ -613,15 +600,16 @@ describe("session APIs", () => {
     expect(prs[0]).toMatchObject({ weight: 100, reps: 5 });
   });
 
-  it("refuses to finish an already-completed session", async () => {
+  it("returns the original recap when finishing an already-completed session", async () => {
     const userId = createUser("quick-finish-twice@example.com");
     authenticate(userId);
 
     const session = await (await globalSessionsRoute.POST(jsonRequest({}))).json();
-    await sessionRoute.PATCH(jsonRequest({}), params({ sessionId: String(session.id) }));
+    const first = await sessionRoute.PATCH(jsonRequest({}), params({ sessionId: String(session.id) }));
     const second = await sessionRoute.PATCH(jsonRequest({}), params({ sessionId: String(session.id) }));
 
-    expect(second.status).toBe(400);
+    expect(second.status).toBe(200);
+    expect(await second.json()).toEqual(await first.json());
   });
 
   it("starts workouts from the canonical program run week when legacy program state is stale", async () => {
@@ -1372,7 +1360,7 @@ describe("session APIs", () => {
 
     cookieMock.store.clear();
     authenticate(owner.userId);
-    const response = await globalSessionsRoute.GET();
+    const response = await globalSessionsRoute.GET(new Request("http://localhost/api/sessions"));
     const rows = (await response.json()) as { program_id: number }[];
 
     expect(rows.map((row) => row.program_id)).toEqual([owner.programId]);

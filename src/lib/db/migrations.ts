@@ -1,4 +1,7 @@
 import type Database from "better-sqlite3";
+import { runProgramEditorMigration } from "@/features/program-editor/migration";
+import { createCalendarOperations, migrateOccurrenceSessionUniqueness } from "@/features/calendar/migration";
+import { runWorkoutHistoryMigration } from "@/features/workouts/migration";
 
 function hasColumn(db: Database.Database, tableName: string, columnName: string): boolean {
   const columns = db.prepare(`PRAGMA table_info(${tableName})`).all() as { name: string }[];
@@ -592,8 +595,7 @@ function createSessionsTable(db: Database.Database, tableName = "sessions"): voi
       skip_reason TEXT NOT NULL DEFAULT '',
       shared_program_version_id INTEGER REFERENCES shared_program_versions(id),
       scheduled_date TEXT,
-      date TEXT NOT NULL DEFAULT (date('now')),
-      UNIQUE(program_id, user_id, day_id, week_number, date)
+      date TEXT NOT NULL DEFAULT (date('now'))
     );
   `);
 }
@@ -1029,9 +1031,59 @@ export function runMigrations(db: Database.Database): void {
   ensureExerciseMaxHistoryTable(db);
   backfillProgramDefinitionsAndRuns(db);
   createSessionTriggers(db);
-  dedupeInProgressQuickWorkouts(db);
+  // Preserve older quick drafts; serialized creation prevents new start races.
+  db.exec("DROP INDEX IF EXISTS idx_sessions_unique_quick_in_progress");
   backfillAdHocSetCounts(db);
+  createWorkoutOccurrences(db);
   createPerformanceIndexes(db);
+  runProgramEditorMigration(db);
+  createCalendarOperations(db);
+  runWorkoutHistoryMigration(db);
+  migrateOccurrenceSessionUniqueness(db);
+}
+
+/** Additive migration: legacy prescriptions and performance stay in place. */
+function createWorkoutOccurrences(db: Database.Database): void {
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS workout_occurrences (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      program_id INTEGER REFERENCES programs(id) ON DELETE CASCADE,
+      program_run_id INTEGER REFERENCES program_runs(id) ON DELETE CASCADE,
+      definition_day_id INTEGER REFERENCES program_definition_days(id) ON DELETE SET NULL,
+      legacy_day_id INTEGER REFERENCES days(id) ON DELETE SET NULL,
+      slot_index INTEGER,
+      week_number INTEGER NOT NULL CHECK(week_number > 0),
+      day_number INTEGER NOT NULL CHECK(day_number > 0),
+      program_name TEXT NOT NULL,
+      day_name TEXT NOT NULL,
+      scheduled_date TEXT NOT NULL,
+      original_date TEXT NOT NULL,
+      status TEXT NOT NULL DEFAULT 'scheduled' CHECK(status IN ('scheduled','in_progress','completed','skipped')),
+      prescription_json TEXT NOT NULL DEFAULT '[]',
+      revision INTEGER NOT NULL DEFAULT 1,
+      moved INTEGER NOT NULL DEFAULT 0,
+      created_at TEXT NOT NULL DEFAULT (datetime('now')),
+      UNIQUE(program_run_id, slot_index)
+    );
+    CREATE INDEX IF NOT EXISTS idx_occurrences_user_date ON workout_occurrences(user_id, scheduled_date);
+  `);
+  addColumn(db, "sessions", "occurrence_id INTEGER REFERENCES workout_occurrences(id) ON DELETE SET NULL");
+  db.exec(`
+    CREATE UNIQUE INDEX IF NOT EXISTS idx_session_occurrence ON sessions(occurrence_id) WHERE occurrence_id IS NOT NULL;
+    CREATE TRIGGER IF NOT EXISTS occurrence_session_insert AFTER INSERT ON sessions
+    WHEN NEW.occurrence_id IS NOT NULL BEGIN
+      UPDATE workout_occurrences SET status = NEW.status WHERE id = NEW.occurrence_id;
+    END;
+    CREATE TRIGGER IF NOT EXISTS occurrence_session_status AFTER UPDATE OF status ON sessions
+    WHEN NEW.occurrence_id IS NOT NULL BEGIN
+      UPDATE workout_occurrences SET status = NEW.status WHERE id = NEW.occurrence_id;
+    END;
+    CREATE TRIGGER IF NOT EXISTS occurrence_session_delete AFTER DELETE ON sessions
+    WHEN OLD.occurrence_id IS NOT NULL BEGIN
+      UPDATE workout_occurrences SET status = 'scheduled' WHERE id = OLD.occurrence_id;
+    END;
+  `);
 }
 
 /** Ad-hoc exercises (hot-added in a session, and Quick Workouts) are stored one
@@ -1052,34 +1104,13 @@ function backfillAdHocSetCounts(db: Database.Database): void {
   `);
 }
 
-/** Quick Workouts are program-less in-progress sessions; there should be at most
- *  one per user per day. getQuickWorkoutForToday only ever surfaces the newest
- *  (ORDER BY id DESC), so any older same-day in-progress duplicate is already
- *  invisible/orphaned — remove it so the partial unique index below can be
- *  created safely. Runs before createPerformanceIndexes for that reason. */
-function dedupeInProgressQuickWorkouts(db: Database.Database): void {
-  db.exec(`
-    DELETE FROM sessions
-    WHERE program_id IS NULL
-      AND status = 'in_progress'
-      AND id NOT IN (
-        SELECT MAX(id) FROM sessions
-        WHERE program_id IS NULL AND status = 'in_progress'
-        GROUP BY user_id, date
-      );
-  `);
-}
-
 function createPerformanceIndexes(db: Database.Database): void {
   const indexes = [
     "CREATE INDEX IF NOT EXISTS idx_sessions_user_date ON sessions(user_id, date)",
     "CREATE INDEX IF NOT EXISTS idx_sessions_user_run_date ON sessions(user_id, program_run_id, date)",
     // Stats aggregates scan a user's completed sessions; this drives that + date windows.
     "CREATE INDEX IF NOT EXISTS idx_sessions_user_status_date ON sessions(user_id, status, date)",
-    "CREATE UNIQUE INDEX IF NOT EXISTS idx_sessions_unique_definition_day ON sessions(program_run_id, user_id, program_definition_day_id, week_number, date) WHERE program_definition_day_id IS NOT NULL",
-    // At most one in-progress Quick Workout (program-less session) per user per
-    // day — the DB-level guard behind POST /api/sessions' find-or-create.
-    "CREATE UNIQUE INDEX IF NOT EXISTS idx_sessions_unique_quick_in_progress ON sessions(user_id, date) WHERE program_id IS NULL AND status = 'in_progress'",
+    "CREATE UNIQUE INDEX IF NOT EXISTS idx_sessions_unique_definition_day ON sessions(program_run_id, user_id, program_definition_day_id, week_number, date) WHERE program_definition_day_id IS NOT NULL AND occurrence_id IS NULL",
     // Per-lift history & "last performance" filter session_sets by exercise_name;
     // without this they full-scan a user's whole set history on every Stats load.
     "CREATE INDEX IF NOT EXISTS idx_session_sets_exercise_name ON session_sets(exercise_name, session_id)",

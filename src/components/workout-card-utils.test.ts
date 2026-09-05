@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { buildGroups, type WorkoutSet } from "./workout-card-utils";
+import { buildGroups, isFlatSingle, isBodyweight, buildSummaryRows, summaryDetail, type WorkoutSet } from "./workout-card-utils";
 
 function set(id: number, name: string, opts: Partial<WorkoutSet> = {}): WorkoutSet {
   return {
@@ -38,5 +38,23 @@ describe("buildGroups", () => {
     expect(groups[0].sets).toHaveLength(3);
     expect(groups[1].sets.map((s) => s.exercise_name)).toEqual(["Split Squat", "Lateral Raise"]);
     expect(groups[2].sets.map((s) => s.exercise_name)).toEqual(["DB Row", "Dip"]);
+  });
+});
+
+describe("editor prescription display", () => {
+  it("keeps identical custom sets individually editable while preserving legacy flat groups", () => {
+    const legacy = buildGroups([set(1, "Row"), set(2, "Row")])[0];
+    expect(isFlatSingle(legacy)).toBe(true);
+    const edited = buildGroups([set(1, "Row", { editor_json: '{"unit":"kg","set":{"loadMode":"working"}}' }), set(2, "Row", { editor_json: '{"unit":"kg","set":{"loadMode":"working"}}' })])[0];
+    expect(isFlatSingle(edited)).toBe(false);
+  });
+  it("recognizes bodyweight on each editor set even in a mixed exercise", () => {
+    expect(isBodyweight(set(1, "Pull-up", { progression_type: "custom", editor_json: '{"set":{"loadMode":"added"}}' }))).toBe(true);
+    expect(isBodyweight(set(1, "Row", { progression_type: "bodyweight", editor_json: '{"set":{"loadMode":"working"}}' }))).toBe(false);
+  });
+  it("retains kg in summary labels and uses the actual saved weight", () => {
+    const row = buildSummaryRows([set(1, "Row", { actual_reps: 10, actual_weight: 40, calculated_weight: 50, editor_json: '{"unit":"kg"}' })], new Set([1]), {})[0];
+    expect(summaryDetail(row)).toBe("10 reps @ 40 kg");
+    expect(row.tonnage).toBe(400);
   });
 });

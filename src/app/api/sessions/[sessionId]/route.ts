@@ -1,70 +1,32 @@
 import { NextResponse } from "next/server";
-import { assertSameOrigin, isUnauthorized, jsonError, numberParam } from "@/lib/api";
-import { requireUser } from "@/lib/auth";
 import { db } from "@/lib/db";
-import { getSessionRecap } from "@/features/programs/training-stats";
-
-type RouteContext = {
-  params: Promise<{ sessionId: string }>;
-};
-
-/** Finish an in-progress workout (used by Quick Workout). Setting completed = 1
- *  fires the trigger that marks status='completed' + stamps completed_at; unlogged
- *  sets are treated as skipped by the recap, so a partial workout finishes cleanly.
- *  Returns the session recap for the finished card. */
-export async function PATCH(request: Request, context: RouteContext) {
-  try {
-    assertSameOrigin(request);
-    const user = await requireUser();
-    const { sessionId } = await context.params;
-    const id = numberParam(sessionId);
-
-    const session = db.prepare("SELECT user_id, status FROM sessions WHERE id = ?").get(id) as
-      | { user_id: number; status: string }
-      | undefined;
-    if (!session || session.user_id !== user.id) return jsonError("Session not found", 404);
-    if (session.status !== "in_progress") {
-      return jsonError("Only an in-progress workout can be finished", 400);
-    }
-
-    db.prepare("UPDATE sessions SET completed = 1 WHERE id = ?").run(id);
-
-    return NextResponse.json(getSessionRecap(user.id, id));
-  } catch (error) {
-    if (isUnauthorized(error)) return jsonError("Unauthorized", 401);
-    if (error instanceof Error && error.message === "Forbidden cross-origin request") {
-      return jsonError(error.message, 403);
-    }
-    return jsonError("Could not finish workout", 500);
-  }
+import { numberParam } from "@/lib/api";
+import { readWorkoutBody, workoutApi } from "@/features/workouts/api";
+import { finishQuickSession, getWorkout, updateQuickStructure, WorkoutError } from "@/features/workouts/history-service";
+type Context = { params: Promise<{ sessionId: string }> };
+export async function GET(request: Request, context: Context) {
+  return workoutApi(request, false, async (userId) => {
+    const session = getWorkout(userId, numberParam((await context.params).sessionId));
+    if (!session) throw new WorkoutError(404, "Workout not found.");
+    return NextResponse.json(session);
+  });
 }
-
-/** Cancel an in-progress workout: discard the session (and its logged sets, which
- *  cascade) so the day returns to not-started. Completed/skipped sessions are
- *  historical and never deleted here. */
-export async function DELETE(request: Request, context: RouteContext) {
-  try {
-    assertSameOrigin(request);
-    const user = await requireUser();
-    const { sessionId } = await context.params;
-    const id = numberParam(sessionId);
-
-    const session = db.prepare("SELECT user_id, status FROM sessions WHERE id = ?").get(id) as
-      | { user_id: number; status: string }
-      | undefined;
-    if (!session || session.user_id !== user.id) return jsonError("Session not found", 404);
-    if (session.status !== "in_progress") {
-      return jsonError("Only an in-progress workout can be canceled", 400);
-    }
-
-    // session_sets are removed by ON DELETE CASCADE.
-    db.prepare("DELETE FROM sessions WHERE id = ?").run(id);
+export async function PUT(request: Request, context: Context) {
+  return workoutApi(request, true, async (userId) => {
+    const body = await readWorkoutBody<Omit<Parameters<typeof updateQuickStructure>[0], "userId" | "sessionId">>(request);
+    return NextResponse.json(updateQuickStructure({ ...body, userId, sessionId: numberParam((await context.params).sessionId) }));
+  });
+}
+export async function PATCH(request: Request, context: Context) {
+  return workoutApi(request, true, async (userId) => NextResponse.json(finishQuickSession(userId, numberParam((await context.params).sessionId))));
+}
+export async function DELETE(request: Request, context: Context) {
+  return workoutApi(request, true, async (userId) => {
+    const id = numberParam((await context.params).sessionId);
+    const session = getWorkout(userId, id);
+    if (!session) throw new WorkoutError(404, "Workout not found.");
+    if (session.status !== "in_progress") throw new WorkoutError(400, "Only an in-progress workout can be discarded.");
+    db.prepare("DELETE FROM sessions WHERE id=? AND user_id=?").run(id, userId);
     return NextResponse.json({ success: true });
-  } catch (error) {
-    if (isUnauthorized(error)) return jsonError("Unauthorized", 401);
-    if (error instanceof Error && error.message === "Forbidden cross-origin request") {
-      return jsonError(error.message, 403);
-    }
-    return jsonError("Could not cancel workout", 500);
-  }
+  });
 }

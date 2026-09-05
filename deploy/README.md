@@ -16,9 +16,12 @@ never knows about your deployment.
             (no inbound ports opened — anything else on the host is untouched)
 ```
 
-**The automated loop:** you push to `main` → CI publishes `:latest` → Watchtower
-redeploys within ~3 minutes. That's the whole flow. No SSH needed for routine
-updates. Tag `v*` only when you want a pinned, rollback-able release.
+**The automated loop:** push to `main` → CI verifies the exact commit → CI
+publishes `:latest` → Watchtower redeploys within ~3 minutes. Verification requires
+typecheck, strict lint, the full configured test coverage, a production build,
+and Chromium plus iPhone WebKit E2E checks. Any failed check blocks publication.
+Each image also has a full commit SHA tag and a recorded immutable digest.
+See [release verification and image identity](RELEASE.md) before rollout.
 
 ---
 
@@ -64,9 +67,11 @@ Then open **https://magni.tylergould.ing/register** and create your account
 
 ## Updating (the normal path — automatic)
 
-Just push to `main` in the public repo. CI builds `ghcr.io/fgoulding/magni:latest`
-and Watchtower redeploys it. The `app_data` volume is reused, so **all history is
-preserved** and schema migrations run automatically on boot.
+After an authorized push to `main`, CI runs the release checks before publishing
+`ghcr.io/fgoulding/magni:latest`; Watchtower then redeploys it. A failing or skipped
+verification job prevents the publication job from starting. The `app_data`
+volume is reused and schema migrations run automatically on boot; validate the
+candidate against a restored populated backup before promoting an upgrade.
 
 Watch it happen: `docker compose logs -f watchtower`.
 
@@ -76,9 +81,16 @@ Watch it happen: `docker compose logs -f watchtower`.
 git tag v1.0.0 && git push origin v1.0.0   # CI also publishes the :v1.0.0 image
 ```
 
-To roll back, set `IMAGE=ghcr.io/fgoulding/magni:v0.9.0` in `.env`, comment out the
-`watchtower` service (so it stops re-pulling `:latest`), then
-`docker compose up -d`.
+Version tags are published only after the same verification and do not update
+`:latest`. The `published-image-<commit>-<attempt>` Actions artifact records the
+tag, full commit, workflow run, and digest. For an exact image, use its
+`pinnedImage` value, for example
+`IMAGE=ghcr.io/fgoulding/magni@sha256:<digest>`.
+
+For rollback, stop Watchtower and select a previously verified digest. Confirm
+that the earlier application supports the current database schema before
+restarting it. If it does not, restore the corresponding tested pre-upgrade
+backup using `restore.sh`; an image change alone does not undo migrations.
 
 ## Backups
 

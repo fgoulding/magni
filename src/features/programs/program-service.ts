@@ -1,4 +1,6 @@
+import { userDateKey } from "@/lib/user-date";
 import crypto from "node:crypto";
+import { getOccurrences, occurrenceLiftPreview, reflowOccurrences } from "./occurrences";
 import { resolveTrainingTemplate } from "@/features/training-templates/user-templates";
 import type { ExerciseCategory, TemplateWeek, TrainingTemplate } from "@/features/training-templates/types";
 import { getSettingNumber } from "@/lib/auth";
@@ -91,6 +93,7 @@ export type ProgramDaySummary = Readonly<{
 }>;
 
 export type TodayLiftPreview = Readonly<{
+  detail?: string;
   name: string;
   set_count: number;
   reps: number;
@@ -99,6 +102,7 @@ export type TodayLiftPreview = Readonly<{
 }>;
 
 export type TodayWorkoutSummary = ProgramDaySummary & Readonly<{
+  occurrence_id?: number;
   schedule_label: string;
   scheduled_date?: string;
   last_session_date: string | null;
@@ -108,6 +112,7 @@ export type TodayWorkoutSummary = ProgramDaySummary & Readonly<{
 }>;
 
 export type TodayWorkoutDashboard = Readonly<{
+  activeWorkouts: TodayWorkoutSummary[];
   missedWorkouts: TodayWorkoutSummary[];
   scheduledToday: TodayWorkoutSummary[];
   otherActiveRuns: TodayWorkoutSummary[];
@@ -168,7 +173,6 @@ type DayContext = Readonly<{
   numWeeks: number;
 }>;
 
-const MISSED_WORKOUT_LOOKBACK_DAYS = 6;
 const DATE_KEY_PATTERN = /^\d{4}-\d{2}-\d{2}$/;
 
 function slugify(value: string): string {
@@ -310,16 +314,6 @@ export function isDateHeldForRun(
 }
 
 const WEEKDAY_LABELS = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"] as const;
-
-function parseScheduleWeekdays(value: string): number[] {
-  try {
-    const parsed = JSON.parse(value) as unknown;
-    if (!Array.isArray(parsed)) return [];
-    return parsed.filter((day): day is number => Number.isInteger(day) && day >= 0 && day <= 6);
-  } catch {
-    return [];
-  }
-}
 
 function syncScheduleDays(runId: number, scheduleWeekdays: readonly number[] | undefined): void {
   if (!scheduleWeekdays) return;
@@ -738,47 +732,6 @@ function enrichTodayRow(
   };
 }
 
-function addDays(date: Date, amount: number): Date {
-  return new Date(date.getFullYear(), date.getMonth(), date.getDate() + amount);
-}
-
-function findScheduledDay(programRows: readonly ProgramDaySummary[], weekday: number): ProgramDaySummary | undefined {
-  const firstRow = programRows[0];
-  const scheduleIndex = parseScheduleWeekdays(firstRow.schedule_weekdays).indexOf(weekday);
-  if (scheduleIndex === -1) return undefined;
-  return programRows.find((row) => row.day_number === scheduleIndex + 1);
-}
-
-function hasLoggedWorkoutOnOrAfter(userId: number, row: ProgramDaySummary, scheduledDate: string): boolean {
-  const existing = db
-    .prepare(
-      `
-        SELECT 1
-        FROM sessions
-        WHERE user_id = ?
-          AND week_number = ?
-          AND date >= ?
-          AND (program_run_id = ? OR program_id = ?)
-          AND (
-            program_definition_day_id = ?
-            OR (program_definition_day_id IS NULL AND day_id = ?)
-          )
-        LIMIT 1
-      `,
-    )
-    .get(
-      userId,
-      row.current_week,
-      scheduledDate,
-      row.program_run_id,
-      row.program_id,
-      row.definition_day_id,
-      row.legacy_day_id,
-    );
-
-  return Boolean(existing);
-}
-
 function getSessionForDate(
   userId: number,
   row: ProgramDaySummary,
@@ -860,6 +813,8 @@ export function getProgramRunHoldsForRange({
   return rows.map(mapProgramRunHold);
 }
 
+// Mutations that read context before writing reserve the writer up front so
+// another connection cannot invalidate that read's WAL snapshot.
 export const createProgramRunHold = db.transaction(
   ({
     userId,
@@ -920,9 +875,10 @@ export const createProgramRunHold = db.transaction(
       canceled_at: string | null;
     };
 
+    reflowOccurrences(userId, legacyProgramId);
     return mapProgramRunHold(row);
   },
-);
+).immediate;
 
 export const cancelActiveProgramRunHold = db.transaction(
   ({ userId, legacyProgramId, today = new Date() }: { userId: number; legacyProgramId: number; today?: Date }): boolean => {
@@ -947,111 +903,56 @@ export const cancelActiveProgramRunHold = db.transaction(
       )
       .run(userId, context.runId, todayKey);
 
+    reflowOccurrences(userId, legacyProgramId);
     return result.changes > 0;
   },
-);
-
-/** Whole days from one YYYY-MM-DD key to another (DST-safe via UTC). */
-function daysBetweenKeys(fromKey: string, toKey: string): number {
-  const [fy, fm, fd] = fromKey.split("-").map(Number);
-  const [ty, tm, td] = toKey.split("-").map(Number);
-  if ([fy, fm, fd, ty, tm, td].some((n) => Number.isNaN(n))) return 0;
-  return Math.round((Date.UTC(ty, tm - 1, td) - Date.UTC(fy, fm - 1, fd)) / 86_400_000);
-}
-
-/** Date-driven program week for a scheduled run on a given day: how many 7-day
- *  periods have elapsed since the schedule's start (1-based, clamped to the
- *  program length). Keeps the Today card's week in step with the calendar
- *  projection, which anchors off the same schedule_start_date. */
-function scheduledWeekForDate(startDateKey: string | null | undefined, numWeeks: number, dateKey: string): number {
-  if (!startDateKey) return 1;
-  const weeksElapsed = Math.floor(daysBetweenKeys(startDateKey, dateKey) / 7);
-  return Math.min(Math.max(weeksElapsed + 1, 1), Math.max(numWeeks, 1));
-}
-
-/** True once `dateKey` falls past the program's final scheduled week. The week
- *  clamp in scheduledWeekForDate would otherwise pin a finished program at its
- *  last week forever, so the Today card kept nagging week N day 1 after the end.
- *  A null start date means an open-ended schedule that never "completes". */
-function isScheduleCompleteForDate(
-  startDateKey: string | null | undefined,
-  numWeeks: number,
-  dateKey: string,
-): boolean {
-  if (!startDateKey) return false;
-  const weeksElapsed = Math.floor(daysBetweenKeys(startDateKey, dateKey) / 7);
-  return weeksElapsed + 1 > Math.max(numWeeks, 1);
-}
+).immediate;
 
 export function getTodayWorkoutDashboard(userId: number, today = new Date()): TodayWorkoutDashboard {
   const rows = getActiveProgramDaysForUser(userId);
-  const todayWeekday = today.getDay();
-  const todayDateKey = toLocalDateKey(today);
-  const rangeStart = toLocalDateKey(addDays(today, -MISSED_WORKOUT_LOOKBACK_DAYS));
-  const holds = getProgramRunHoldsForRange({ userId, startDate: rangeStart, endDate: todayDateKey });
-  const rowsByProgram = new Map<number, ProgramDaySummary[]>();
-  for (const row of rows) {
-    rowsByProgram.set(row.program_id, [...(rowsByProgram.get(row.program_id) ?? []), row]);
-  }
-
+  const todayDateKey = userDateKey(userId, today);
+  const todayWeekday = new Date(`${todayDateKey}T12:00:00Z`).getUTCDay();
+  const holds = getProgramRunHoldsForRange({ userId, startDate: todayDateKey, endDate: todayDateKey });
+  const activeWorkouts: TodayWorkoutSummary[] = [];
   const missedWorkouts: TodayWorkoutSummary[] = [];
   const scheduledToday: TodayWorkoutSummary[] = [];
   const otherActiveRuns: TodayWorkoutSummary[] = [];
   const cache = newDashboardCache(userId);
-
-  for (const programRows of rowsByProgram.values()) {
-    const firstRow = programRows[0];
-    if (firstRow.schedule_mode === "scheduled") {
-      const seenMissedDays = new Set<string>();
-      const daysSinceMonday = (todayWeekday + 6) % 7;
-      const missedLookbackDays = Math.min(MISSED_WORKOUT_LOOKBACK_DAYS, daysSinceMonday);
-      for (let offset = 1; offset <= missedLookbackDays; offset += 1) {
-        const missedDate = addDays(today, -offset);
-        const missedDateKey = toLocalDateKey(missedDate);
-        const missedDay = findScheduledDay(programRows, missedDate.getDay());
-        const missedKey = missedDay ? `${missedDay.program_id}:${missedDay.definition_day_id}` : "";
-        if (
-          missedDay &&
-          !seenMissedDays.has(missedKey) &&
-          !isDateHeldForRun(holds, missedDay.program_run_id, missedDateKey) &&
-          !isScheduleCompleteForDate(missedDay.schedule_start_date, missedDay.num_weeks, missedDateKey) &&
-          !hasLoggedWorkoutOnOrAfter(userId, missedDay, missedDateKey)
-        ) {
-          seenMissedDays.add(missedKey);
-          const missedWeek = scheduledWeekForDate(missedDay.schedule_start_date, missedDay.num_weeks, missedDateKey);
-          missedWorkouts.push(
-            enrichTodayRow(
-              userId,
-              { ...missedDay, current_week: missedWeek },
-              `Missed ${WEEKDAY_LABELS[missedDate.getDay()]}`,
-              todayDateKey,
-              missedDateKey,
-              cache,
-            ),
-          );
-        }
-      }
-
-      const dayRow = findScheduledDay(programRows, todayWeekday);
-      if (
-        dayRow &&
-        !isDateHeldForRun(holds, dayRow.program_run_id, todayDateKey) &&
-        !isScheduleCompleteForDate(dayRow.schedule_start_date, dayRow.num_weeks, todayDateKey)
-      ) {
-        const week = scheduledWeekForDate(dayRow.schedule_start_date, dayRow.num_weeks, todayDateKey);
-        scheduledToday.push(
-          enrichTodayRow(userId, { ...dayRow, current_week: week }, WEEKDAY_LABELS[todayWeekday], todayDateKey, undefined, cache),
-        );
-      }
-      continue;
-    }
-
-    const currentDay = programRows.find((row) => row.day_number === firstRow.current_day);
-    if (currentDay)
-      otherActiveRuns.push(enrichTodayRow(userId, currentDay, WEEKDAY_LABELS[todayWeekday], todayDateKey, undefined, cache));
+  const activeIds = new Set(rows.map(row => row.program_id));
+  for (const occurrence of getOccurrences(userId)) {
+    const active = occurrence.status === "in_progress";
+    const terminal = occurrence.status === "completed" || occurrence.status === "skipped";
+    const displayDate = occurrence.status === "completed" ? occurrence.performed_date ?? occurrence.scheduled_date : occurrence.scheduled_date;
+    if (!active && terminal && displayDate !== todayDateKey) continue;
+    if (!active && !terminal && (occurrence.scheduled_date > todayDateKey || !activeIds.has(occurrence.program_id) || isDateHeldForRun(holds, occurrence.program_run_id, todayDateKey))) continue;
+    const day = rows.find(row => row.program_id === occurrence.program_id && row.definition_day_id === occurrence.definition_day_id) ?? {
+      program_id: occurrence.program_id, program_run_id: occurrence.program_run_id, program_name: occurrence.program_name,
+      current_week: occurrence.week_number, current_day: occurrence.day_number, schedule_weekdays: "[]",
+      schedule_mode: "scheduled", schedule_start_date: occurrence.original_date, num_weeks: occurrence.week_number,
+      day_id: occurrence.legacy_day_id ?? occurrence.definition_day_id, legacy_day_id: occurrence.legacy_day_id,
+      definition_day_id: occurrence.definition_day_id, day_name: occurrence.day_name, day_number: occurrence.day_number, shared_day_key: null,
+    };
+    const isToday = displayDate === todayDateKey;
+    if (!isToday && occurrence.status !== "scheduled" && occurrence.status !== "in_progress") continue;
+    const row: TodayWorkoutSummary = {
+      ...enrichTodayRow(userId, { ...day, current_week: occurrence.week_number }, isToday ? WEEKDAY_LABELS[todayWeekday] : `Missed ${occurrence.scheduled_date}`, todayDateKey, occurrence.scheduled_date, cache),
+      occurrence_id: occurrence.id,
+      day_name: occurrence.day_name,
+      day_number: occurrence.day_number,
+      today_session_id: occurrence.session_id,
+      today_session_status: occurrence.status === "completed" || occurrence.status === "skipped" ? occurrence.status : null,
+      next_lifts: occurrenceLiftPreview(occurrence),
+    };
+    (active ? activeWorkouts : isToday ? scheduledToday : missedWorkouts).push(row);
   }
-
-  return { missedWorkouts, scheduledToday, otherActiveRuns };
+  const seen = new Set<number>();
+  for (const row of rows) {
+    if (row.schedule_mode !== "scheduled" && row.day_number === row.current_day && !seen.has(row.program_id)) {
+      seen.add(row.program_id);
+      otherActiveRuns.push(enrichTodayRow(userId, row, WEEKDAY_LABELS[todayWeekday], todayDateKey, undefined, cache));
+    }
+  }
+  return { activeWorkouts, missedWorkouts, scheduledToday, otherActiveRuns };
 }
 
 export type QuickWorkoutSet = {
@@ -1070,31 +971,16 @@ export type QuickWorkoutSet = {
   progression_type: string;
 };
 
-export type QuickWorkout = { id: number; sets: QuickWorkoutSet[] };
+export type QuickWorkout = { id: number; name: string; date: string; unit: "lb" | "kg"; revision: number; sets: QuickWorkoutSet[] };
 
-/** Today's in-progress Quick Workout (a program-less session) with its sets, so
- *  the Today page can rehydrate the inline card after a reload. Null when there
- *  is no open quick workout for today. */
+/** Recover the newest active quick workout even after midnight or on a past date. */
 export function getQuickWorkoutForToday(userId: number, today = new Date()): QuickWorkout | null {
-  const todayDateKey = toLocalDateKey(today);
-  const session = db
-    .prepare(
-      `SELECT id FROM sessions
-       WHERE user_id = ? AND program_id IS NULL AND status = 'in_progress' AND date = ?
-       ORDER BY id DESC LIMIT 1`,
-    )
-    .get(userId, todayDateKey) as { id: number } | undefined;
+  void today; // Retained for older callers; recovery deliberately spans dates.
+  const session = db.prepare(`SELECT id,day_name AS name,date,unit,revision FROM sessions
+    WHERE user_id=? AND program_id IS NULL AND status='in_progress' ORDER BY id DESC LIMIT 1`).get(userId) as Omit<QuickWorkout, "sets"> | undefined;
   if (!session) return null;
-
-  const sets = db
-    .prepare(
-      `SELECT id, exercise_name, reps, sets, set_number, rep_out_target, calculated_weight,
-              actual_reps, actual_weight, superset_group, training_max, intensity_pct, progression_type
-       FROM session_sets WHERE session_id = ? ORDER BY id`,
-    )
-    .all(session.id) as QuickWorkoutSet[];
-
-  return { id: session.id, sets };
+  const sets = db.prepare(`SELECT * FROM session_sets WHERE session_id=? ORDER BY sort_order,id`).all(session.id) as QuickWorkoutSet[];
+  return { ...session, sets };
 }
 
 export function getProgramLibrary(userId: number): ProgramLibrary {
@@ -1270,8 +1156,10 @@ export const addDefinitionDayForRun = db.transaction(
       dayNumber: nextDay.value,
     };
   },
-);
+).immediate;
 
+// A concurrent writer must wait before we read the day and allocate sort order;
+// upgrading a deferred WAL snapshot here can fail with SQLITE_BUSY_SNAPSHOT.
 export const addDefinitionExerciseForDay = db.transaction(
   ({
     userId,
@@ -1451,7 +1339,7 @@ export const addDefinitionExerciseForDay = db.transaction(
       exerciseStableKey,
     };
   },
-);
+).immediate;
 
 /**
  * Change an existing exercise's category and/or progression after creation. This
@@ -1584,8 +1472,10 @@ export const updateDefinitionExerciseType = db.transaction(
       }
     }
   },
-);
+).immediate;
 
+// Reserve the write lock before reading context so another connection cannot
+// invalidate the WAL snapshot before the schedule/date updates begin.
 export const updateProgramRun = db.transaction(
   ({
     userId,
@@ -1635,6 +1525,7 @@ export const updateProgramRun = db.transaction(
       );
       syncScheduleDays(context.runId, scheduleWeekdays);
     }
+    if (startDate !== undefined || scheduleWeekdays !== undefined) reflowOccurrences(userId, legacyProgramId);
     if (currentWeek !== undefined || currentDay !== undefined) {
       const existing = db.prepare("SELECT current_week, current_day FROM program_runs WHERE id = ?").get(context.runId) as {
         current_week: number;
@@ -1654,7 +1545,7 @@ export const updateProgramRun = db.transaction(
       );
     }
   },
-);
+).immediate;
 
 export const archiveProgramRun = db.transaction(
   ({ userId, legacyProgramId }: { userId: number; legacyProgramId: number }): void => {
@@ -1666,4 +1557,4 @@ export const archiveProgramRun = db.transaction(
       legacyProgramId,
     );
   },
-);
+).immediate;

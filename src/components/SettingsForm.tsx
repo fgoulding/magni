@@ -4,8 +4,9 @@ import { useState } from "react";
 import { ErrorBanner } from "@/components/ErrorBanner";
 import { Select } from "@/components/Select";
 
-export function SettingsForm({ initialRounding }: { initialRounding: number }) {
+export function SettingsForm({ initialRounding, initialTimezone }: { initialRounding: number; initialTimezone: string }) {
   const [rounding, setRounding] = useState(initialRounding);
+  const [timezone, setTimezone] = useState(initialTimezone);
   const [message, setMessage] = useState("");
   const [error, setError] = useState("");
   const [submitting, setSubmitting] = useState(false);
@@ -20,7 +21,7 @@ export function SettingsForm({ initialRounding }: { initialRounding: number }) {
       const response = await fetch("/api/settings", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ rounding }),
+        body: JSON.stringify({ rounding, timezone }),
       });
       const body = (await response.json()) as { error?: string };
       if (!response.ok) throw new Error(body.error ?? "Could not save settings");
@@ -50,6 +51,15 @@ export function SettingsForm({ initialRounding }: { initialRounding: number }) {
           <option value={10}>10 lb</option>
         </Select>
       </label>
+      <label className="flex flex-col gap-1.5 text-sm font-semibold">
+        Training timezone
+        <input value={timezone} onChange={event => setTimezone(event.target.value)} list="timezones" className="touch-target rounded-xl border border-line bg-surface px-3 font-normal focus:border-brand" />
+        <datalist id="timezones">
+          {["America/Los_Angeles", "America/Denver", "America/Chicago", "America/New_York", "Europe/London", "Europe/Paris", "Asia/Tokyo", "Australia/Sydney", "UTC"].map(zone => <option key={zone} value={zone} />)}
+        </datalist>
+      </label>
+      <button type="button" className="touch-target rounded-xl border border-line px-3 text-sm font-semibold" onClick={() => setTimezone(Intl.DateTimeFormat().resolvedOptions().timeZone)}>Use device timezone</button>
+      <p className="text-sm text-muted">Today and workout dates use this timezone. Traveling does not move your schedule.</p>
       <button
         type="submit"
         disabled={submitting}

@@ -139,7 +139,7 @@ describe("workout flow", () => {
     expect(exerciseRow.training_max).toBe(300);
     expect(runMax.expected_max).toBe(305);
 
-    const historyResponse = await historyRoute.GET();
+    const historyResponse = await historyRoute.GET(new Request("http://localhost/api/sessions"));
     const history = (await historyResponse.json()) as { program_name: string; day_name: string; completed: number }[];
     expect(history).toEqual([
       expect.objectContaining({

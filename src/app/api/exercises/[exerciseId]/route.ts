@@ -62,6 +62,8 @@ export async function PUT(request: Request, context: RouteContext) {
     if (!exercise) return jsonError("Exercise not found", 404);
 
     if (body.move === "up" || body.move === "down") {
+      // Reserve the writer before selecting a sibling so the swap cannot try
+      // to upgrade a WAL snapshot invalidated by another connection's write.
       db.transaction(() => {
         const direction = body.move;
         const sibling = db
@@ -109,7 +111,7 @@ export async function PUT(request: Request, context: RouteContext) {
             `,
           ).run(exercise.sort_order, sibling.shared_exercise_key, exercise.program_definition_id);
         }
-      })();
+      }).immediate();
 
       return NextResponse.json({ success: true });
     }

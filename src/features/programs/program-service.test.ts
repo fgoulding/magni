@@ -1,7 +1,8 @@
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { beforeAll, beforeEach, describe, expect, it } from "vitest";
+import Database from "better-sqlite3";
+import { beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { todayLocalDateKey } from "@/lib/date-key";
 
 let dbModule: typeof import("@/lib/db");
@@ -44,6 +45,120 @@ beforeEach(() => {
 });
 
 describe("program service", () => {
+  it.each([
+    ["add day", "INSERT INTO program_definition_days"],
+    ["change exercise type", "UPDATE program_definition_exercises SET category"],
+    ["archive run", "UPDATE program_runs SET status = 'archived'"],
+    ["create hold", "INSERT INTO program_run_holds"],
+    ["cancel hold", "UPDATE program_run_holds"],
+  ])("serializes %s before reading mutable context", (operation, firstWrite) => {
+    const userId = createUser("concurrent-mutation@example.test");
+    const program = service.createProgramRun({ userId, name: "Concurrent mutation", numWeeks: 2 });
+    const day = service.addDefinitionDayForRun({ userId, legacyProgramId: program.legacyProgramId, name: "Lower" });
+    const exercise = service.addDefinitionExerciseForDay({ userId, legacyDayId: day.legacyDayId, name: "Squat", trainingMax: 200, category: "main", progressionType: "linear" });
+    const ownedRun = { userId, legacyProgramId: program.legacyProgramId };
+    const holdInput = { ...ownedRun, startDate: "2099-01-05", endDate: "2099-01-11", reason: "Travel" };
+    if (operation === "cancel hold") service.createProgramRunHold(holdInput);
+    const db = dbModule.db;
+    const other = new Database(process.env.DB_PATH!);
+    // Model the independent writer waiting without blocking this same-thread test.
+    other.pragma("busy_timeout = 0");
+    const writeOther = () => other.prepare("INSERT INTO user_settings(user_id,key,value) VALUES (?,'concurrent-mutation','saved')").run(userId);
+    const originalPrepare = db.prepare.bind(db);
+    let interleaved = false;
+    let waitingWriter = false;
+    const spy = vi.spyOn(db, "prepare").mockImplementation((sql: string) => {
+      if (!interleaved && sql.includes(firstWrite)) {
+        interleaved = true;
+        try { writeOther(); }
+        catch (error) {
+          if ((error as { code?: string }).code !== "SQLITE_BUSY") throw error;
+          waitingWriter = true;
+        }
+      }
+      return originalPrepare(sql);
+    });
+    try {
+      let failure: { code?: string; message: string } | undefined;
+      let canceled = false;
+      try {
+        if (operation === "add day") service.addDefinitionDayForRun({ ...ownedRun, name: "Upper" });
+        else if (operation === "change exercise type") service.updateDefinitionExerciseType({ userId, legacyExerciseId: exercise.legacyExerciseId, category: "main", progressionType: "sbs" });
+        else if (operation === "archive run") service.archiveProgramRun(ownedRun);
+        else if (operation === "create hold") service.createProgramRunHold(holdInput);
+        else canceled = service.cancelActiveProgramRunHold({ ...ownedRun, today: new Date("2099-01-05T12:00:00") });
+      } catch (error) {
+        failure = { code: (error as { code?: string }).code, message: (error as Error).message };
+      }
+      expect(failure).toBeUndefined();
+      expect(interleaved).toBe(true);
+      expect(waitingWriter).toBe(true);
+      writeOther();
+      expect(other.prepare("SELECT value FROM user_settings WHERE user_id=? AND key='concurrent-mutation'").get(userId)).toEqual({ value: "saved" });
+
+      if (operation === "add day") {
+        const expected = [{ name: "Lower", day_number: 1, sort_order: 1 }, { name: "Upper", day_number: 2, sort_order: 2 }];
+        expect(db.prepare("SELECT name,day_number,sort_order FROM days WHERE program_id=? ORDER BY day_number").all(program.legacyProgramId)).toEqual(expected);
+        expect(db.prepare("SELECT name,day_number,sort_order FROM program_definition_days WHERE program_definition_id=? ORDER BY day_number").all(program.definitionId)).toEqual(expected);
+      } else if (operation === "change exercise type") {
+        expect(db.prepare("SELECT progression_type,training_max FROM exercises WHERE id=?").get(exercise.legacyExerciseId)).toEqual({ progression_type: "sbs", training_max: 200 });
+        expect(db.prepare("SELECT progression_type FROM program_definition_exercises WHERE id=?").get(exercise.definitionExerciseId)).toEqual({ progression_type: "sbs" });
+        const weeks = db.prepare("SELECT week_number,set_number,intensity_pct,reps,sets,rep_out_target FROM week_settings WHERE exercise_id=? ORDER BY week_number,set_number").all(exercise.legacyExerciseId);
+        expect(weeks).toHaveLength(10);
+        expect(db.prepare("SELECT week_number,set_number,intensity_pct,reps,sets,rep_out_target FROM program_definition_week_settings WHERE program_definition_exercise_id=? ORDER BY week_number,set_number").all(exercise.definitionExerciseId)).toEqual(weeks);
+      } else if (operation === "archive run") {
+        expect(db.prepare("SELECT status,archived_at IS NOT NULL AS archived FROM program_runs WHERE id=?").get(program.runId)).toEqual({ status: "archived", archived: 1 });
+        expect(db.prepare("SELECT is_active,archived_at IS NOT NULL AS archived FROM programs WHERE id=?").get(program.legacyProgramId)).toEqual({ is_active: 0, archived: 1 });
+      } else {
+        expect(db.prepare("SELECT start_date,end_date,reason,canceled_at IS NOT NULL AS canceled FROM program_run_holds WHERE program_run_id=?").all(program.runId)).toEqual([{ start_date: "2099-01-05", end_date: "2099-01-11", reason: "Travel", canceled: operation === "cancel hold" ? 1 : 0 }]);
+        expect(canceled).toBe(operation === "cancel hold");
+      }
+      expect(db.pragma("foreign_key_check")).toEqual([]);
+    } finally {
+      spy.mockRestore();
+      other.close();
+    }
+  });
+
+  it("serializes schedule updates with a second connection without a stale read snapshot", () => {
+    const userId = createUser("concurrent-schedule@example.test");
+    const program = service.createProgramRun({ userId, name: "Concurrent schedule", numWeeks: 1 });
+    service.addDefinitionDayForRun({ userId, legacyProgramId: program.legacyProgramId, name: "First" });
+    const db = dbModule.db;
+    const other = new Database(process.env.DB_PATH!);
+    // A zero timeout lets the same-thread interleaving model a waiting writer
+    // without blocking this test's primary transaction from finishing.
+    other.pragma("busy_timeout = 0");
+    const originalPrepare = db.prepare.bind(db);
+    let interleaved = false;
+    let waitingWriter = false;
+    const writeOther = () => other.prepare("INSERT INTO user_settings(user_id,key,value) VALUES (?,'concurrent-test','saved')").run(userId);
+    const spy = vi.spyOn(db, "prepare").mockImplementation((sql: string) => {
+      if (!interleaved && sql.startsWith("UPDATE program_runs SET schedule_weekdays")) {
+        interleaved = true;
+        try { writeOther(); }
+        catch (error) {
+          if ((error as { code?: string }).code !== "SQLITE_BUSY") throw error;
+          waitingWriter = true;
+        }
+      }
+      return originalPrepare(sql);
+    });
+    try {
+      let failure: { code?: string; message: string } | undefined;
+      try { service.updateProgramRun({ userId, legacyProgramId: program.legacyProgramId, scheduleWeekdays: [1, 3] }); }
+      catch (error) { failure = { code: (error as { code?: string }).code, message: (error as Error).message }; }
+      expect(failure).toBeUndefined();
+      expect(interleaved).toBe(true);
+      if (waitingWriter) writeOther();
+      expect(db.prepare("SELECT schedule_weekdays FROM program_runs WHERE id=?").get(program.runId)).toEqual({ schedule_weekdays: "[1,3]" });
+      expect(db.prepare("SELECT schedule_weekdays FROM programs WHERE id=?").get(program.legacyProgramId)).toEqual({ schedule_weekdays: "[1,3]" });
+      expect(other.prepare("SELECT value FROM user_settings WHERE user_id=? AND key='concurrent-test'").get(userId)).toEqual({ value: "saved" });
+    } finally {
+      spy.mockRestore();
+      other.close();
+    }
+  });
   it("creates a custom definition and user run as the canonical program record", () => {
     const userId = createUser("service-create@example.com");
 
@@ -363,6 +478,7 @@ describe("program service", () => {
       userId,
       legacyProgramId: created.legacyProgramId,
       scheduleWeekdays: [1],
+      startDate: "2026-06-01",
     });
     service.createProgramRunHold({
       userId,
@@ -376,10 +492,10 @@ describe("program service", () => {
     expect(dashboard.scheduledToday).toEqual([]);
   });
 
-  it("does not shift the schedule across a pause — each weekday keeps its own workout", () => {
+  it("postpones held workouts without changing their identity or logical program position", () => {
     const userId = createUser("service-hold-noshift@example.com");
     const created = service.createProgramRun({ userId, name: "No Shift", numWeeks: 4 });
-    // 3 days, scheduled Mon/Tue/Wed → Day 1 = Mon, Day 2 = Tue, Day 3 = Wed.
+    // The three logical days initially occupy Mon/Tue/Wed.
     for (const name of ["Mon Day", "Tue Day", "Wed Day"]) {
       const day = service.addDefinitionDayForRun({ userId, legacyProgramId: created.legacyProgramId, name });
       service.addDefinitionExerciseForDay({
@@ -391,7 +507,9 @@ describe("program service", () => {
         progressionType: "linear",
       });
     }
-    service.updateProgramRun({ userId, legacyProgramId: created.legacyProgramId, scheduleWeekdays: [1, 2, 3] });
+    service.updateProgramRun({ userId, legacyProgramId: created.legacyProgramId, scheduleWeekdays: [1, 2, 3], startDate: "2026-06-01" });
+    const before = service.getTodayWorkoutDashboard(userId, new Date("2026-06-01T12:00:00-07:00"));
+    const mondayOccurrence = before.scheduledToday[0].occurrence_id;
 
     // Pause Monday only (2026-06-01 is a Monday).
     service.createProgramRunHold({
@@ -405,17 +523,21 @@ describe("program service", () => {
     const monday = service.getTodayWorkoutDashboard(userId, new Date("2026-06-01T12:00:00-07:00"));
     expect(monday.scheduledToday).toEqual([]);
 
-    // Tuesday shows TUESDAY's workout (Day 2), at the SAME week — Monday's Day 1
-    // does NOT shift onto Tuesday, and Monday isn't counted as missed.
+    // The hold postpones Day 1 onto Tuesday; no prescription is discarded.
     const tuesday = service.getTodayWorkoutDashboard(userId, new Date("2026-06-02T12:00:00-07:00"));
     expect(tuesday.scheduledToday).toHaveLength(1);
-    expect(tuesday.scheduledToday[0].day_number).toBe(2);
-    expect(tuesday.scheduledToday[0].day_name).toBe("Tue Day");
+    expect(tuesday.scheduledToday[0].occurrence_id).toBe(mondayOccurrence);
+    expect(tuesday.scheduledToday[0].day_number).toBe(1);
+    expect(tuesday.scheduledToday[0].day_name).toBe("Mon Day");
     expect(tuesday.scheduledToday[0].current_week).toBe(1);
     expect(tuesday.missedWorkouts).toEqual([]);
+    const wednesday = service.getTodayWorkoutDashboard(userId, new Date("2026-06-03T12:00:00-07:00"));
+    expect(wednesday.scheduledToday[0]).toMatchObject({ day_number: 2, day_name: "Tue Day", current_week: 1 });
+    const nextMonday = service.getTodayWorkoutDashboard(userId, new Date("2026-06-08T12:00:00-07:00"));
+    expect(nextMonday.scheduledToday[0]).toMatchObject({ day_number: 3, day_name: "Wed Day", current_week: 1 });
   });
 
-  it("derives the Today week from the schedule start date, not the completion counter", () => {
+  it("shows the scheduled logical week independently of the completion counter", () => {
     const userId = createUser("service-today-startdate@example.com");
     const created = service.createProgramRun({ userId, name: "Backdated", numWeeks: 7 });
     const day = service.addDefinitionDayForRun({ userId, legacyProgramId: created.legacyProgramId, name: "Mon Day" });
@@ -438,7 +560,7 @@ describe("program service", () => {
     expect(dashboard.scheduledToday[0].current_week).toBe(6);
   });
 
-  it("stops surfacing scheduled workouts once the program has run past its final week", () => {
+  it("stops creating slots after the final logical week while retaining every unresolved workout", () => {
     const userId = createUser("service-today-complete@example.com");
     const created = service.createProgramRun({ userId, name: "Finished", numWeeks: 7 });
     const day = service.addDefinitionDayForRun({ userId, legacyProgramId: created.legacyProgramId, name: "Mon Day" });
@@ -460,11 +582,17 @@ describe("program service", () => {
     expect(week7.scheduledToday).toHaveLength(1);
     expect(week7.scheduledToday[0].current_week).toBe(7);
 
-    // 2026-06-22 is the Monday AFTER the program's last week → no workout, and
-    // it is not nagged as missed. The program is complete.
+    // There is no eighth prescribed slot. The seven unperformed occurrences
+    // remain available until deliberately completed or skipped.
     const after = service.getTodayWorkoutDashboard(userId, new Date("2026-06-22T12:00:00-07:00"));
     expect(after.scheduledToday).toEqual([]);
-    expect(after.missedWorkouts).toEqual([]);
+    expect(after.missedWorkouts.map(row => [row.current_week, row.scheduled_date])).toEqual([
+      [1, "2026-05-04"], [2, "2026-05-11"], [3, "2026-05-18"], [4, "2026-05-25"],
+      [5, "2026-06-01"], [6, "2026-06-08"], [7, "2026-06-15"],
+    ]);
+    expect(after.missedWorkouts[6].occurrence_id).toBe(week7.scheduledToday[0].occurrence_id);
+    expect(dbModule.db.prepare("SELECT COUNT(*) AS count FROM workout_occurrences WHERE program_run_id = ?").get(created.runId))
+      .toEqual({ count: 7 });
   });
 
   it("returns today's in-progress Quick Workout (program-less session) with its sets", () => {
@@ -521,6 +649,7 @@ describe("program service", () => {
       userId,
       legacyProgramId: created.legacyProgramId,
       scheduleWeekdays: [1, 3, 5],
+      startDate: "2026-05-29",
     });
     dbModule.db
       .prepare(
@@ -550,6 +679,8 @@ describe("program service", () => {
         program_id: created.legacyProgramId,
         program_name: "Dashboard Strength",
         day_name: "Lower",
+        current_week: 2,
+        scheduled_date: "2026-06-01",
         schedule_label: "Mon",
         last_session_date: "2026-05-29",
         next_lifts: [
@@ -583,6 +714,7 @@ describe("program service", () => {
       userId,
       legacyProgramId: created.legacyProgramId,
       scheduleWeekdays: [1],
+      startDate: "2026-06-01",
     });
     dbModule.db
       .prepare(
@@ -631,6 +763,7 @@ describe("program service", () => {
       userId,
       legacyProgramId: created.legacyProgramId,
       scheduleWeekdays: [5],
+      startDate: "2026-05-29",
     });
 
     const missed = service.getTodayWorkoutDashboard(userId, new Date("2026-05-31T12:00:00-07:00"));
@@ -640,7 +773,7 @@ describe("program service", () => {
         program_id: created.legacyProgramId,
         program_name: "Catch Up Strength",
         day_name: "Lower",
-        schedule_label: "Missed Fri",
+        schedule_label: "Missed 2026-05-29",
         scheduled_date: "2026-05-29",
       }),
     ]);
@@ -734,4 +867,11 @@ describe("program service", () => {
     expect(result).toContainEqual({ name: "Squat", trainingMax: 315 });
     expect(result.filter((max) => max.name === "Bench Press")).toHaveLength(1);
   });
+});
+
+it("resumes an unfinished named quick workout from an earlier date with saved units and metadata", () => {
+  const userId = createUser("past-quick-recovery@example.com");
+  const id = Number(dbModule.db.prepare("INSERT INTO sessions(user_id,program_name,day_name,week_number,date,unit,revision) VALUES (?,'Quick Workout','Past pull',1,'2026-08-31','kg',3)").run(userId).lastInsertRowid);
+  dbModule.db.prepare("INSERT INTO session_sets(session_id,exercise_name,reps,sets,calculated_weight,actual_reps,actual_weight) VALUES (?,'Row',10,1,40,8,40)").run(id);
+  expect(service.getQuickWorkoutForToday(userId, new Date("2026-09-05T12:00:00Z"))).toMatchObject({ id, name: "Past pull", date: "2026-08-31", unit: "kg", revision: 3, sets: [{ actual_reps: 8, actual_weight: 40 }] });
 });

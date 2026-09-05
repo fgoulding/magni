@@ -5,6 +5,9 @@ import { applyTmDelta } from "@/lib/calculator";
 import { db } from "@/lib/db";
 import { calculateTemplateTrainingMaxDelta } from "@/features/training-templates/progression";
 import type { ExerciseCategory } from "@/features/training-templates/types";
+import { syncOccurrencePosition } from "@/features/programs/occurrences";
+import { applyEditorCompletion } from "@/features/program-editor/execution";
+import { EditorRepositoryError } from "@/features/program-editor/repository";
 
 type RouteContext = {
   params: Promise<{ id: string }>;
@@ -25,6 +28,7 @@ type ProgramRow = {
 
 type SessionRow = {
   id: number;
+  occurrence_id: number | null;
   completed: number;
   week_number: number;
   day_number: number;
@@ -43,6 +47,7 @@ type CompletionSetRow = {
   category: ExerciseCategory;
   progression_type: string;
   auto_progression_enabled: number;
+  editor_json: string | null;
 };
 
 function nextProgramPosition(program: ProgramRow, completedDayNumber = program.current_day): { currentWeek: number; currentDay: number } {
@@ -128,17 +133,20 @@ export async function POST(request: Request, context: RouteContext) {
         .get(sessionId, programId, user.id) as SessionRow | undefined;
       if (!session) return { response: jsonError("Session not found", 404) };
 
-      const shouldAdvance = shouldAdvanceRun(program, session);
-      const next = shouldAdvance
+      const shouldAdvance = !session.occurrence_id && shouldAdvanceRun(program, session);
+      let next = shouldAdvance
         ? nextProgramPosition(program, session.day_number)
         : { currentWeek: program.current_week, currentDay: program.current_day };
 
       if (session.completed) {
+        const progressionDecisions = applyEditorCompletion({ userId: user.id, sessionId });
         return {
           response: NextResponse.json({
             success: true,
             alreadyCompleted: true,
-            ...next,
+            currentWeek: program.current_week,
+            currentDay: program.current_day,
+            ...(progressionDecisions.length ? { progressionDecisions } : {}),
           }),
         };
       }
@@ -156,7 +164,8 @@ export async function POST(request: Request, context: RouteContext) {
              ss.training_max,
              ss.category,
              ss.progression_type,
-             ss.auto_progression_enabled
+             ss.auto_progression_enabled,
+             ss.editor_json
            FROM session_sets ss
            WHERE ss.session_id = ?`,
         )
@@ -169,6 +178,7 @@ export async function POST(request: Request, context: RouteContext) {
       const exercisedRows = new Map<number, CompletionSetRow>();
 
       for (const row of rows) {
+        if (row.editor_json !== null) continue;
         const existing = exercisedRows.get(row.exercise_id);
         if (!existing || (row.set_number > existing.set_number && row.actual_reps !== null)) {
           exercisedRows.set(row.exercise_id, row);
@@ -183,6 +193,8 @@ export async function POST(request: Request, context: RouteContext) {
       if (missingAutoProgressionReps) {
         return { response: jsonError("Log AMRAP reps before completing this workout", 400) };
       }
+
+      const progressionDecisions = applyEditorCompletion({ userId: user.id, sessionId });
 
       for (const row of exercisedRows.values()) {
         if (!row.auto_progression_enabled || row.actual_reps === null) {
@@ -213,6 +225,10 @@ export async function POST(request: Request, context: RouteContext) {
       }
 
       db.prepare("UPDATE sessions SET completed = 1, completed_at = datetime('now') WHERE id = ?").run(sessionId);
+      if (session.occurrence_id) {
+        const position = syncOccurrencePosition(user.id, programId);
+        if (position) next = { currentWeek: position.week_number, currentDay: position.day_number };
+      }
       if (shouldAdvance) {
         db.prepare("UPDATE programs SET current_week = ?, current_day = ? WHERE id = ?").run(
           next.currentWeek,
@@ -232,6 +248,7 @@ export async function POST(request: Request, context: RouteContext) {
         response: NextResponse.json({
           success: true,
           alreadyCompleted: false,
+          ...(progressionDecisions.length ? { progressionDecisions } : {}),
           ...next,
         }),
       };
@@ -242,6 +259,7 @@ export async function POST(request: Request, context: RouteContext) {
     // completion of the same session and double-advance the run.
     return complete.immediate().response;
   } catch (error) {
+    if (error instanceof EditorRepositoryError) return jsonError(error.message, error.status);
     if (isBadRequest(error)) return jsonError(error.message, 400);
     if (isUnauthorized(error)) return jsonError("Unauthorized", 401);
     return jsonError("Failed to complete session", 500);

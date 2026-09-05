@@ -1,0 +1,115 @@
+"use client";
+
+import { useEffect, useRef, useState, type ReactNode } from "react";
+import Link from "next/link";
+import { useRouter } from "next/navigation";
+import { DndContext, DragOverlay, MouseSensor, TouchSensor, useDraggable, useDroppable, useSensor, useSensors, type Modifier } from "@dnd-kit/core";
+import { ArrowRightLeft, Copy, GripVertical, Plus, Undo2, X } from "lucide-react";
+
+export type AgendaEvent = {
+  key:string; date:string; title:string; href:string; programName?:string; dayName?:string;
+  occurrenceId?:number; revision?:number; status:string; summary?:string; currentWeek?:number;
+};
+type Preview = { changes:{id:number;name:string;from:string;to:string}[]; conflicts?:{id:number;date:string;name:string;revision:number}[] };
+const button="touch-target inline-flex items-center justify-center gap-2 rounded-xl border border-line px-3 text-sm font-semibold disabled:opacity-50";
+const dateLabel=(date:string)=>new Intl.DateTimeFormat("en-US",{weekday:"short",month:"short",day:"numeric",timeZone:"UTC"}).format(new Date(`${date}T12:00:00Z`));
+const plus=(date:string,days:number)=>{const result=new Date(`${date}T12:00:00Z`);result.setUTCDate(result.getUTCDate()+days);return result.toISOString().slice(0,10);};
+const keepPreviewVisible:Modifier=({transform,overlayNodeRect})=>{
+  if(!overlayNodeRect || typeof window==="undefined")return transform;
+  return {...transform,x:Math.max(12-overlayNodeRect.left,Math.min(transform.x,window.innerWidth-overlayNodeRect.left-192-12))};
+};
+
+function Sheet({title,children,onClose}:{title:string;children:ReactNode;onClose:()=>void}) {
+  const ref=useRef<HTMLDialogElement>(null);
+  useEffect(()=>{ref.current?.showModal();},[]);
+  return <dialog ref={ref} onCancel={onClose} aria-label={title} className="m-auto max-h-[85dvh] w-[calc(100%-1.5rem)] max-w-lg overflow-y-auto rounded-2xl border border-line bg-surface p-4 text-foreground backdrop:bg-foreground/40">
+    <div className="mb-4 flex items-center justify-between gap-3"><h2 className="display text-2xl">{title}</h2><button className={button} onClick={onClose} aria-label="Close calendar action"><X size={18}/></button></div>{children}
+  </dialog>;
+}
+function Day({date,children}:{date:string;children:ReactNode}) {
+  const {setNodeRef,isOver}=useDroppable({id:date});
+  return <section ref={setNodeRef} data-calendar-date={date} className={`rounded-xl p-2 ${isOver?"bg-brand-soft outline-2 outline-brand":""}`}>{children}</section>;
+}
+function DragHandle({event}:{event:AgendaEvent}) {
+  const {attributes,listeners,setNodeRef,isDragging}=useDraggable({id:event.key,data:{event}});
+  return <button ref={setNodeRef} {...attributes} {...listeners} aria-label={`Drag ${event.dayName} to another day`} className={`${button} shrink-0 touch-none text-muted ${isDragging?"bg-brand-soft opacity-50":""}`}><GripVertical size={18}/></button>;
+}
+
+export function CalendarAgenda({events,weekStart,today,undoOperation}:{events:AgendaEvent[];weekStart:string;today:string;undoOperation?:string}) {
+  const router=useRouter();
+  const [action,setAction]=useState<{event:AgendaEvent;type:"move"|"duplicate";date:string;conflicts?:Preview["conflicts"]}|null>(null);
+  const [menu,setMenu]=useState<AgendaEvent|null>(null);
+  const [selecting,setSelecting]=useState(false);
+  const [selected,setSelected]=useState<number[]>([]);
+  const [shift,setShift]=useState(false);
+  const [shiftDays,setShiftDays]=useState("7");
+  const [preview,setPreview]=useState<Preview|null>(null);
+  const [busy,setBusy]=useState(false);
+  const [error,setError]=useState("");
+  const [message,setMessage]=useState("");
+  const [undoId,setUndoId]=useState(undoOperation);
+  const [dragging,setDragging]=useState<AgendaEvent|null>(null);
+  const command=useRef<{body:string;requestKey:string}|null>(null);
+  const sensors=useSensors(useSensor(MouseSensor,{activationConstraint:{distance:8}}),useSensor(TouchSensor,{activationConstraint:{delay:180,tolerance:6}}));
+  const days=Array.from({length:7},(_,index)=>plus(weekStart,index));
+  const close=()=>{if(!busy){setAction(null);setMenu(null);setShift(false);setPreview(null);setError("");}};
+  async function send(body:Record<string,unknown>) {
+    if(busy) return null;
+    const serialized=JSON.stringify(body);
+    if(command.current?.body!==serialized) command.current={body:serialized,requestKey:crypto.randomUUID()};
+    setBusy(true);setError("");
+    try {
+      const response=await fetch("/api/calendar/actions",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({...body,requestKey:command.current.requestKey})});
+      const result=await response.json();
+      if(!response.ok) {
+        if(result.conflicts && action) setAction({...action,conflicts:result.conflicts});
+        throw new Error(result.error||"Calendar change could not be saved.");
+      }
+      command.current=null;
+      if(body.preview) {setPreview(result);return result;}
+      setUndoId(result.undone?undefined:result.operationId);
+      setMessage(result.undone?"Calendar change undone.":"Calendar saved. Workout details stayed with their workout.");
+      setAction(null);setMenu(null);setShift(false);setPreview(null);setSelected([]);setSelecting(false);
+      router.refresh();
+      return result;
+    } catch(caught) {setError(caught instanceof Error?caught.message:"Connection lost. Try again to safely retry this change.");return null;}
+    finally {setBusy(false);}
+  }
+  function chooseDate(event:AgendaEvent,type:"move"|"duplicate",date:string) {
+    const conflicts=events.filter(value=>value.occurrenceId && (type==="duplicate"||value.key!==event.key) && value.date===date && ["scheduled","in_progress"].includes(value.status)).map(value=>({id:value.occurrenceId!,date:value.date,name:value.dayName||"Workout",revision:value.revision!}));
+    if(conflicts.length) {setAction({event,type,date,conflicts});return;}
+    void send({type,occurrenceId:event.occurrenceId,revision:event.revision,date});
+  }
+  const shiftBody=()=>({type:"shift",selections:selected.map(id=>({id,revision:events.find(event=>event.occurrenceId===id)?.revision})),days:Number(shiftDays)});
+  return <div className="flex flex-col gap-3" aria-label="Weekly workout agenda">
+    <header className="flex flex-wrap items-center justify-between gap-2">
+      <h2 className="display text-2xl">{dateLabel(weekStart)} – {dateLabel(plus(weekStart,6))}</h2>
+      <div className="flex gap-2"><Link className={button} aria-label="Previous week" scroll={false} href={`/calendar?month=${plus(weekStart,-7).slice(0,7)}&date=${plus(weekStart,-7)}`}>Prev week</Link><Link className={button} aria-label="Next week" scroll={false} href={`/calendar?month=${plus(weekStart,7).slice(0,7)}&date=${plus(weekStart,7)}`}>Next week</Link></div>
+    </header>
+    <div className="flex flex-wrap gap-2"><Link className={button} scroll={false} href={`/calendar?date=${today}`}>Today</Link><button className={button} aria-pressed={selecting} onClick={()=>{setSelecting(!selecting);setSelected([]);}}>{selecting?"Cancel selection":"Select workouts"}</button>{selecting&&<button className={`${button} bg-foreground text-background`} disabled={!selected.length} onClick={()=>{setPreview(null);setShift(true);}}>Shift {selected.length} selected</button>}{undoId&&<button className={button} disabled={busy} onClick={()=>void send({type:"undo",operationId:undoId})}><Undo2 size={16}/>Undo last change</button>}</div>
+    {message&&<p role="status" className="rounded-xl border border-success-line bg-success-soft p-3 text-sm text-success-ink">{message}</p>}
+    {error&&!action&&!menu&&!shift&&<p role="alert" className="rounded-xl bg-danger-soft p-3 text-sm text-danger-ink">{error}</p>}
+    <p className="text-xs text-muted">Hold a grip to drag between days, or use Move to choose a date.</p>
+    <DndContext id={`calendar-${weekStart}`} sensors={sensors} onDragStart={({active})=>setDragging(active.data.current?.event as AgendaEvent)} onDragCancel={()=>setDragging(null)} onDragEnd={({active,over})=>{setDragging(null);const event=active.data.current?.event as AgendaEvent|undefined;if(event&&over&&over.id!==event.date)chooseDate(event,"move",String(over.id));}}>
+      {days.map(date=><Day date={date} key={date}>
+        <div className="mb-2 flex items-center justify-between gap-2"><h3 className={`eyebrow text-base ${date===today?"text-brand-strong":"text-muted"}`}>{dateLabel(date)}{date===today?" · Today":""}</h3><Link className={button} href={`/workouts/new?date=${date}`} aria-label={`Add workout on ${date}`}><Plus size={16}/>Add</Link></div>
+        <div className="flex flex-col gap-2">{events.filter(event=>event.date===date).map(event=><article className="card min-w-0 p-3" key={event.key} data-occurrence-id={event.occurrenceId}>
+          <div className="flex items-start gap-2">
+            {selecting&&event.occurrenceId&&event.status==="scheduled"&&date>=today&&<label className="touch-target flex shrink-0 items-center justify-center"><input type="checkbox" className="size-5 accent-brand" aria-label={`Select ${event.dayName} on ${date}`} checked={selected.includes(event.occurrenceId)} onChange={e=>setSelected(e.target.checked?[...selected,event.occurrenceId!]:selected.filter(id=>id!==event.occurrenceId))}/></label>}
+            <Link href={`${event.href}&date=${date}`} scroll={false} aria-label={`${event.title} on ${date}`} className="touch-target min-w-0 flex-1"><p className="text-xs font-medium text-muted">{event.programName||"Workout"}{event.currentWeek?` · Week ${event.currentWeek}`:""}</p><h4 className="display mt-0.5 break-words text-2xl">{event.dayName||"Quick workout"}</h4><p className={`mt-1 text-xs font-semibold ${event.status==="completed"?"text-success-ink":event.status==="skipped"?"text-muted":"text-brand-strong"}`}>{event.status==="completed"?"Completed":event.status==="skipped"?"Skipped":event.status==="in_progress"?"In progress":date<today?"Overdue":"Scheduled"}</p>{event.summary&&<p className="mt-2 text-sm leading-5 text-muted">{event.summary}</p>}</Link>
+            {event.occurrenceId&&event.status==="scheduled"&&<DragHandle event={event}/>}
+          </div>
+          {event.occurrenceId&&<div className="mt-3 flex flex-wrap gap-2 border-t border-line pt-2">{event.status==="scheduled"&&<button className={button} disabled={busy} onClick={()=>{setError("");setAction({event,type:"move",date:event.date});}}><ArrowRightLeft size={16}/>Move</button>}<button className={button} disabled={busy} onClick={()=>{setError("");setMenu(event);}}>More<span className="sr-only"> options for {event.dayName}</span></button></div>}
+        </article>)}{!events.some(event=>event.date===date)&&<p className="rounded-xl border border-dashed border-line px-3 py-4 text-sm text-muted">Rest day · room for a workout</p>}</div>
+      </Day>)}
+      <DragOverlay style={{width:192}} modifiers={[keepPreviewVisible]}>{dragging?<div data-drag-preview className="w-48 rounded-xl border border-brand-line bg-brand-soft p-3 shadow-xl"><p className="text-xs text-muted">Move workout</p><p className="display text-2xl">{dragging.dayName}</p></div>:null}</DragOverlay>
+    </DndContext>
+    {action&&<Sheet title={`${action.type==="move"?"Move":"Duplicate"} ${action.event.dayName}`} onClose={close}>
+      <p className="mb-3 text-sm text-muted">Week {action.event.currentWeek} · {action.event.programName}. {action.type==="duplicate"?"Adds a new exposure to this run and reopens it if completed.":"The workout and its sets stay together."}</p>
+      {action.conflicts?.length?<div className="flex flex-col gap-2"><p className="rounded-xl bg-warn-soft p-3 text-sm text-warn-ink">{dateLabel(action.date)} already has {action.conflicts.map(row=>row.name).join(", ")}.</p><button className={`${button} bg-foreground text-background`} disabled={busy} onClick={()=>void send({type:action.type,occurrenceId:action.event.occurrenceId,revision:action.event.revision,date:action.date,collision:"move"})}>{action.type==="duplicate"?"Duplicate":"Move"} here · keep both</button>{action.type==="move"&&action.conflicts.map(target=><button key={target.id} className={button} disabled={busy} onClick={()=>void send({type:"move",occurrenceId:action.event.occurrenceId,revision:action.event.revision,date:action.date,collision:"swap",targetId:target.id,targetRevision:target.revision})}>Swap with {target.name}</button>)}<button className={button} onClick={()=>setAction({...action,conflicts:undefined})}>Choose another date</button></div>:<><div className="grid grid-cols-2 gap-2">{days.map(date=><button key={date} className={button} disabled={busy||(action.type==="move"&&date===action.event.date)} onClick={()=>chooseDate(action.event,action.type,date)}>{dateLabel(date)}</button>)}</div><div className="mt-4 flex items-end gap-2"><label className="min-w-0 flex-1 text-sm font-semibold">Another date<input type="date" value={action.date} onChange={e=>setAction({...action,date:e.target.value})} className="mt-1 min-h-11 w-full min-w-0 rounded-xl border border-line bg-surface px-3"/></label><button className={`${button} bg-foreground text-background`} disabled={busy||!action.date} onClick={()=>chooseDate(action.event,action.type,action.date)}>Save date</button></div></>}
+      {error&&<p role="alert" className="mt-3 rounded-xl bg-danger-soft p-3 text-sm text-danger-ink">{error}</p>}
+    </Sheet>}
+    {menu&&<Sheet title={`${menu.dayName} options`} onClose={close}><div className="flex flex-col gap-2"><button className={button} onClick={()=>{setAction({event:menu,type:"duplicate",date:plus(menu.date,1)});setMenu(null);}}><Copy size={16}/>Duplicate workout</button>{menu.status==="scheduled"&&<button className={`${button} text-danger-ink`} disabled={busy} onClick={()=>void send({type:"skip",occurrenceId:menu.occurrenceId,revision:menu.revision})}>Skip this workout</button>}<p className="text-sm text-muted">Skip leaves a record and can be undone before further changes.</p>{error&&<p role="alert" className="text-danger-ink">{error}</p>}</div></Sheet>}
+    {shift&&<Sheet title="Shift selected workouts" onClose={close}><label className="text-sm font-semibold">Days to shift<input type="number" min={-3660} max={3660} value={shiftDays} onChange={e=>{setShiftDays(e.target.value);setPreview(null);}} className="mt-1 min-h-11 w-full rounded-xl border border-line bg-surface px-3"/></label><p className="my-2 text-sm text-muted">Positive moves later; negative moves earlier. Only the {selected.length} selected future workouts will move.</p>{preview?<><ul className="my-3 divide-y divide-line">{preview.changes.map(change=><li key={change.id} className="py-2 text-sm"><strong>{change.name}</strong><br/>{dateLabel(change.from)} → {dateLabel(change.to)}</li>)}</ul>{!!preview.conflicts?.length&&<p className="mb-3 rounded-xl bg-warn-soft p-3 text-sm text-warn-ink">Occupied dates: {preview.conflicts.map(row=>`${row.name} on ${row.date}`).join(", ")}. Both workouts will remain on each date.</p>}<button className={`${button} w-full bg-foreground text-background`} disabled={busy} onClick={()=>void send({...shiftBody(),collision:"move"})}>Confirm shift</button></>:<button className={`${button} mt-3 w-full bg-foreground text-background`} disabled={busy||!Number(shiftDays)} onClick={()=>void send({...shiftBody(),preview:true})}>Preview shift</button>}{error&&<p role="alert" className="mt-3 text-sm text-danger-ink">{error}</p>}</Sheet>}
+  </div>;
+}

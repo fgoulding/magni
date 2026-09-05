@@ -42,6 +42,9 @@ const securityHeaders = [
 ];
 
 const nextConfig: NextConfig = {
+  // Isolate disposable E2E/dev artifacts from a production candidate build.
+  distDir: process.env.NEXT_DIST_DIR ?? ".next",
+  typescript: { tsconfigPath: process.env.NEXT_TSCONFIG_PATH ?? "tsconfig.json" },
   // Emit a self-contained server bundle (.next/standalone) so the Docker runtime
   // image doesn't need the full node_modules tree.
   output: "standalone",

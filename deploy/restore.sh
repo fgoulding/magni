@@ -10,23 +10,27 @@ SRC=${1:?Usage: sh restore.sh <backup.db | backup.db.gz>}
 [ -f "$SRC" ] || { echo "No such file: $SRC" >&2; exit 1; }
 
 TMP=$(mktemp)
+REMOTE="/data/restore-$(date +%Y%m%d-%H%M%S)-$$.db"
+cleanup() { rm -f "$TMP"; docker compose run --rm --no-deps app rm -f "$REMOTE" "$REMOTE.json" >/dev/null 2>&1 || true; }
+trap cleanup EXIT HUP INT TERM
 case "$SRC" in
   *.gz) gzip -dc "$SRC" > "$TMP" ;;
   *)    cp "$SRC" "$TMP" ;;
 esac
-
+# Validate before downtime. Corrupt input never replaces the live database.
+docker compose cp "$TMP" "app:$REMOTE"
+RECEIPT=${SRC%.gz}.json
+if [ -f "$RECEIPT" ]; then docker compose cp "$RECEIPT" "app:$REMOTE.json"; fi
+docker compose exec -T app node scripts/database-maintenance.mjs verify --database "$REMOTE"
 printf 'Restore %s over the live database? [y/N] ' "$SRC"
 read -r ans
-[ "$ans" = "y" ] || [ "$ans" = "Y" ] || { echo "Aborted."; rm -f "$TMP"; exit 1; }
-
+[ "$ans" = "y" ] || [ "$ans" = "Y" ] || { echo "Aborted."; exit 1; }
 echo "Stopping app..."
 docker compose stop app
-
-docker compose cp "$TMP" app:/data/workouts.db
-# Remove a stale write-ahead log + shared-memory index from the OLD database.
-docker compose run --rm --no-deps app sh -c 'rm -f /data/workouts.db-wal /data/workouts.db-shm' >/dev/null 2>&1 || true
-rm -f "$TMP"
-
+# The restore verifies checksums, backs up the current database, and swaps the
+# file atomically while every writer is stopped. A failure leaves the app stopped.
+docker compose run --rm --no-deps app node scripts/database-maintenance.mjs restore --source "$REMOTE" --database /data/workouts.db --offline
 echo "Starting app..."
 docker compose start app
-echo "Restored from $SRC. Verify: docker compose logs app | grep -i integrity  (no output = healthy)."
+docker compose exec -T app node scripts/database-maintenance.mjs verify --database /data/workouts.db
+echo "Restored from $SRC. Check the health endpoint and your latest workout before resuming training."

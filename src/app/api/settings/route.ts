@@ -1,9 +1,11 @@
 import { NextResponse } from "next/server";
 import { assertSameOrigin, isBadRequest, jsonError, isUnauthorized, readJson } from "@/lib/api";
 import { getSettings, requireUser, setSetting } from "@/lib/auth";
+import { isTimeZone } from "@/lib/date-key";
 
 type SettingsBody = {
   rounding?: unknown;
+  timezone?: unknown;
 };
 
 export async function GET() {
@@ -22,6 +24,8 @@ export async function POST(request: Request) {
     const user = await requireUser();
     const body = await readJson<SettingsBody>(request);
 
+    if (body.timezone !== undefined && !isTimeZone(body.timezone)) return jsonError("Choose a valid timezone", 400);
+
     if (body.rounding !== undefined) {
       const rounding = Number(body.rounding);
       if (!Number.isFinite(rounding) || rounding <= 0 || rounding > 100) {
@@ -29,6 +33,7 @@ export async function POST(request: Request) {
       }
       setSetting(user.id, "rounding", String(rounding));
     }
+    if (typeof body.timezone === "string") setSetting(user.id, "timezone", body.timezone);
 
     return NextResponse.json({ success: true });
   } catch (error) {

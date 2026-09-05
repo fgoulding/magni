@@ -1,3 +1,4 @@
+import { ensureScheduledOccurrences, getOccurrence, occurrencePrescription } from "@/features/programs/occurrences";
 import { NextResponse } from "next/server";
 import {
   assertSameOrigin,
@@ -10,15 +11,17 @@ import {
 } from "@/lib/api";
 import { getSettingNumber, requireUser } from "@/lib/auth";
 import { calculateWeight } from "@/lib/calculator";
-import { todayLocalDateKey } from "@/lib/date-key";
+import { userDateKey } from "@/lib/user-date";
 import { db } from "@/lib/db";
 import { getLastPerformanceByExercise } from "@/features/programs/training-stats";
+import { EditorRepositoryError, type EditorSetMetadata } from "@/features/program-editor/repository";
 
 type RouteContext = {
   params: Promise<{ id: string }>;
 };
 
 type SessionCreateBody = {
+  occurrenceId?: unknown;
   dayId?: unknown;
   definitionDayId?: unknown;
   weekNumber?: unknown;
@@ -101,8 +104,12 @@ export async function POST(request: Request, context: RouteContext) {
     const { id } = await context.params;
     const programId = numberParam(id);
     const body = await readJson<SessionCreateBody>(request);
-    const dayId = Number(body.dayId);
-    const definitionDayId = Number(body.definitionDayId);
+    ensureScheduledOccurrences.immediate(user.id);
+    const occurrence = body.occurrenceId != null ? getOccurrence(user.id, Number(body.occurrenceId)) : undefined;
+    if (body.occurrenceId != null && (!occurrence || occurrence.program_id !== programId)) return jsonError("Workout not found", 404);
+    if (occurrence?.status === "skipped") return jsonError("This workout was skipped", 409);
+    const dayId = occurrence?.legacy_day_id ?? Number(body.dayId);
+    const definitionDayId = occurrence?.definition_day_id ?? Number(body.definitionDayId);
 
     if (
       (!Number.isInteger(dayId) || dayId <= 0) &&
@@ -119,6 +126,7 @@ export async function POST(request: Request, context: RouteContext) {
             COALESCE(pr.current_week, p.current_week) AS current_week,
             p.program_definition_id,
             p.program_run_id,
+            pr.editor_version_id,
             COALESCE(pr.name, p.name) AS name
           FROM programs p
           LEFT JOIN program_runs pr ON pr.id = p.program_run_id
@@ -133,10 +141,12 @@ export async function POST(request: Request, context: RouteContext) {
           current_week: number;
           program_definition_id: number | null;
           program_run_id: number | null;
+          editor_version_id: number | null;
           name: string;
         }
       | undefined;
     if (!program) return jsonError("Program not found", 404);
+    if (program.editor_version_id && !occurrence) return jsonError("Choose a scheduled workout occurrence to start this editor program", 400);
 
     if (!program.program_definition_id || !program.program_run_id) {
       return jsonError("Program is missing definition/run context", 400);
@@ -145,8 +155,8 @@ export async function POST(request: Request, context: RouteContext) {
     let selectedWeekNumber: number;
     let scheduledDate: string | null;
     try {
-      selectedWeekNumber = parseOptionalWeekNumber(body.weekNumber, program.current_week);
-      scheduledDate = parseOptionalDateKey(body.scheduledDate);
+      selectedWeekNumber = parseOptionalWeekNumber(occurrence?.week_number ?? body.weekNumber, program.current_week);
+      scheduledDate = parseOptionalDateKey(occurrence?.scheduled_date ?? body.scheduledDate);
     } catch (error) {
       return jsonError(error instanceof Error ? error.message : "Invalid calendar workout", 400);
     }
@@ -193,8 +203,8 @@ export async function POST(request: Request, context: RouteContext) {
     if (!day) return jsonError("Day not found", 404);
     if (!day.shared_day_key) return jsonError("Day is missing definition context", 400);
 
-    const today = todayLocalDateKey();
-    const findExistingSession = () =>
+    const today = userDateKey(user.id);
+    const findExistingSession = () => occurrence ? db.prepare("SELECT * FROM sessions WHERE occurrence_id = ? AND user_id = ?").get(occurrence.id, user.id) :
       db
         .prepare(
           `SELECT * FROM sessions
@@ -214,7 +224,9 @@ export async function POST(request: Request, context: RouteContext) {
     }
 
     const create = db.transaction(() => {
-      const weekSettings = db
+      const found = findExistingSession() as { id: number } | undefined;
+      if (found) return getSessionWithSets(found.id);
+      const weekSettings = occurrence ? occurrencePrescription(occurrence) : db
         .prepare(
           `
             SELECT
@@ -282,6 +294,7 @@ export async function POST(request: Request, context: RouteContext) {
         rep_out_target: number;
         weight: number | null;
         training_max: number;
+        editor?: EditorSetMetadata;
       }[];
       if (weekSettings.length === 0) {
         return null;
@@ -301,8 +314,10 @@ export async function POST(request: Request, context: RouteContext) {
               day_name,
               week_number,
               scheduled_date,
-              date
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+              date,
+              occurrence_id,
+              unit
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
           `,
         )
         .run(
@@ -317,6 +332,8 @@ export async function POST(request: Request, context: RouteContext) {
           selectedWeekNumber,
           scheduledDate,
           today,
+          occurrence?.id ?? null,
+          (weekSettings[0] as { editor?: EditorSetMetadata }).editor?.unit ?? "lb",
         );
       const sessionId = Number(result.lastInsertRowid);
       const rounding = getSettingNumber(user.id, "rounding", 2.5);
@@ -340,8 +357,9 @@ export async function POST(request: Request, context: RouteContext) {
             rep_out_target,
             calculated_weight,
             training_max,
-            auto_progression_enabled
-          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            auto_progression_enabled,
+            editor_json
+          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         `,
       );
 
@@ -359,13 +377,14 @@ export async function POST(request: Request, context: RouteContext) {
         );
       }
       for (const weekSetting of weekSettings) {
+        const editor = (weekSetting as { editor?: EditorSetMetadata }).editor;
         const isSbsFamily = (weekSetting.progression_type ?? "").toLowerCase().startsWith("sbs");
         const isAmrapSet = weekSetting.set_number === finalSetNumber.get(weekSetting.exercise_id);
         const repOutTarget = isSbsFamily && !isAmrapSet ? weekSetting.reps : weekSetting.rep_out_target;
         insertSet.run(
           sessionId,
-          weekSetting.legacy_week_setting_id,
-          weekSetting.week_setting_id,
+          db.prepare("SELECT id FROM week_settings WHERE id = ?").get(weekSetting.legacy_week_setting_id) ? weekSetting.legacy_week_setting_id : null,
+          db.prepare("SELECT id FROM program_definition_week_settings WHERE id = ?").get(weekSetting.week_setting_id) ? weekSetting.week_setting_id : null,
           weekSetting.exercise_id,
           weekSetting.stable_key,
           weekSetting.exercise_name,
@@ -380,7 +399,8 @@ export async function POST(request: Request, context: RouteContext) {
           repOutTarget,
           weekSetting.weight ?? calculateWeight(weekSetting.training_max, weekSetting.intensity_pct, rounding),
           weekSetting.training_max,
-          weekSetting.progression_type === "custom" || weekSetting.progression_type === "bodyweight" ? 0 : 1,
+          editor || weekSetting.progression_type === "custom" || weekSetting.progression_type === "bodyweight" ? 0 : 1,
+          editor ? JSON.stringify(editor) : null,
         );
       }
 
@@ -408,6 +428,7 @@ export async function POST(request: Request, context: RouteContext) {
 
     return NextResponse.json(session, { status: 201 });
   } catch (error) {
+    if (error instanceof EditorRepositoryError) return jsonError(error.message, error.status);
     if (isBadRequest(error)) return jsonError(error.message, 400);
     if (isUnauthorized(error)) return jsonError("Unauthorized", 401);
     return jsonError("Failed to create session", 500);
