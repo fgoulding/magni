@@ -1,17 +1,24 @@
 import fs from "node:fs";
-import { expect, test } from "@playwright/test";
+import { randomUUID } from "node:crypto";
+import { expect, test, type Page, type TestInfo } from "@playwright/test";
 import { registerViaApi } from "./helpers";
 
-test("past workout editing, lost-response recovery, history correction and reusable routine", async ({ page }, testInfo) => {
+function watchHydration(page: Page) {
   const hydrationErrors: string[] = [];
   page.on("console", (message) => { if (message.type() === "error" && /hydrat|server rendered/i.test(message.text())) hydrationErrors.push(message.text()); });
-  await registerViaApi(page, "history");
-  const shot = async (name: string) => {
+  return hydrationErrors;
+}
+
+function historyScreenshots(page: Page, testInfo: TestInfo) {
+  return async (name: string) => {
     if (testInfo.project.name !== "mobile-safari") return;
     fs.mkdirSync(".playwright/production-goal", { recursive: true });
     await page.screenshot({ path: `.playwright/production-goal/history-${name}-iphone.png`, fullPage: true, animations: "disabled", caret: "initial" });
     expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
   };
+}
+
+async function startPastWorkout(page: Page) {
   // Compile the dynamic detail and history surfaces before the browser connects to dev HMR.
   await page.request.get("/workouts/999999");
   await page.request.get("/workouts");
@@ -21,6 +28,13 @@ test("past workout editing, lost-response recovery, history correction and reusa
   await page.getByLabel("Workout units").selectOption("kg");
   await page.getByRole("button", { name: "Quick workout", exact: true }).click();
   await expect(page.getByRole("heading", { name: "September pull", exact: true })).toBeVisible();
+}
+
+test("past workout preserves lost add responses and structural edits through reload", async ({ page }, testInfo) => {
+  const hydrationErrors = watchHydration(page);
+  const shot = historyScreenshots(page, testInfo);
+  await registerViaApi(page, "history-edit-recovery");
+  await startPastWorkout(page);
   await page.getByRole("button", { name: "Add exercise", exact: true }).click();
   await page.getByLabel("New exercise name").fill("Dumbbell Row");
   await page.getByLabel("Weight", { exact: true }).fill("40");
@@ -65,6 +79,31 @@ test("past workout editing, lost-response recovery, history correction and reusa
   await page.getByRole("button", { name: "Finish workout", exact: true }).click();
   await expect(page.getByText(/400 kg total/)).toBeVisible();
   await page.getByRole("link", { name: "View workout", exact: true }).click();
+  await expect(page.getByText(/1 of 2 sets logged · 400 kg volume/)).toBeVisible();
+  expect(hydrationErrors).toEqual([]);
+});
+
+test("create, log, finish, find, correct and repeat a past workout with a reusable routine", async ({ page }, testInfo) => {
+  const hydrationErrors = watchHydration(page);
+  const shot = historyScreenshots(page, testInfo);
+  await registerViaApi(page, "history-complete-loop");
+  await startPastWorkout(page);
+  await page.getByRole("button", { name: "Add exercise", exact: true }).click();
+  await page.getByLabel("New exercise name").fill("Cable Row");
+  await page.getByLabel("Sets", { exact: true }).fill("2");
+  await page.getByLabel("Weight", { exact: true }).fill("40");
+  await page.getByRole("button", { name: "Add to workout", exact: true }).click();
+  await expect(page.getByRole("spinbutton", { name: /Reps for set/ })).toHaveCount(2);
+  const id = Number(new URL(page.url()).pathname.split("/").at(-1));
+  expect(Number.isInteger(id)).toBe(true);
+  await page.getByRole("button", { name: "Log set 1", exact: true }).click();
+  await expect(page.getByText("Saved", { exact: true })).toBeVisible();
+  await page.getByRole("button", { name: "Finish workout", exact: true }).click();
+  await expect(page.getByText(/400 kg total/)).toBeVisible();
+  await page.goto("/workouts");
+  await expect(page.getByRole("heading", { name: "Workout history", exact: true })).toBeVisible();
+  await page.locator(`a[href="/workouts/${id}"]`).click();
+  await expect(page.getByText(/1 of 2 sets logged · 400 kg volume/)).toBeVisible();
   await page.getByRole("button", { name: "Correct workout", exact: true }).click();
   await page.getByLabel("Correct reps for set 1", { exact: true }).fill("8");
   await page.reload();
@@ -93,6 +132,28 @@ test("past workout editing, lost-response recovery, history correction and reusa
   await page.goto("/workouts");
   await expect(page.getByRole("heading", { name: "Workout history", exact: true })).toBeVisible();
   await expect(page.getByText("Pull routine · 1 exercise")).toBeVisible();
+  expect(hydrationErrors).toEqual([]);
+});
+
+test("history and Stats preserve kg values and readable light and dark themes", async ({ page }, testInfo) => {
+  const hydrationErrors = watchHydration(page);
+  const shot = historyScreenshots(page, testInfo);
+  await registerViaApi(page, "history-themes");
+  // This visual journey has its own completed fixture; the complete UI loop is
+  // exercised above and does not share a cumulative timeout with theme checks.
+  const created = await page.request.post("/api/sessions", { data: { name: "September pull", date: "2026-09-02", unit: "kg", newWorkout: true, requestKey: randomUUID() } });
+  expect(created.status()).toBe(201);
+  const session = await created.json();
+  const added = await page.request.post(`/api/sessions/${session.id}/sets`, { data: { name: "Cable Row", sets: 2, reps: 10, weight: 40, requestKey: randomUUID() } });
+  expect(added.status()).toBe(201);
+  const set = (await added.json()).sets[0];
+  expect((await page.request.put(`/api/sessions/${session.id}/sets`, { data: { setId: set.id, actualReps: 8, actualWeight: 40 } })).ok()).toBe(true);
+  expect((await page.request.patch(`/api/sessions/${session.id}`)).ok()).toBe(true);
+  expect((await page.request.post("/api/workout-routines", { data: { sessionId: session.id, name: "Pull routine", requestKey: randomUUID() } })).status()).toBe(201);
+  await page.goto("/workouts");
+  await expect(page.getByRole("heading", { name: "Workout history", exact: true })).toBeVisible();
+  await expect(page.getByText("Pull routine · 1 exercise")).toBeVisible();
+  await expect(page.getByText("1/2 sets · 320 kg volume", { exact: true })).toBeVisible();
   await shot("list");
   await page.getByRole("navigation").getByRole("link", { name: "Settings", exact: true }).click();
   await page.getByRole("button", { name: "Dark", exact: true }).click();

@@ -40,6 +40,11 @@ export function QuickWorkout({ initialSession, initialDate }: { initialSession: 
   const [recap, setRecap] = useState<Recap | null>(null);
   const [confirmingDiscard, setConfirmingDiscard] = useState(false);
   const [discarding, setDiscarding] = useState(false);
+  const startLocked = !hydrated || starting || !!startDraft.requestKey;
+
+  function editStart(change: Partial<Pick<typeof startDraft, "name" | "date" | "unit">>) {
+    if (!startLocked) storeStart({ ...startDraft, ...change });
+  }
 
   async function start() {
     if (!hydrated || starting) return;
@@ -50,7 +55,12 @@ export function QuickWorkout({ initialSession, initialDate }: { initialSession: 
       storeStart({ ...startDraft, requestKey });
       const response = await fetch("/api/sessions", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ requestKey, ...(initialDate ? { date: startDraft.date, name: startDraft.name, unit: startDraft.unit, newWorkout: true } : {}) }) });
       const body = await readResponseJson<QuickSession & { error?: string }>(response);
-      if (!response.ok || !body?.id) throw new Error(body?.error ?? "Could not start workout");
+      if (!response.ok || !body?.id) {
+        // This API's structured 400 errors precede writes or roll back the whole
+        // create transaction. Unconfirmed outcomes must retain the original intent.
+        if (response.status === 400 && typeof body?.error === "string") storeStart({ ...startDraft, requestKey: undefined });
+        throw new Error(body?.error ?? "Could not start workout");
+      }
       setSession({ ...body, sets: body.sets ?? [] });
       if (initialDate) window.history.replaceState(null, "", `/workouts/${body.id}`);
       storeStart(null);
@@ -67,7 +77,7 @@ export function QuickWorkout({ initialSession, initialDate }: { initialSession: 
   }
 
   function editSet(set: WorkoutSet, field: keyof SetDraft, value: string) {
-    if (!session) return;
+    if (!hydrated || !session) return;
     const current = parseDrafts(readDraftSnapshot(session.id));
     const next = { ...(current[set.id] ?? valuesForSet(set)), [field]: value };
     if (!writeDrafts(session.id, { ...current, [set.id]: next })) {
@@ -77,7 +87,7 @@ export function QuickWorkout({ initialSession, initialDate }: { initialSession: 
   }
 
   async function logSet(set: WorkoutSet) {
-    if (!session || structureDraft || savingIds.has(set.id)) return;
+    if (!hydrated || !session || structureDraft || savingIds.has(set.id)) return;
     const submitted = drafts[set.id] ?? valuesForSet(set);
     const actualReps = Number(submitted.reps);
     const actualWeight = Number(submitted.weight);
@@ -137,7 +147,7 @@ export function QuickWorkout({ initialSession, initialDate }: { initialSession: 
   }
 
   async function finish() {
-    if (!session || structureDraft || newExerciseDraft || appendDraft || savingIds.size > 0 || session.sets.some((set) => drafts[set.id])) return;
+    if (!hydrated || !session || structureDraft || newExerciseDraft || appendDraft || savingIds.size > 0 || session.sets.some((set) => drafts[set.id])) return;
     setFinishing(true);
     setError("");
     try {
@@ -157,7 +167,7 @@ export function QuickWorkout({ initialSession, initialDate }: { initialSession: 
   }
 
   async function discard() {
-    if (!session) return;
+    if (!hydrated || !session) return;
     setDiscarding(true);
     setError("");
     try {
@@ -219,9 +229,9 @@ export function QuickWorkout({ initialSession, initialDate }: { initialSession: 
     return (
       <div>
         {initialDate && <div className="mb-3 grid gap-3">
-          <label className="text-xs text-muted">Workout name<input aria-label="Workout name" disabled={!hydrated} value={startDraft.name} className={`${workoutInput} mt-1 w-full`} onChange={(e) => storeStart({ ...startDraft, name: e.target.value })} /></label>
-          <label className="text-xs text-muted">Workout date<input aria-label="Workout date" disabled={!hydrated} type="date" value={startDraft.date} className={`${workoutInput} mt-1 w-full`} onChange={(e) => storeStart({ ...startDraft, date: e.target.value })} /></label>
-          <label className="text-xs text-muted">Units<select aria-label="Workout units" disabled={!hydrated} value={startDraft.unit} className={`${workoutInput} mt-1 w-full`} onChange={(e) => storeStart({ ...startDraft, unit: e.target.value as "lb" | "kg" })}><option value="lb">Pounds (lb)</option><option value="kg">Kilograms (kg)</option></select></label>
+          <label className="text-xs text-muted">Workout name<input aria-label="Workout name" disabled={startLocked} value={startDraft.name} className={`${workoutInput} mt-1 w-full`} onChange={(e) => editStart({ name: e.target.value })} /></label>
+          <label className="text-xs text-muted">Workout date<input aria-label="Workout date" disabled={startLocked} type="date" value={startDraft.date} className={`${workoutInput} mt-1 w-full`} onChange={(e) => editStart({ date: e.target.value })} /></label>
+          <label className="text-xs text-muted">Units<select aria-label="Workout units" disabled={startLocked} value={startDraft.unit} className={`${workoutInput} mt-1 w-full`} onChange={(e) => editStart({ unit: e.target.value as "lb" | "kg" })}><option value="lb">Pounds (lb)</option><option value="kg">Kilograms (kg)</option></select></label>
         </div>}
         <button
           type="button"
@@ -230,8 +240,9 @@ export function QuickWorkout({ initialSession, initialDate }: { initialSession: 
           className="touch-target flex w-full items-center justify-center gap-1.5 rounded-xl border border-dashed border-line py-3 text-sm font-semibold text-muted transition-colors active:bg-surface-muted disabled:opacity-50"
         >
           <Zap aria-hidden="true" size={16} />
-          {starting ? "Starting…" : "Quick workout"}
+          {starting ? "Starting…" : startDraft.requestKey ? "Retry starting workout" : "Quick workout"}
         </button>
+        {startDraft.requestKey && !starting ? <p role="status" className="mt-2 text-sm text-muted">Workout creation is unconfirmed. Retry to recover it before changing these details.</p> : null}
         {error ? <p className="mt-2 text-center text-sm text-danger-ink">{error}</p> : null}
       </div>
     );
@@ -249,7 +260,7 @@ export function QuickWorkout({ initialSession, initialDate }: { initialSession: 
         {session.date && <p className="mt-1 text-sm text-muted">{session.date} · {session.unit ?? "lb"}</p>}
       </div>
 
-      <QuickWorkoutEditor session={session} disabled={hasPendingChanges || savingIds.size > 0 || finishing || discarding} onChanged={setSession} onError={setError} />
+      <QuickWorkoutEditor session={session} disabled={!hydrated || hasPendingChanges || savingIds.size > 0 || finishing || discarding} onChanged={setSession} onError={setError} />
 
       {groups.length === 0 ? (
         <p className="px-4 py-4 text-sm text-muted">Add your first exercise to start logging.</p>
@@ -279,7 +290,7 @@ export function QuickWorkout({ initialSession, initialDate }: { initialSession: 
                         min={0}
                         inputMode="numeric"
                         value={values.reps}
-                        disabled={finishing || discarding || !!structureDraft}
+                        disabled={!hydrated || finishing || discarding || !!structureDraft}
                         onChange={(e) => editSet(set, "reps", e.target.value)}
                         className="touch-target w-16 rounded-xl border border-line bg-surface px-2 text-center font-display text-lg outline-none focus:border-brand"
                       />
@@ -294,7 +305,7 @@ export function QuickWorkout({ initialSession, initialDate }: { initialSession: 
                         inputMode="decimal"
                         value={values.weight}
                         step="any"
-                        disabled={finishing || discarding || !!structureDraft}
+                        disabled={!hydrated || finishing || discarding || !!structureDraft}
                         onChange={(e) => editSet(set, "weight", e.target.value)}
                         className="touch-target w-20 rounded-xl border border-line bg-surface px-2 text-center font-display text-lg outline-none focus:border-brand"
                       />
@@ -302,7 +313,7 @@ export function QuickWorkout({ initialSession, initialDate }: { initialSession: 
                       <button
                         type="button"
                         onClick={() => logSet(set)}
-                        disabled={saving || finishing || discarding || !!structureDraft}
+                        disabled={!hydrated || saving || finishing || discarding || !!structureDraft}
                         aria-label={saving ? `Saving set ${i + 1}` : logged ? `Set ${i + 1} saved, tap to update` : pending ? `Save set ${i + 1}` : `Log set ${i + 1}`}
                         aria-pressed={logged}
                         className={`touch-target ml-auto inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-xl transition-colors disabled:opacity-50 ${
@@ -331,7 +342,7 @@ export function QuickWorkout({ initialSession, initialDate }: { initialSession: 
         </ul>
       )}
 
-      <QuickExercisePicker sessionId={session.id} unit={session.unit ?? "lb"} onAdded={onAdded} onError={setError} disabled={finishing || discarding || !!structureDraft} />
+      <QuickExercisePicker sessionId={session.id} unit={session.unit ?? "lb"} onAdded={onAdded} onError={setError} disabled={!hydrated || finishing || discarding || !!structureDraft} />
 
       {error ? <p role="alert" className="px-4 pb-1 text-sm text-danger-ink">{error}</p> : null}
       {newExerciseDraft || appendDraft ? <p className="px-4 pb-1 text-sm text-muted">Finish adding the pending exercise or set before completing this workout.</p> : null}
@@ -342,7 +353,7 @@ export function QuickWorkout({ initialSession, initialDate }: { initialSession: 
         <button
           type="button"
           onClick={finish}
-          disabled={finishing || discarding || groups.length === 0 || hasPendingChanges || !!structureDraft || !!newExerciseDraft || !!appendDraft || savingIds.size > 0}
+          disabled={!hydrated || finishing || discarding || groups.length === 0 || hasPendingChanges || !!structureDraft || !!newExerciseDraft || !!appendDraft || savingIds.size > 0}
           className="touch-target flex-1 rounded-xl bg-foreground px-4 py-2.5 text-sm font-semibold text-background transition-opacity active:opacity-90 disabled:opacity-50"
         >
           {finishing ? "Finishing…" : "Finish workout"}
@@ -351,7 +362,7 @@ export function QuickWorkout({ initialSession, initialDate }: { initialSession: 
           <button
             type="button"
             onClick={discard}
-            disabled={discarding || finishing || savingIds.size > 0}
+            disabled={!hydrated || discarding || finishing || savingIds.size > 0}
             className="touch-target rounded-xl bg-danger-ink px-4 py-2.5 text-sm font-semibold text-background transition-opacity active:opacity-90 disabled:opacity-50"
           >
             {discarding ? "Discarding…" : "Confirm discard"}
@@ -360,7 +371,7 @@ export function QuickWorkout({ initialSession, initialDate }: { initialSession: 
           <button
             type="button"
             onClick={() => setConfirmingDiscard(true)}
-            disabled={finishing || savingIds.size > 0}
+            disabled={!hydrated || finishing || savingIds.size > 0}
             className="touch-target rounded-xl border border-line bg-surface px-4 py-2.5 text-sm font-semibold text-danger-ink transition-colors active:bg-danger-soft"
           >
             Discard
