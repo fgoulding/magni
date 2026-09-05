@@ -30,6 +30,7 @@ jobs:
     timeout-minutes: 30
     env:
       CI: "true"
+      E2E_NAV_DIAGNOSTICS: "1"
       NEXT_TELEMETRY_DISABLED: "1"
     steps:
       - uses: actions/checkout@v4

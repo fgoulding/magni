@@ -16,12 +16,16 @@ runtime, and installs Chromium/WebKit plus their operating-system dependencies.
 5. `npm run test:coverage`, which runs the full suite with the existing configured
    coverage thresholds. It accepts no coverage reduction or test filtering flags.
 6. The normal production build.
-7. Every configured E2E test in both Chromium and iPhone WebKit projects.
+7. Every configured E2E test in both Chromium and iPhone WebKit projects. A test
+   that fails initially and passes on retry still fails the release gate; retries
+   collect diagnostic evidence and cannot turn a flaky run into a promotion.
 
 The first failure stops the sequence and marks all later checks skipped. CI
 uploads per-check output and `result.json` even on failure, plus available
 coverage, JUnit, HTML, and browser trace artifacts. The result identifies the
-full tested commit, source ref, package version, dirty-checkout state, run ID,
+full tested commit. CI retains traces from the first failed browser attempt,
+including when a later diagnostic retry passes. The result also identifies the
+source ref, package version, dirty-checkout state, run ID,
 and attempt. Keep this artifact with the release record. Repository branch
 protection should require `Verify release candidate`; changing branch-protection
 settings remains a repository administration step, separate from these files.

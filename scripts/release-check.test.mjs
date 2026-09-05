@@ -12,7 +12,7 @@ test("release contract includes current coverage, strict lint, production build 
   assert.deepEqual(RELEASE_CHECKS.find(check => check.name === "dependency-audit").args, ["audit", "--omit=dev"]);
   assert.deepEqual(RELEASE_CHECKS.find(check => check.name === "tests-and-coverage").args, ["run", "test:coverage"]);
   assert.ok(RELEASE_CHECKS.find(check => check.name === "lint").args.includes("--max-warnings=0"));
-  assert.deepEqual(RELEASE_CHECKS.at(-1).args, ["run", "test:e2e", "--", "--project=chromium", "--project=mobile-safari"]);
+  assert.deepEqual(RELEASE_CHECKS.at(-1).args, ["run", "test:e2e", "--", "--project=chromium", "--project=mobile-safari", "--fail-on-flaky-tests"]);
 });
 
 test("a failed check blocks subsequent stages and persists its exit code and output", async () => {

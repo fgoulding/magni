@@ -3,6 +3,21 @@ import { runProgramEditorMigration } from "@/features/program-editor/migration";
 import { createCalendarOperations, migrateOccurrenceSessionUniqueness } from "@/features/calendar/migration";
 import { runWorkoutHistoryMigration } from "@/features/workouts/migration";
 
+/** Persisted in SQLite user_version only after every migration succeeds.
+ * Bump this for every schema or data migration change, including schema.sql and
+ * the editor/calendar/history migration helpers. Revision 0 covers all releases
+ * before migration tracking. Initialization may skip writes only at this exact
+ * revision; a newer database requires its matching release, never a downgrade. */
+export const DATABASE_SCHEMA_REVISION = 1;
+
+export function isDatabaseSchemaCurrent(db: Database.Database): boolean {
+  const revision = db.pragma("user_version", { simple: true }) as number;
+  if (revision > DATABASE_SCHEMA_REVISION) {
+    throw new Error(`Database has newer schema revision ${revision}; this release supports ${DATABASE_SCHEMA_REVISION}`);
+  }
+  return revision === DATABASE_SCHEMA_REVISION;
+}
+
 function hasColumn(db: Database.Database, tableName: string, columnName: string): boolean {
   const columns = db.prepare(`PRAGMA table_info(${tableName})`).all() as { name: string }[];
   return columns.some((column) => column.name === columnName);
@@ -281,7 +296,7 @@ function backfillProgramDefinitionsAndRuns(db: Database.Database): void {
          OR program_name = ''
          OR day_name = '';
     `);
-  })();
+  }).immediate();
 }
 
 function copyProgramStructureToDefinition(
@@ -968,6 +983,12 @@ function createUserTrainingTemplatesTable(db: Database.Database): void {
 }
 
 export function runMigrations(db: Database.Database): void {
+  // Explicit migration calls remain repeatable for upgrade/repair rehearsals,
+  // but must never modify a database belonging to a newer release.
+  isDatabaseSchemaCurrent(db);
+  // An explicit repair can rerun a current revision. Invalidate its completion
+  // before any repair writes so a failure is retried on the next initialization.
+  db.pragma("user_version = 0");
   dropSessionTriggers(db);
   createProgramDefinitionRunTables(db);
   createUserTrainingTemplatesTable(db);
@@ -1040,6 +1061,7 @@ export function runMigrations(db: Database.Database): void {
   createCalendarOperations(db);
   runWorkoutHistoryMigration(db);
   migrateOccurrenceSessionUniqueness(db);
+  db.pragma(`user_version = ${DATABASE_SCHEMA_REVISION}`);
 }
 
 /** Additive migration: legacy prescriptions and performance stay in place. */

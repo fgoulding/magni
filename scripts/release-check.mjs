@@ -13,7 +13,7 @@ export const RELEASE_CHECKS = [
   { name: "lint", command: npm, args: ["run", "lint", "--", "--max-warnings=0"] },
   { name: "tests-and-coverage", command: npm, args: ["run", "test:coverage"] },
   { name: "production-build", command: npm, args: ["run", "build"] },
-  { name: "e2e", command: npm, args: ["run", "test:e2e", "--", "--project=chromium", "--project=mobile-safari"] },
+  { name: "e2e", command: npm, args: ["run", "test:e2e", "--", "--project=chromium", "--project=mobile-safari", "--fail-on-flaky-tests"] },
 ];
 
 function sourceIdentity(cwd, env) {

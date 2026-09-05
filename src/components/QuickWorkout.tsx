@@ -10,6 +10,8 @@ import { readResponseJson, type WorkoutSet } from "@/components/workout-card-uti
 
 export type QuickSession = { id: number; sets: WorkoutSet[]; name?: string; date?: string; unit?: "lb" | "kg"; revision?: number };
 
+const subscribeHydration = () => () => {};
+
 type Recap = {
   volume: number;
   loggedCount: number;
@@ -20,6 +22,8 @@ type Recap = {
  *  add exercises on the fly, log each set, and finish. Reuses the program-agnostic
  *  session routes (POST /api/sessions, POST/PUT .../sets, PATCH/DELETE the session). */
 export function QuickWorkout({ initialSession, initialDate }: { initialSession: QuickSession | null; initialDate?: string }) {
+  // The HTML preview must not accept edits before draft change handlers are attached.
+  const hydrated = useSyncExternalStore(subscribeHydration, () => true, () => false);
   const [startDraft, storeStart] = useWorkoutDraft<{ name: string; date: string; unit: "lb" | "kg"; requestKey?: string }>(`magni.quick.start.${initialDate ?? "today"}`, { name: "Quick Workout", date: initialDate ?? "", unit: "lb" });
   const [session, setSession] = useState<QuickSession | null>(initialSession);
   const draftSnapshot = useSyncExternalStore(subscribeDrafts, () => readDraftSnapshot(session?.id), () => null);
@@ -38,6 +42,7 @@ export function QuickWorkout({ initialSession, initialDate }: { initialSession: 
   const [discarding, setDiscarding] = useState(false);
 
   async function start() {
+    if (!hydrated || starting) return;
     setStarting(true);
     setError("");
     try {
@@ -214,14 +219,14 @@ export function QuickWorkout({ initialSession, initialDate }: { initialSession: 
     return (
       <div>
         {initialDate && <div className="mb-3 grid gap-3">
-          <label className="text-xs text-muted">Workout name<input aria-label="Workout name" value={startDraft.name} className={`${workoutInput} mt-1 w-full`} onChange={(e) => storeStart({ ...startDraft, name: e.target.value })} /></label>
-          <label className="text-xs text-muted">Workout date<input aria-label="Workout date" type="date" value={startDraft.date} className={`${workoutInput} mt-1 w-full`} onChange={(e) => storeStart({ ...startDraft, date: e.target.value })} /></label>
-          <label className="text-xs text-muted">Units<select aria-label="Workout units" value={startDraft.unit} className={`${workoutInput} mt-1 w-full`} onChange={(e) => storeStart({ ...startDraft, unit: e.target.value as "lb" | "kg" })}><option value="lb">Pounds (lb)</option><option value="kg">Kilograms (kg)</option></select></label>
+          <label className="text-xs text-muted">Workout name<input aria-label="Workout name" disabled={!hydrated} value={startDraft.name} className={`${workoutInput} mt-1 w-full`} onChange={(e) => storeStart({ ...startDraft, name: e.target.value })} /></label>
+          <label className="text-xs text-muted">Workout date<input aria-label="Workout date" disabled={!hydrated} type="date" value={startDraft.date} className={`${workoutInput} mt-1 w-full`} onChange={(e) => storeStart({ ...startDraft, date: e.target.value })} /></label>
+          <label className="text-xs text-muted">Units<select aria-label="Workout units" disabled={!hydrated} value={startDraft.unit} className={`${workoutInput} mt-1 w-full`} onChange={(e) => storeStart({ ...startDraft, unit: e.target.value as "lb" | "kg" })}><option value="lb">Pounds (lb)</option><option value="kg">Kilograms (kg)</option></select></label>
         </div>}
         <button
           type="button"
           onClick={start}
-          disabled={starting}
+          disabled={!hydrated || starting}
           className="touch-target flex w-full items-center justify-center gap-1.5 rounded-xl border border-dashed border-line py-3 text-sm font-semibold text-muted transition-colors active:bg-surface-muted disabled:opacity-50"
         >
           <Zap aria-hidden="true" size={16} />

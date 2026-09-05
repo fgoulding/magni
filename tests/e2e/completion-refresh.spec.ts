@@ -1,4 +1,4 @@
-import { expect, test, type Page, type Route } from "@playwright/test";
+import { expect, test, type APIResponse, type Page, type Request, type Route } from "@playwright/test";
 import { readFile } from "node:fs/promises";
 import { randomUUID } from "node:crypto";
 import { registerViaApi } from "./helpers";
@@ -26,19 +26,54 @@ async function loggedWorkout(page: Page, preset = "linear", fromEditor = false) 
 
 async function holdRefresh(page: Page) {
   let release!: () => void;
-  let requested!: () => void;
+  let requested!: (response: APIResponse) => void;
+  let completionStarted = false;
+  const isCompletion = (request: Request) => request.method() === "POST" && new URL(request.url()).pathname.endsWith("/complete-and-advance");
+  const markStarted = (request: Request) => {
+    if (isCompletion(request)) { completionStarted = true; page.off("request", markStarted); }
+  };
+  page.on("request", markStarted);
+  const completion = page.waitForResponse(response => isCompletion(response.request())).then(async response => ({ response, body: await response.json().catch(() => null) }));
   const pending = new Promise<void>(resolve => { release = resolve; });
-  const received = new Promise<void>(resolve => { requested = resolve; });
+  const fetched = new Promise<APIResponse>(resolve => { requested = resolve; });
+  const received = completion.then(async ({ response, body }) => {
+    await test.info().attach("completion-response", { contentType: "application/json", body: JSON.stringify({ status: response.status(), success: body?.success, error: body?.error }) });
+    if (!response.ok()) throw new Error(`Completion request failed (${response.status()}): ${body?.error ?? "No error body"}`);
+    if (body?.success !== true) throw new Error("Completion response did not acknowledge success");
+    const refresh = await fetched;
+    const containsRecap = (await refresh.text()).includes("Workout complete today");
+    await test.info().attach("completion-refresh-response", { contentType: "application/json", body: JSON.stringify({ status: refresh.status(), containsRecap }) });
+    if (!refresh.ok() || !containsRecap) throw new Error(`Completed Today refresh did not contain the saved recap (${refresh.status()})`);
+  });
+  // A response may arrive while the test is still completing its click. Keep a
+  // rejection handled until the caller awaits the explicit completion boundary.
+  void received.catch(() => {});
   const handler = async (route: Route) => {
-    if (route.request().headers().rsc !== "1") return route.continue();
+    if (route.request().headers().rsc !== "1" || !completionStarted) return route.continue();
+    // Development/HMR can refresh Today independently. Only hold a response
+    // fetched after the actual completion was acknowledged and committed.
+    const result = await completion;
+    if (!result.response.ok() || result.body?.success !== true) return route.continue();
     const response = await route.fetch();
-    requested();
+    requested(response);
     await pending;
     await route.fulfill({ response }).catch(() => {});
   };
   await page.route("**/today?*", handler);
   return { received, release };
 }
+
+test("a rejected completion cannot be mistaken for an unrelated Today refresh", async ({ page }) => {
+  await loggedWorkout(page);
+  await page.route("**/complete-and-advance", route => route.fulfill({ status: 500, contentType: "application/json", body: JSON.stringify({ error: "Injected completion rejection" }) }));
+  const refresh = await holdRefresh(page);
+  try {
+    await page.getByRole("button", { name: "Finish Workout", exact: true }).click();
+    await expect(page.getByRole("alert").filter({ hasText: "Injected completion rejection" })).toBeVisible();
+    await page.evaluate(() => { void fetch("/today?_rsc=unrelated-refresh", { headers: { rsc: "1" } }); });
+    await expect(refresh.received).rejects.toThrow("Completion request failed (500)");
+  } finally { refresh.release(); }
+});
 
 test("completion stays pending until the refreshed route commits", async ({ page }, info) => {
   await loggedWorkout(page);

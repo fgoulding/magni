@@ -1,7 +1,7 @@
 import Database from "better-sqlite3";
 import fs from "node:fs";
 import path from "node:path";
-import { runMigrations } from "./migrations";
+import { isDatabaseSchemaCurrent, runMigrations } from "./migrations";
 
 const dbPath = process.env.DB_PATH ?? path.join(process.cwd(), "data", "workouts.db");
 const dbDir = path.dirname(dbPath);
@@ -60,12 +60,18 @@ function withInitLock(callback: () => void): void {
 }
 
 export function initDb(): void {
-  const schemaPath = path.join(process.cwd(), "src", "lib", "db", "schema.sql");
-  const schema = fs.readFileSync(schemaPath, "utf8");
-  withInitLock(() => {
-    db.exec(schema);
-    runMigrations(db);
-  });
+  // Next can load this module in multiple route workers. A current database
+  // needs no schema/backfill writes, especially while requests hold the writer.
+  if (!isDatabaseSchemaCurrent(db)) {
+    const schemaPath = path.join(process.cwd(), "src", "lib", "db", "schema.sql");
+    const schema = fs.readFileSync(schemaPath, "utf8");
+    withInitLock(() => {
+      // Another initializer may have completed while this worker waited.
+      if (isDatabaseSchemaCurrent(db)) return;
+      db.exec(schema);
+      runMigrations(db);
+    });
+  }
 
   // Surface corruption on boot instead of letting it silently propagate into
   // every backup. quick_check is fast (no per-index scan) and "ok" when healthy.
