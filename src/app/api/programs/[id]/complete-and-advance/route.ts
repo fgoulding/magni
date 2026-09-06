@@ -8,6 +8,8 @@ import type { ExerciseCategory } from "@/features/training-templates/types";
 import { syncOccurrencePosition } from "@/features/programs/occurrences";
 import { applyEditorCompletion } from "@/features/program-editor/execution";
 import { EditorRepositoryError } from "@/features/program-editor/repository";
+import { frozenLegacyRule } from "@/features/training-templates/legacy-snapshot";
+import { evaluateProgressionRule } from "@/features/training-templates/custom-rule";
 
 type RouteContext = {
   params: Promise<{ id: string }>;
@@ -15,6 +17,7 @@ type RouteContext = {
 
 type CompletionBody = {
   sessionId?: unknown;
+  unavailableTemplatePolicy?: unknown;
 };
 
 type ProgramRow = {
@@ -48,6 +51,7 @@ type CompletionSetRow = {
   progression_type: string;
   auto_progression_enabled: number;
   editor_json: string | null;
+  template_snapshot_json: string | null;
 };
 
 function nextProgramPosition(program: ProgramRow, completedDayNumber = program.current_day): { currentWeek: number; currentDay: number } {
@@ -165,7 +169,8 @@ export async function POST(request: Request, context: RouteContext) {
              ss.category,
              ss.progression_type,
              ss.auto_progression_enabled,
-             ss.editor_json
+             ss.editor_json,
+             ss.template_snapshot_json
            FROM session_sets ss
            WHERE ss.session_id = ?`,
         )
@@ -194,6 +199,13 @@ export async function POST(request: Request, context: RouteContext) {
         return { response: jsonError("Log AMRAP reps before completing this workout", 400) };
       }
 
+      const unavailable = Array.from(exercisedRows.values()).filter(row => row.auto_progression_enabled && row.actual_reps !== null
+        && row.progression_type.startsWith("custom:") && !frozenLegacyRule(row.template_snapshot_json, row.progression_type));
+      if (unavailable.length && body.unavailableTemplatePolicy !== "hold") return { response: NextResponse.json({
+        error: "An original custom progression rule is unavailable. Your logged work is retained. You can finish with no training-max change for the affected lifts.",
+        code: "missing_legacy_template",
+      }, { status: 409 }) };
+      const legacyDecisions: { exerciseId: number; templateId: string; reason: string; delta: number }[] = [];
       const progressionDecisions = applyEditorCompletion({ userId: user.id, sessionId });
 
       for (const row of exercisedRows.values()) {
@@ -201,14 +213,19 @@ export async function POST(request: Request, context: RouteContext) {
           continue;
         }
 
-        const delta = calculateTemplateTrainingMaxDelta({
+        const evaluation = {
           templateId: row.progression_type,
           actualReps: row.actual_reps,
           repOutTarget: row.rep_out_target,
           category: row.category,
           currentTrainingMax: row.training_max,
           userId: user.id,
-        });
+        };
+        const frozen = frozenLegacyRule(row.template_snapshot_json, row.progression_type);
+        const isCustom = row.progression_type.startsWith("custom:");
+        const delta = isCustom ? frozen ? evaluateProgressionRule(frozen, evaluation) : 0 : calculateTemplateTrainingMaxDelta(evaluation);
+        if (isCustom) legacyDecisions.push({ exerciseId: row.exercise_id, templateId: row.progression_type,
+          reason: frozen ? "frozen_template" : "missing_legacy_template", delta });
         const newTrainingMax = applyTmDelta(row.training_max, delta);
 
         db.prepare("UPDATE session_sets SET tm_delta_applied = ? WHERE id = ?").run(delta, row.set_id);
@@ -224,7 +241,7 @@ export async function POST(request: Request, context: RouteContext) {
         }
       }
 
-      db.prepare("UPDATE sessions SET completed = 1, completed_at = datetime('now') WHERE id = ?").run(sessionId);
+      db.prepare("UPDATE sessions SET completed = 1, completed_at = datetime('now'), legacy_completion_json = ? WHERE id = ?").run(legacyDecisions.length ? JSON.stringify(legacyDecisions) : null, sessionId);
       if (session.occurrence_id) {
         const position = syncOccurrencePosition(user.id, programId);
         if (position) next = { currentWeek: position.week_number, currentDay: position.day_number };

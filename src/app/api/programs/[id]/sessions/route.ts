@@ -237,6 +237,7 @@ export async function POST(request: Request, context: RouteContext) {
               pde.name AS exercise_name,
               pde.category,
               pde.progression_type,
+              pde.template_snapshot_json,
               pde.superset_group,
               pde.sort_order,
               pdws.week_number,
@@ -285,6 +286,7 @@ export async function POST(request: Request, context: RouteContext) {
         exercise_name: string;
         category: string;
         progression_type: string;
+        template_snapshot_json?: string | null;
         superset_group: string | null;
         week_number: number;
         set_number: number;
@@ -327,8 +329,8 @@ export async function POST(request: Request, context: RouteContext) {
           program.program_definition_id,
           day.definition_day_id,
           program.program_run_id,
-          program.name,
-          day.name,
+          occurrence?.program_name ?? program.name,
+          occurrence?.day_name ?? day.name,
           selectedWeekNumber,
           scheduledDate,
           today,
@@ -358,8 +360,9 @@ export async function POST(request: Request, context: RouteContext) {
             calculated_weight,
             training_max,
             auto_progression_enabled,
-            editor_json
-          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            editor_json,
+            template_snapshot_json
+          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         `,
       );
 
@@ -401,6 +404,7 @@ export async function POST(request: Request, context: RouteContext) {
           weekSetting.training_max,
           editor || weekSetting.progression_type === "custom" || weekSetting.progression_type === "bodyweight" ? 0 : 1,
           editor ? JSON.stringify(editor) : null,
+          weekSetting.template_snapshot_json ?? null,
         );
       }
 

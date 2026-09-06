@@ -3,7 +3,7 @@ import os from "node:os";
 import path from "node:path";
 import Database from "better-sqlite3";
 import { describe, expect, it, vi } from "vitest";
-import { runMigrations } from "../migrations";
+import { DATABASE_SCHEMA_REVISION, runMigrations } from "../migrations";
 
 const schema = fs.readFileSync(path.join(process.cwd(), "src/lib/db/schema.sql"), "utf8");
 
@@ -118,7 +118,7 @@ describe("database initialization under concurrent requests", () => {
       expect(db.pragma("user_version", { simple: true })).toBe(0);
       db.exec("DROP TRIGGER reject_migration");
       runMigrations(db);
-      expect(db.pragma("user_version", { simple: true })).toBe(1);
+      expect(db.pragma("user_version", { simple: true })).toBe(DATABASE_SCHEMA_REVISION);
       expect(db.prepare("SELECT training_max FROM exercises WHERE id=1").get()).toEqual({ training_max: 200 });
       expect(db.prepare("SELECT actual_reps,actual_weight FROM session_sets WHERE id=1").get()).toEqual({ actual_reps: 5, actual_weight: 200 });
       expect(db.prepare("SELECT program_name,day_name,status FROM sessions WHERE id=1").get()).toEqual({ program_name: "Existing program", day_name: "Lower", status: "completed" });
@@ -139,7 +139,7 @@ describe("database initialization under concurrent requests", () => {
     try {
       populateLegacy(first.db);
       runMigrations(first.db);
-      expect(first.db.pragma("user_version", { simple: true })).toBe(1);
+      expect(first.db.pragma("user_version", { simple: true })).toBe(DATABASE_SCHEMA_REVISION);
       first.db.exec("CREATE TRIGGER reject_repair BEFORE UPDATE ON programs BEGIN SELECT RAISE(ABORT,'injected repair failure'); END");
       expect(() => runMigrations(first.db)).toThrow("injected repair failure");
       expect(first.db.pragma("user_version", { simple: true })).toBe(0);
@@ -147,7 +147,7 @@ describe("database initialization under concurrent requests", () => {
       first.db.exec("DROP TRIGGER reject_repair");
       vi.resetModules();
       second = await import("../index");
-      expect(second.db.pragma("user_version", { simple: true })).toBe(1);
+      expect(second.db.pragma("user_version", { simple: true })).toBe(DATABASE_SCHEMA_REVISION);
       second.db.exec("INSERT INTO sessions(id,program_id,user_id,day_id,week_number,date) VALUES(2,1,1,1,2,'2026-09-02')");
       expect(second.db.prepare("SELECT program_name,day_name,program_run_id IS NOT NULL AS linked FROM sessions WHERE id=2").get()).toEqual({ program_name: "Existing program", day_name: "Lower", linked: 1 });
       expect(second.db.prepare("SELECT actual_reps,actual_weight FROM session_sets WHERE id=1").get()).toEqual({ actual_reps: 5, actual_weight: 200 });

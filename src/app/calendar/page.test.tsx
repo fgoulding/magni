@@ -4,6 +4,7 @@ import path from "node:path";
 import { isValidElement, type ReactNode } from "react";
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { createUnexpiredAuthSession } from "@/__tests__/auth-fixture";
+import { WorkoutReuse } from "@/components/WorkoutReuse";
 
 const cookieMock = vi.hoisted(() => {
   const store = new Map<string, string>();
@@ -62,6 +63,12 @@ function collectWorkoutStartLabels(node: ReactNode): string[] {
     return [...labels, ...collectWorkoutStartLabels(node.props.children)];
   }
   return [];
+}
+
+function collectRepeats(node: ReactNode): {sessionId?:number;name:string;today:string}[] {
+  if (Array.isArray(node)) return node.flatMap(collectRepeats);
+  if (!isValidElement<{children?:ReactNode;sessionId?:number;name:string;today:string}>(node)) return [];
+  return [...(node.type === WorkoutReuse ? [node.props] : []), ...collectRepeats(node.props.children)];
 }
 
 function collectLinks(node: ReactNode): string[] {
@@ -403,7 +410,41 @@ describe("CalendarPage", () => {
     expect(ariaLabels).not.toContain("Scheduled: Shared Strength - Lower on 2026-06-01");
     expect(text).not.toContain("Scheduled: Shared Strength - Lower 2026-06-29");
     expect(text).toContain("Completed workout");
-    expect(startLabels).toContain("Repeat workout");
+    expect(startLabels).not.toContain("Repeat workout");
+    expect(collectRepeats(rendered)).toEqual([expect.objectContaining({sessionId:Number(session.lastInsertRowid)})]);
+  });
+
+  it("repeats a completed editor workout from its saved session instead of starting without an occurrence", async () => {
+    const userId=createUser("calendar-editor-repeat@example.test");authenticate(userId);
+    const {createBlankDocument,createExercise}=await import("@/features/program-editor/document");
+    const {saveEditorDraft,activateEditorDraft}=await import("@/features/program-editor/repository");
+    const document=createBlankDocument();document.name="Saved editor program";document.startDate="2026-06-01";document.weekdays=[0,1,2,3,4,5,6];
+    document.weeks[0].days[0].exercises=[createExercise("Saved row")];
+    const id=crypto.randomUUID();saveEditorDraft({userId,id,expectedRevision:0,document});
+    const activation=activateEditorDraft({userId,id,expectedRevision:1});
+    const occurrence=occurrences.getOccurrences(userId).find(row=>row.program_run_id===activation.runId)!;
+    const {POST:start}=await import("@/app/api/programs/[id]/sessions/route");
+    const response=await start(new Request(`http://localhost/api/programs/${occurrence.program_id}/sessions`,{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({occurrenceId:occurrence.id})}),{params:Promise.resolve({id:String(occurrence.program_id)})});
+    expect(response.status).toBe(201);const session=await response.json();
+    dbModule.db.prepare("UPDATE sessions SET status='completed',date='2026-06-01',completed=1 WHERE id=?").run(session.id);
+    const rendered=await calendarPage.default({searchParams:Promise.resolve({month:"2026-06",workout:`occurrence-${occurrence.id}`})});
+    expect(collectRepeats(rendered)).toEqual([expect.objectContaining({sessionId:session.id})]);
+    expect(collectWorkoutStartLabels(rendered)).toEqual([]);
+    const {POST:repeat}=await import("@/app/api/sessions/[sessionId]/repeat/route");
+    const repeatKey=crypto.randomUUID();
+    const request=()=>repeat(new Request(`http://localhost/api/sessions/${session.id}/repeat`,{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({requestKey:repeatKey,date:"2026-07-01"})}),{params:Promise.resolve({sessionId:String(session.id)})});
+    const repeated=await(await request()).json();
+    expect(repeated).toMatchObject({program_id:null,date:"2026-07-01",status:"in_progress"});
+    expect(repeated.sets.map((set:{exercise_name:string})=>set.exercise_name)).toContain("Saved row");
+    expect((await(await request()).json()).id).toBe(repeated.id);
+    expect(dbModule.db.prepare("SELECT status FROM sessions WHERE id=?").get(session.id)).toEqual({status:"completed"});
+  });
+  it("shows active unplanned workouts as occupied Calendar cards with their exact resume link",async()=>{
+    const userId=createUser("calendar-active-quick@example.test");authenticate(userId);
+    const sessionId=Number(dbModule.db.prepare("INSERT INTO sessions(user_id,date,week_number,status,day_name) VALUES (?,'2026-07-03',1,'in_progress','Independent row')").run(userId).lastInsertRowid);
+    const rendered=await calendarPage.default({searchParams:Promise.resolve({month:"2026-07",date:"2026-07-03",workout:`history-${sessionId}`})});
+    expect(collectAriaLabels(rendered)).toContain("In progress:  - Independent row on 2026-07-03");
+    expect(collectLinks(rendered)).toContain(`/workouts/${sessionId}?returnTo=%2Fcalendar%3Fmonth%3D2026-07%26date%3D2026-07-03`);
   });
 
   it("shows a do-workout modal for a selected scheduled calendar workout", async () => {

@@ -96,6 +96,7 @@ export function WorkoutCard({
   // them skipped at finish. A full reload resets this (the lift returns as "to do").
   const [skippedGroupKeys, setSkippedGroupKeys] = useState<Set<number>>(new Set());
   const [error, setError] = useState("");
+  const [unavailableTemplate, setUnavailableTemplate] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const [saving, setSaving] = useState(false);
   const [savingIds, setSavingIds] = useState<Set<number>>(new Set());
@@ -363,7 +364,7 @@ export function WorkoutCard({
     if (currentGroup) await saveSets(currentGroup.sets, true);
   }
 
-  async function complete() {
+  async function complete(holdUnavailable = false) {
     if (!session || saving || hasPending) return;
     setError("");
     setCompleting(true);
@@ -371,10 +372,13 @@ export function WorkoutCard({
       const response = await fetch(`/api/programs/${programId}/complete-and-advance`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ sessionId: session.id }),
+        body: JSON.stringify({ sessionId: session.id, ...(holdUnavailable ? { unavailableTemplatePolicy: "hold" } : {}) }),
       });
-      const body = await readResponseJson<{ error?: string; success?: boolean; progressionDecisions?: typeof progressionDecisions }>(response);
-      if (!response.ok) throw new Error(body?.error ?? "Could not complete workout");
+      const body = await readResponseJson<{ error?: string; code?: string; success?: boolean; progressionDecisions?: typeof progressionDecisions }>(response);
+      if (!response.ok) {
+        setUnavailableTemplate(body?.code === "missing_legacy_template");
+        throw new Error(body?.error ?? "Could not complete workout");
+      }
       if (body?.success !== true) throw new Error("Could not confirm completion. Retry finishing to recover the saved result.");
       setProgressionDecisions(body?.progressionDecisions ?? []);
       writeDrafts(session.id, {});
@@ -506,7 +510,7 @@ export function WorkoutCard({
   const showPreview = idle && (Boolean(nextLifts?.length) || Boolean(scheduleLabel) || Boolean(statusLine));
 
   return (
-    <section className={`card overflow-hidden ${isLive ? "sticky top-3 z-10 border-brand-line" : ""}`}>
+    <section className={`card overflow-hidden ${isLive ? "border-brand-line" : ""}`}>
       {showPreview ? (
         <>
           <div className="h-1 bg-brand" aria-hidden="true" />
@@ -1018,12 +1022,13 @@ export function WorkoutCard({
               <button
                 type="button"
                 disabled={completing || refreshingCompletion || saving || hasPending}
-                onClick={complete}
+                onClick={() => { void complete(); }}
                 className="touch-target flex-1 rounded-xl bg-foreground px-4 py-2.5 text-sm font-semibold text-background transition-colors active:opacity-90 disabled:opacity-50"
               >
                 {completing || refreshingCompletion ? "Finishing…" : "Finish Workout"}
               </button>
             </div>
+            {unavailableTemplate ? <button type="button" className="touch-target rounded-xl border border-warn-line bg-warn-soft px-4 py-3 text-sm font-semibold text-warn-ink disabled:opacity-50" disabled={completing || refreshingCompletion || saving || hasPending} onClick={() => { void complete(true); }}>Finish without changing affected training maxes</button> : null}
             <button
               type="button"
               disabled={canceling || saving}

@@ -41,6 +41,24 @@ export function runProgramEditorMigration(db: Database.Database): void {
         decision_json TEXT NOT NULL CHECK(json_valid(decision_json)),
         created_at TEXT NOT NULL DEFAULT (datetime('now'))
       );
+      CREATE TABLE IF NOT EXISTS program_editor_revisions (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        user_id INTEGER NOT NULL REFERENCES users(id),
+        program_id INTEGER NOT NULL REFERENCES programs(id),
+        draft_id TEXT NOT NULL REFERENCES program_editor_drafts(id),
+        source_revision INTEGER NOT NULL,
+        scope TEXT NOT NULL,
+        document_json TEXT NOT NULL CHECK(json_valid(document_json)),
+        preview_json TEXT NOT NULL CHECK(json_valid(preview_json)),
+        created_at TEXT NOT NULL DEFAULT (datetime('now'))
+      );
+      CREATE TRIGGER IF NOT EXISTS editor_revision_immutable BEFORE UPDATE ON program_editor_revisions
+      BEGIN SELECT RAISE(ABORT, 'Applied editor revisions are immutable'); END;
+      CREATE TABLE IF NOT EXISTS program_editor_change_requests (
+        user_id INTEGER NOT NULL REFERENCES users(id), request_key TEXT NOT NULL,
+        request_json TEXT NOT NULL, result_json TEXT NOT NULL CHECK(json_valid(result_json)),
+        PRIMARY KEY(user_id, request_key)
+      );
     `);
     const columns = db.prepare("PRAGMA table_info(program_runs)").all() as { name: string }[];
     if (!columns.some((column) => column.name === "editor_version_id")) {

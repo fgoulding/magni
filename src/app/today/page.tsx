@@ -30,13 +30,14 @@ function finishedMessage(status: TodayWorkoutSummary["today_session_status"]): s
 }
 
 function statusLineFor(row: TodayWorkoutSummary): string {
+  if (row.started_date) return `Started ${row.started_date}`;
   if (row.scheduled_date) return `Originally scheduled ${row.scheduled_date}`;
   if (row.last_session_date) return `Last logged ${row.last_session_date}`;
   return "No sessions logged yet";
 }
 
 function renderWorkout(row: TodayWorkoutSummary, label: string, rounding: number, userId: number) {
-  const key = row.occurrence_id ? `occurrence-${row.occurrence_id}` : `${row.program_id}-${row.definition_day_id}-${row.scheduled_date ?? label}`;
+  const key = row.occurrence_id ? `occurrence-${row.occurrence_id}` : row.today_session_id ? `session-${row.today_session_id}` : `${row.program_id}-${row.definition_day_id}-${row.scheduled_date ?? label}`;
 
   if (row.today_session_status) {
     const completed = row.today_session_status === "completed" && row.today_session_id ? getWorkout(userId, row.today_session_id) : null;
@@ -66,6 +67,7 @@ function renderWorkout(row: TodayWorkoutSummary, label: string, rounding: number
     <WorkoutCard
       key={key}
       occurrenceId={row.occurrence_id}
+      resumeSessionId={!row.occurrence_id ? row.today_session_id ?? undefined : undefined}
       scheduledDate={row.scheduled_date}
       programId={row.program_id}
       dayId={row.day_id}
@@ -92,7 +94,26 @@ function renderWorkout(row: TodayWorkoutSummary, label: string, rounding: number
   );
 }
 
-export default async function TodayPage() {
+function workoutOption(row: TodayWorkoutSummary, label: string, destination?: string) {
+  const key = row.occurrence_id ? `occurrence-${row.occurrence_id}` : row.today_session_id ? `session-${row.today_session_id}` : `program-${row.program_id}`;
+  const href = destination ?? (label === "Resume" && row.today_session_id
+    ? `/workouts/${row.today_session_id}`
+    : row.occurrence_id && row.scheduled_date
+      ? `/calendar?month=${row.scheduled_date.slice(0, 7)}&date=${row.scheduled_date}&workout=occurrence-${row.occurrence_id}`
+      : `/today?program=${row.program_id}`);
+  return (
+    <Link key={key} href={href} data-occurrence-id={row.occurrence_id} aria-label={`${label}: ${row.program_name} - ${row.day_name}`} className="touch-target flex min-w-0 items-center justify-between gap-3 border-t border-line py-3 text-foreground">
+      <span className="min-w-0">
+        <span className="block break-words font-semibold">{row.day_name}</span>
+        <span className="mt-0.5 block truncate text-xs text-muted">{row.program_name} · Week {row.current_week}</span>
+        <span className="mt-0.5 block text-xs text-muted">{label}{row.started_date ? ` · Started ${row.started_date}` : row.scheduled_date ? ` · ${row.scheduled_date}` : ""}</span>
+      </span>
+      <ChevronRight aria-hidden="true" size={18} className="shrink-0 text-muted" />
+    </Link>
+  );
+}
+
+export default async function TodayPage({ searchParams }: { searchParams?: Promise<{ program?: string }> }) {
   let user;
 
   try {
@@ -113,16 +134,26 @@ export default async function TodayPage() {
       run.active_hold_end_date >= todayKey,
   );
   const quickWorkout = getQuickWorkoutForToday(user.id);
-  const hasWorkouts =
-    dashboard.activeWorkouts.length > 0 || dashboard.missedWorkouts.length > 0 || dashboard.scheduledToday.length > 0 || dashboard.otherActiveRuns.length > 0;
+  const requestedProgram = Number((await searchParams)?.program);
+  const selectedUnscheduled = dashboard.otherActiveRuns.find(row => row.program_id === requestedProgram);
+  const scheduled = dashboard.scheduledToday.filter(row => !row.today_session_status);
+  const completed = dashboard.scheduledToday.filter(row => row.today_session_status);
+  const primary = quickWorkout ? undefined : dashboard.activeWorkouts[0] ?? selectedUnscheduled ?? scheduled[0] ?? dashboard.otherActiveRuns[0];
+  const hasActiveSession = Boolean(quickWorkout || dashboard.activeWorkouts.length);
+  const otherActive = dashboard.activeWorkouts.filter(row => row !== primary);
+  const otherToday = scheduled.filter(row => row !== primary);
+  const otherUnscheduled = dashboard.otherActiveRuns.filter(row => row !== primary);
+  const hasWorkouts = Boolean(primary || quickWorkout || completed.length);
 
   return (
     <div className="safe-x flex flex-1 flex-col gap-5 py-5">
       <header className="flex items-center justify-between gap-3">
         <div className="min-w-0">
-          <p className="truncate text-sm font-medium text-faint">{user.email}</p>
           <h1 className="display text-4xl">Today</h1>
+          <p className="mt-0.5 text-sm text-muted">{new Intl.DateTimeFormat("en-US", { weekday: "short", month: "short", day: "numeric", timeZone: "UTC" }).format(new Date(`${todayKey}T12:00:00Z`))}</p>
         </div>
+        <div className="flex shrink-0 items-center gap-2">
+        <Link href="/workouts" className="touch-target inline-flex items-center px-2 text-sm font-semibold text-brand-strong">Workout history</Link>
         <Link
           href="/calendar"
           aria-label="Open calendar"
@@ -130,10 +161,12 @@ export default async function TodayPage() {
         >
           <CalendarDays aria-hidden="true" size={20} />
         </Link>
+        </div>
       </header>
 
-      <Link href="/workouts" className="touch-target inline-flex items-center self-end text-sm font-semibold text-brand-strong">Workout history</Link>
-      <div className="flex flex-1 flex-col justify-center gap-5">
+      <div className="flex flex-col gap-5">
+        {quickWorkout ? <QuickWorkout initialSession={quickWorkout} /> : primary ? renderWorkout(primary, dashboard.activeWorkouts.includes(primary) ? "Resume workout" : scheduled.includes(primary) ? "Scheduled today" : "Unscheduled run", rounding, user.id) : null}
+        {completed.map(row => renderWorkout(row, "Completed today", rounding, user.id))}
         {!hasWorkouts ? (
         <>
           {heldRuns.length > 0 ? (
@@ -182,22 +215,13 @@ export default async function TodayPage() {
               </Link>
             </div>
           </section>
-          <QuickWorkout initialSession={quickWorkout} />
         </>
-      ) : (
-        <>
-          {dashboard.activeWorkouts.map((row) => renderWorkout(row, "Resume workout", rounding, user.id))}
-          {dashboard.scheduledToday.map((row) => renderWorkout(row, "Scheduled today", rounding, user.id))}
-          {dashboard.missedWorkouts.length > 0 ? <section className="flex flex-col gap-3"><h2 className="eyebrow text-xs text-muted">To reschedule or train</h2>{dashboard.missedWorkouts.map(row => renderWorkout(row, "Pending workout", rounding, user.id))}</section> : null}
-          {dashboard.otherActiveRuns.length > 0 ? (
-            <section className="flex flex-col gap-3">
-              <h2 className="eyebrow text-xs text-faint">Other active runs</h2>
-              {dashboard.otherActiveRuns.map((row) => renderWorkout(row, "Unscheduled run", rounding, user.id))}
-            </section>
-          ) : null}
-          <QuickWorkout initialSession={quickWorkout} />
-        </>
-      )}
+      ) : null}
+        {!quickWorkout && (primary ? <Link href={`/workouts/new?date=${todayKey}`} className="touch-target inline-flex items-center justify-center rounded-xl border border-dashed border-line px-4 py-3 text-sm font-semibold text-muted">Quick workout</Link> : <QuickWorkout initialSession={null} />)}
+        {otherActive.length > 0 ? <section aria-label="Other active workouts"><h2 className="eyebrow mb-2 text-xs text-muted">Resume another workout</h2>{otherActive.map(row => workoutOption(row, "Resume"))}</section> : null}
+        {otherToday.length > 0 ? <section aria-label="Other workouts today"><h2 className="eyebrow mb-2 text-xs text-muted">Also today</h2>{otherToday.map(row => workoutOption(row, "Scheduled today"))}</section> : null}
+        {dashboard.missedWorkouts.length > 0 ? <section aria-label="Missed workouts"><h2 className="eyebrow mb-2 text-xs text-muted">To reschedule or train</h2>{dashboard.missedWorkouts.map(row => workoutOption(row, "Missed"))}</section> : null}
+        {otherUnscheduled.length > 0 ? <section aria-label="Unscheduled programs"><h2 className="eyebrow mb-2 text-xs text-muted">Other active runs</h2>{otherUnscheduled.map(row => workoutOption(row, hasActiveSession ? "View program" : "Choose workout", hasActiveSession ? `/programs/${row.program_id}` : undefined))}</section> : null}
       </div>
     </div>
   );

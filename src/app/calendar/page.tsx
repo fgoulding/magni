@@ -4,6 +4,7 @@ import { getOccurrences, getOccurrence, occurrenceLiftPreview } from "@/features
 import { redirect } from "next/navigation";
 import { SessionRecapView } from "@/components/SessionRecapView";
 import { WorkoutCard } from "@/components/WorkoutCard";
+import { WorkoutReuse } from "@/components/WorkoutReuse";
 import {
   getProgramDayLiftPreview,
   type TodayLiftPreview,
@@ -12,11 +13,13 @@ import { getSessionRecap } from "@/features/programs/training-stats";
 import { getSettingNumber, requireUser } from "@/lib/auth";
 import { parseDateKey, toLocalDateKey } from "@/lib/date-key";
 import { db } from "@/lib/db";
+import { CalendarNavigation } from "@/components/CalendarNavigation";
+import { withCalendarReturn } from "@/features/calendar/navigation";
 import { CalendarAgenda } from "@/components/CalendarAgenda";
 import { latestCalendarOperation } from "@/features/calendar/calendar-service";
 
 type CalendarPageProps = {
-  searchParams?: Promise<{ month?: string | string[]; date?: string | string[]; train?: string | string[]; workout?: string | string[] }>;
+  searchParams?: Promise<{ month?: string | string[]; date?: string | string[]; train?: string | string[]; workout?: string | string[]; view?: string | string[]; compact?: string | string[] }>;
 };
 
 type HistoryRow = {
@@ -28,7 +31,7 @@ type HistoryRow = {
   date: string;
   week_number: number;
   day_number: number | null;
-  status: "completed" | "skipped";
+  status: "completed" | "skipped" | "in_progress";
   program_name: string;
   day_name: string;
 };
@@ -36,7 +39,7 @@ type HistoryRow = {
 type CalendarEvent = {
   key: string;
   date: string;
-  kind: "completed" | "skipped" | "scheduled";
+  kind: "completed" | "skipped" | "scheduled" | "in_progress";
   title: string;
   href: string;
   /** The logged session, for completed/skipped events (drives the recap). */
@@ -131,7 +134,7 @@ function getHistoryEvents(userId: number, monthStart: Date, monthEnd: Date): Cal
         LEFT JOIN days d ON d.id = s.day_id
         LEFT JOIN program_definition_days pdd ON pdd.id = s.program_definition_day_id
         WHERE s.user_id = ?
-          AND s.status IN ('completed', 'skipped')
+          AND s.status IN ('completed', 'skipped', 'in_progress')
           AND s.occurrence_id IS NULL
           AND s.date BETWEEN ? AND ?
         ORDER BY s.date, s.id
@@ -144,7 +147,7 @@ function getHistoryEvents(userId: number, monthStart: Date, monthEnd: Date): Cal
     date: row.date,
     kind: row.status,
     status: row.status,
-    title: `${row.status === "completed" ? "Completed" : "Skipped"}: ${row.program_name} - ${row.day_name}`,
+    title: `${row.status === "completed" ? "Completed" : row.status === "in_progress" ? "In progress" : "Skipped"}: ${row.program_name} - ${row.day_name}`,
     href: `/calendar?month=${row.date.slice(0,7)}&workout=history-${row.id}`,
     sessionId: row.id,
     programId: row.program_id,
@@ -175,12 +178,13 @@ function getScheduledEvents(userId: number, monthStart: Date, monthEnd: Date): C
 }
 
 function eventDotClasses(kind: CalendarEvent["kind"]): string {
-  if (kind === "scheduled") return "bg-brand";
+  if (kind === "scheduled" || kind === "in_progress") return "bg-brand";
   if (kind === "skipped") return "bg-muted";
   return "bg-success";
 }
 
 function eventKindLabel(kind: CalendarEvent["kind"]): string {
+  if (kind === "in_progress") return "Active";
   if (kind === "completed") return "Done";
   if (kind === "skipped") return "Skip";
   return "Due";
@@ -200,12 +204,14 @@ function summarizeDayEvents(events: readonly CalendarEvent[]): CalendarDayEventS
 }
 
 function modalEyebrow(kind: CalendarEvent["kind"]): string {
+  if (kind === "in_progress") return "Workout in progress";
   if (kind === "completed") return "Completed workout";
   if (kind === "skipped") return "Skipped workout";
   return "Run from calendar";
 }
 
 function modalDateLine(event: CalendarEvent): string {
+  if (event.kind === "in_progress") return `Started on ${event.date} · ${event.dayName}`;
   if (event.kind === "scheduled") return `Originally scheduled ${event.scheduledDate} · ${event.dayName}`;
   if (event.kind === "completed") return `Completed on ${event.date} · ${event.dayName}`;
   return `Skipped on ${event.date} · ${event.dayName}`;
@@ -226,6 +232,10 @@ export default async function CalendarPage({ searchParams }: CalendarPageProps) 
   }
 
   const params = await searchParams;
+  const view = params?.view === "month" ? "month" : "week";
+  const compact = params?.compact !== "0";
+  const compactSuffix = compact ? "" : "&compact=0";
+  const viewSuffix = `${view === "month" ? "&view=month" : ""}${compactSuffix}`;
   const today = parseDateKey(userDateKey(user.id))!;
   const rawDate = Array.isArray(params?.date) ? params.date[0] : params?.date;
   const queryDate = rawDate ? parseDateKey(rawDate) : null;
@@ -262,6 +272,8 @@ export default async function CalendarPage({ searchParams }: CalendarPageProps) 
   const leadingBlanks = monthStart.getDay();
   const todayKey = toLocalDateKey(today);
   const selectedDate = queryDate ?? (selectedEvent ? parseDateKey(selectedEvent.date)! : (today.getMonth() === monthStart.getMonth() && today.getFullYear() === monthStart.getFullYear() ? today : monthStart));
+  const selectedHref = `${monthHref(monthStart)}&date=${toLocalDateKey(selectedDate)}`;
+  const returnTo = `${selectedHref}${viewSuffix}`;
   const weekStart = new Date(selectedDate);
   weekStart.setDate(weekStart.getDate() - ((weekStart.getDay() + 6) % 7));
   const weekEnd = new Date(weekStart);
@@ -271,6 +283,7 @@ export default async function CalendarPage({ searchParams }: CalendarPageProps) 
 
   return (
     <div className="safe-x flex flex-col gap-4 py-5">
+      <CalendarNavigation returnTo={returnTo} />
       <header className="flex items-center justify-between gap-3">
         <div>
           <p className="eyebrow text-[11px] text-faint">Training calendar</p>
@@ -278,14 +291,14 @@ export default async function CalendarPage({ searchParams }: CalendarPageProps) 
         </div>
         <div className="flex gap-2">
           <Link
-            href={monthHref(addMonths(monthStart, -1))}
+            href={`${monthHref(addMonths(monthStart, -1))}${viewSuffix}`}
             aria-label="Previous month"
             className="touch-target inline-flex items-center justify-center rounded-xl border border-line bg-surface px-3 text-sm font-semibold text-muted transition-colors active:bg-surface-muted"
           >
             Prev
           </Link>
           <Link
-            href={monthHref(addMonths(monthStart, 1))}
+            href={`${monthHref(addMonths(monthStart, 1))}${viewSuffix}`}
             aria-label="Next month"
             className="touch-target inline-flex items-center justify-center rounded-xl border border-line bg-surface px-3 text-sm font-semibold text-muted transition-colors active:bg-surface-muted"
           >
@@ -294,10 +307,19 @@ export default async function CalendarPage({ searchParams }: CalendarPageProps) 
         </div>
       </header>
 
-      <CalendarAgenda key={toLocalDateKey(weekStart)} events={weekEvents} weekStart={toLocalDateKey(weekStart)} today={todayKey} undoOperation={latestCalendarOperation(user.id)} />
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <nav aria-label="Calendar view" className="inline-flex rounded-xl border border-line bg-surface p-1">
+          <Link href={`${selectedHref}${compactSuffix}`} scroll={false} aria-current={view === "week" ? "page" : undefined} className={`touch-target inline-flex items-center justify-center rounded-lg px-5 text-sm font-semibold ${view === "week" ? "bg-brand-soft text-brand-strong" : "text-muted"}`}>Week</Link>
+          <Link href={`${selectedHref}&view=month${compactSuffix}`} scroll={false} aria-current={view === "month" ? "page" : undefined} className={`touch-target inline-flex items-center justify-center rounded-lg px-5 text-sm font-semibold ${view === "month" ? "bg-brand-soft text-brand-strong" : "text-muted"}`}>Month</Link>
+        </nav>
+        {view === "week" && <Link href={`${selectedHref}${compact ? "&compact=0" : ""}`} scroll={false} aria-expanded={!compact} className="touch-target inline-flex items-center rounded-xl border border-line px-3 text-sm font-semibold text-muted">{compact ? "Expand details" : "Collapse details"}</Link>}
+      </div>
+      <section aria-label="Week calendar" hidden={view !== "week"}>
+        <CalendarAgenda compact={compact} returnTo={returnTo} key={toLocalDateKey(weekStart)} events={weekEvents} weekStart={toLocalDateKey(weekStart)} today={todayKey} undoOperation={latestCalendarOperation(user.id)} />
+      </section>
 
-      <details className="overflow-hidden rounded-xl border border-line bg-surface shadow-sm">
-        <summary className="touch-target cursor-pointer px-4 py-3 text-sm font-semibold">Month overview · choose any workout</summary>
+      <section aria-label="Month calendar" hidden={view !== "month"} className="overflow-hidden rounded-xl border border-line bg-surface shadow-sm">
+        <p className="border-b border-line px-3 py-2 text-sm text-muted">Open a workout dot, or tap a date to see its week.</p>
         <div className="grid grid-cols-7 border-b border-line bg-surface-muted">
           {WEEKDAY_LABELS.map((label) => (
             <div key={label} className="px-2 py-2 text-center text-xs font-semibold text-muted">
@@ -318,20 +340,23 @@ export default async function CalendarPage({ searchParams }: CalendarPageProps) 
             return (
               <div
                 key={dateKey}
-                className={`min-h-24 border-b border-r border-line p-1.5 ${isToday ? "bg-brand-soft" : ""}`}
+                className={`min-h-24 min-w-0 border-b border-r border-line ${isToday ? "bg-brand-soft" : ""}`}
               >
-                <div
-                  className={`flex h-6 w-6 items-center justify-center text-xs font-display font-semibold ${
+                <Link
+                  href={`${monthHref(monthStart)}&date=${dateKey}${compactSuffix}`}
+                  scroll={false}
+                  aria-label={`See week containing ${dateKey}`}
+                  className={`touch-target flex w-full items-center justify-center text-sm font-display font-semibold ${
                     isToday ? "rounded-full bg-brand text-white" : "text-muted"
                   }`}
                 >
                   {date.getDate()}
-                </div>
-                <div className="mt-2 flex flex-wrap gap-1" aria-label={`${dateKey} workouts`}>
+                </Link>
+                <div className="flex flex-wrap justify-center gap-0" aria-label={`${dateKey} workouts`}>
                   {dayEvents.map((event) => (
                     <Link
                       key={event.key}
-                      href={calendarHref(monthStart, event.key)}
+                      href={`${calendarHref(monthStart, event.key)}${viewSuffix}`}
                       scroll={false}
                       title={event.title}
                       aria-label={`${event.title} on ${event.date}`}
@@ -348,7 +373,7 @@ export default async function CalendarPage({ searchParams }: CalendarPageProps) 
             );
           })}
         </div>
-      </details>
+      </section>
 
       <div className="flex items-center gap-4 px-1">
         {[
@@ -373,7 +398,7 @@ export default async function CalendarPage({ searchParams }: CalendarPageProps) 
                 <p className="mt-0.5 text-sm text-muted">{modalDateLine(selectedEvent)}</p>
               </div>
               <Link
-                href={`${monthHref(monthStart)}&date=${toLocalDateKey(selectedDate)}`}
+                href={returnTo}
                 scroll={false}
                 aria-label="Close workout"
                 className="touch-target inline-flex shrink-0 items-center justify-center rounded-xl border border-line px-3 text-sm font-medium text-muted"
@@ -386,7 +411,14 @@ export default async function CalendarPage({ searchParams }: CalendarPageProps) 
                 <SessionRecapView recap={sessionRecap} />
               </div>
             ) : null}
-            {selectedEvent.programId && selectedEvent.dayId && selectedEvent.currentWeek && selectedEvent.currentDay ? (
+            {selectedEvent.sessionId && selectedEvent.kind === "in_progress" ? <Link href={withCalendarReturn(`/workouts/${selectedEvent.sessionId}`, returnTo)} className="touch-target m-4 inline-flex items-center justify-center rounded-xl bg-brand px-4 py-3 font-semibold text-white">Resume workout</Link> : selectedEvent.sessionId && selectedEvent.kind !== "scheduled" ? (
+              <section className="px-4 pb-4">
+                <h3 className="display text-xl">Use this workout again</h3>
+                <p className="my-3 text-sm text-muted">Repeat the saved sets as a separate workout. The original program and its progression stay unchanged.</p>
+                <WorkoutReuse sessionId={selectedEvent.sessionId} name={[selectedEvent.programName,selectedEvent.dayName].filter(Boolean).join(" · ")} today={todayKey} returnTo={returnTo}/>
+                <Link href={withCalendarReturn(`/workouts/${selectedEvent.sessionId}`, returnTo)} className="touch-target mt-3 inline-flex items-center text-sm font-semibold text-brand-strong">View history and corrections</Link>
+              </section>
+            ) : selectedEvent.programId && selectedEvent.dayId && selectedEvent.currentWeek && selectedEvent.currentDay ? (
               <WorkoutCard
                 occurrenceId={selectedEvent.kind === "scheduled" ? selectedEvent.occurrenceId : undefined}
                 programId={selectedEvent.programId}
@@ -408,7 +440,7 @@ export default async function CalendarPage({ searchParams }: CalendarPageProps) 
             ) : (
               <div className="px-4 pb-4">
                 <Link
-                  href={selectedEvent.sessionId ? `/workouts/${selectedEvent.sessionId}` : "/workouts"}
+                  href={withCalendarReturn(selectedEvent.sessionId ? `/workouts/${selectedEvent.sessionId}` : "/workouts", returnTo)}
                   className="touch-target inline-flex w-full items-center justify-center rounded-xl bg-foreground px-4 text-sm font-medium text-background"
                 >
                   View history

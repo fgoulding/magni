@@ -7,6 +7,7 @@ import { getSettingNumber } from "@/lib/auth";
 import { calculateWeight } from "@/lib/calculator";
 import { toLocalDateKey } from "@/lib/date-key";
 import { db } from "@/lib/db";
+import { captureLegacyTemplateSnapshot } from "@/features/training-templates/legacy-snapshot";
 
 export {
   getLatestTrainingMaxes,
@@ -105,6 +106,7 @@ export type TodayWorkoutSummary = ProgramDaySummary & Readonly<{
   occurrence_id?: number;
   schedule_label: string;
   scheduled_date?: string;
+  started_date?: string;
   last_session_date: string | null;
   today_session_id: number | null;
   today_session_status: "completed" | "skipped" | null;
@@ -908,6 +910,28 @@ export const cancelActiveProgramRunHold = db.transaction(
   },
 ).immediate;
 
+/** Manual sessions have no occurrence, so their saved sets supply the preview. */
+function activeSessionLiftPreview(sessionId: number, unit: "lb" | "kg"): TodayLiftPreview[] {
+  const sets = db.prepare(`SELECT program_definition_exercise_id,shared_exercise_key,exercise_key,
+    exercise_name,reps,sets,calculated_weight,progression_type FROM session_sets
+    WHERE session_id=? ORDER BY sort_order,set_number,id`).all(sessionId) as Array<{
+      program_definition_exercise_id: number | null; shared_exercise_key: string | null; exercise_key: string | null;
+      exercise_name: string; reps: number; sets: number; calculated_weight: number | null; progression_type: string;
+    }>;
+  const groups = new Map<string, { preview: TodayLiftPreview; schemes: Map<string, number> }>();
+  for (const set of sets) {
+    const key = set.exercise_key ?? set.shared_exercise_key ?? `${set.program_definition_exercise_id ?? "legacy"}:${set.exercise_name}`;
+    const weight = set.calculated_weight ?? 0;
+    const bodyweight = set.progression_type === "bodyweight";
+    const group = groups.get(key) ?? { preview: { name: set.exercise_name, set_count: 0, reps: set.reps, weight, bodyweight }, schemes: new Map<string, number>() };
+    group.preview = { ...group.preview, set_count: group.preview.set_count + set.sets, reps: Math.max(group.preview.reps, set.reps), weight: Math.max(group.preview.weight, weight) };
+    const scheme = `${set.reps}${bodyweight ? " BW" : ` @ ${weight} ${unit}`}`;
+    group.schemes.set(scheme, (group.schemes.get(scheme) ?? 0) + set.sets);
+    groups.set(key, group);
+  }
+  return [...groups.values()].map(({ preview, schemes }) => ({ ...preview, detail: [...schemes].map(([scheme, count]) => `${count}×${scheme}`).join(" · ") }));
+}
+
 export function getTodayWorkoutDashboard(userId: number, today = new Date()): TodayWorkoutDashboard {
   const rows = getActiveProgramDaysForUser(userId);
   const todayDateKey = userDateKey(userId, today);
@@ -945,9 +969,41 @@ export function getTodayWorkoutDashboard(userId: number, today = new Date()): To
     };
     (active ? activeWorkouts : isToday ? scheduledToday : missedWorkouts).push(row);
   }
+  // Read after occurrence materialization: a formerly manual session may just
+  // have been linked, and must not appear a second time in this recovery list.
+  const unlinked = db.prepare(`SELECT s.id AS session_id,s.date AS started_date,s.unit,s.scheduled_date,
+    s.program_id,COALESCE(s.program_run_id,p.program_run_id) AS program_run_id,
+    COALESCE(NULLIF(s.program_name,''),p.name) AS program_name,
+    s.week_number AS current_week,COALESCE(pdd.day_number,d.day_number,1) AS current_day,
+    COALESCE(pr.schedule_weekdays,p.schedule_weekdays,'[]') AS schedule_weekdays,
+    COALESCE(pr.schedule_mode,p.schedule_mode,'unscheduled') AS schedule_mode,
+    pr.start_date AS schedule_start_date,COALESCE(pd.num_weeks,s.week_number) AS num_weeks,
+    COALESCE(s.day_id,s.program_definition_day_id,0) AS day_id,s.day_id AS legacy_day_id,
+    COALESCE(s.program_definition_day_id,0) AS definition_day_id,
+    COALESCE(NULLIF(s.day_name,''),pdd.name,d.name,'Workout') AS day_name,
+    COALESCE(pdd.day_number,d.day_number,1) AS day_number,pdd.stable_key AS shared_day_key
+    FROM sessions s JOIN programs p ON p.id=s.program_id AND p.user_id=s.user_id
+    LEFT JOIN program_runs pr ON pr.id=COALESCE(s.program_run_id,p.program_run_id) AND pr.user_id=s.user_id
+    LEFT JOIN program_definitions pd ON pd.id=COALESCE(s.program_definition_id,p.program_definition_id)
+    LEFT JOIN program_definition_days pdd ON pdd.id=s.program_definition_day_id AND pdd.program_definition_id=pd.id
+    LEFT JOIN days d ON d.id=s.day_id AND d.program_id=p.id
+    WHERE s.user_id=? AND s.program_id IS NOT NULL AND s.occurrence_id IS NULL AND s.status='in_progress'
+    ORDER BY s.id`).all(userId) as Array<ProgramDaySummary & {
+      session_id: number; started_date: string; scheduled_date: string | null; unit: "lb" | "kg";
+    }>;
+  for (const session of unlinked) {
+    activeWorkouts.push({ ...session, scheduled_date: session.scheduled_date ?? undefined,
+      schedule_label: "In progress", today_session_id: session.session_id, today_session_status: null,
+      last_session_date: getLastSessionDate(userId, session.program_id),
+      next_lifts: activeSessionLiftPreview(session.session_id, session.unit),
+    });
+  }
+  // A changed scheduled/performed date must not switch the primary active session.
+  activeWorkouts.sort((a, b) => (a.today_session_id ?? 0) - (b.today_session_id ?? 0));
+  const activeSessionPrograms = new Set(activeWorkouts.map(row => row.program_id));
   const seen = new Set<number>();
   for (const row of rows) {
-    if (row.schedule_mode !== "scheduled" && row.day_number === row.current_day && !seen.has(row.program_id)) {
+    if (row.schedule_mode !== "scheduled" && row.day_number === row.current_day && !seen.has(row.program_id) && !activeSessionPrograms.has(row.program_id)) {
       seen.add(row.program_id);
       otherActiveRuns.push(enrichTodayRow(userId, row, WEEKDAY_LABELS[todayWeekday], todayDateKey, undefined, cache));
     }
@@ -1089,8 +1145,8 @@ export const createProgramRun = db.transaction(
       .run(userId, name, description, numWeeks, sourceType, visibility, sharedProgramId, sharedProgramVersionId);
     const definitionId = Number(definition.lastInsertRowid);
     const run = db
-      .prepare("INSERT INTO program_runs (user_id, program_definition_id, name) VALUES (?, ?, ?)")
-      .run(userId, definitionId, name);
+      .prepare("INSERT INTO program_runs (user_id, program_definition_id, name, start_date) VALUES (?, ?, ?, ?)")
+      .run(userId, definitionId, name, userDateKey(userId));
     const runId = Number(run.lastInsertRowid);
     const legacy = db
       .prepare(
@@ -1209,6 +1265,7 @@ export const addDefinitionExerciseForDay = db.transaction(
       )
       .run(context.definitionDayId, name, category, template.id, nextSort.value, exerciseStableKey);
     const definitionExerciseId = Number(definitionExercise.lastInsertRowid);
+    db.prepare("UPDATE program_definition_exercises SET template_snapshot_json=? WHERE id=?").run(captureLegacyTemplateSnapshot(db, userId, template.id), definitionExerciseId);
     const legacyExercise = db
       .prepare(
         `
@@ -1401,6 +1458,7 @@ export const updateDefinitionExerciseType = db.transaction(
     db.prepare(
       "UPDATE program_definition_exercises SET category = ?, progression_type = ? WHERE id = ?",
     ).run(category, template.id, row.definitionExerciseId);
+    db.prepare("UPDATE program_definition_exercises SET template_snapshot_json=? WHERE id=?").run(captureLegacyTemplateSnapshot(db, userId, template.id), row.definitionExerciseId);
     db.prepare(
       "UPDATE exercises SET category = ?, progression_type = ?, auto_progression_enabled = ? WHERE id = ?",
     ).run(category, template.id, autoProgression, legacyExerciseId);

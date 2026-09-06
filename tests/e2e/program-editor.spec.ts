@@ -4,6 +4,57 @@ import { registerViaApi } from "./helpers";
 
 const presets = ["linear", "double", "percentage", "top-backoff", "reset", "manual-ab"];
 
+test("copy a block, fill selected weeks, bulk edit and undo without re-entry", async ({ page }, info) => {
+  test.setTimeout(90_000);
+  await registerViaApi(page, "editor-block-fill");
+  await page.goto("/programs/editor/new");
+  await page.getByText("Presets and program files", { exact: true }).click();
+  await page.getByRole("combobox", { name: "Optional starting structure", exact: true }).selectOption("percentage");
+  await page.getByRole("button", { name: "Apply preset", exact: true }).click();
+  await page.getByText("Block tools", { exact: true }).click();
+  await page.getByRole("button", { name: "Copy block", exact: true }).click();
+  await expect(page.getByLabel("Block name", { exact: true })).toHaveValue("Build copy");
+  await expect(page.getByRole("combobox", { name: "Week", exact: true }).locator("option")).toHaveCount(7);
+  await page.getByRole("button", { name: "Undo last edit", exact: true }).click();
+  await expect(page.getByRole("combobox", { name: "Week", exact: true }).locator("option")).toHaveCount(4);
+  await page.getByRole("combobox", { name: "Week", exact: true }).selectOption("0");
+  await page.getByRole("button", { name: "Copy block", exact: true }).click();
+  await page.screenshot({ path: info.outputPath("editor-block-copy.png"), fullPage: true });
+  await page.getByRole("button", { name: "Prescriptions", exact: true }).click();
+  await page.getByLabel("Set 1 minimum reps", { exact: true }).fill("4");
+  await page.getByText("Bulk edit and fill weeks", { exact: true }).click();
+  await page.getByLabel("Select Week 2", { exact: true }).check();
+  await expect(page.getByRole("list", { name: "Fill preview" })).toContainText("Week 2 · Day A · Squat");
+  await page.getByRole("button", { name: "Fill selected weeks from this exercise", exact: true }).click();
+  await page.getByRole("combobox", { name: "Week", exact: true }).selectOption("1");
+  await expect(page.getByLabel("Set 1 minimum reps", { exact: true })).toHaveValue("4");
+  await page.getByRole("button", { name: "Undo last edit", exact: true }).click();
+  await expect(page.getByLabel("Set 1 minimum reps", { exact: true })).toHaveValue("7");
+  await page.getByRole("combobox", { name: "Apply to", exact: true }).selectOption("selected");
+  await page.getByLabel("Select Week 3", { exact: true }).check();
+  await page.getByLabel("Bulk minimum reps", { exact: true }).fill("6");
+  await page.getByLabel("Bulk maximum reps", { exact: true }).fill("10");
+  await page.getByLabel("Bulk rest (seconds)", { exact: true }).fill("180");
+  await page.getByRole("button", { name: "Apply bulk edit", exact: true }).click();
+  await expect(page.getByLabel("Set 1 minimum reps", { exact: true })).toHaveValue("6");
+  const panel = page.locator("details").filter({ has: page.getByText("Bulk edit and fill weeks", { exact: true }) });
+  await panel.screenshot({ path: info.outputPath("editor-selected-weeks-light.png") });
+  await page.evaluate(() => { document.documentElement.dataset.theme = "dark"; document.documentElement.style.fontSize = "20px"; });
+  expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
+  await panel.screenshot({ path: info.outputPath("editor-selected-weeks-dark-enlarged.png") });
+  await page.evaluate(() => { document.documentElement.style.fontSize = ""; });
+  await page.getByRole("button", { name: "Save now", exact: true }).click();
+  await expect(page.getByText("Draft saved", { exact: true })).toBeVisible();
+  await page.reload();
+  await expect(page.getByRole("combobox", { name: "Week", exact: true }).locator("option")).toHaveCount(7);
+  await page.getByRole("combobox", { name: "Week", exact: true }).selectOption("2");
+  await page.getByRole("button", { name: "Prescriptions", exact: true }).click();
+  await expect(page.getByLabel("Set 1 minimum reps", { exact: true })).toHaveValue("6");
+  await expect(page.getByLabel("Set 1 maximum reps", { exact: true })).toHaveValue("10");
+  await page.getByRole("combobox", { name: "Week", exact: true }).selectOption("3");
+  await expect(page.getByLabel("Set 1 minimum reps", { exact: true })).toHaveValue("4");
+});
+
 test("import, edit, export and reload a versioned program file", async ({ page }) => {
   await registerViaApi(page, "program-file");
   await page.goto("/programs/editor/new");

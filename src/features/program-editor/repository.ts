@@ -17,6 +17,7 @@ export type EditorSetMetadata = {
   exerciseId: string; progressionKey: string; baseLoad: number; trainingMax: number;
   rule: ProgramExerciseV1["rule"]; set: ProgramSetV1; unit: ProgramDocumentV1["unit"]; deload: boolean; versionId: number;
   initialReps?: number; prescribedState?: ProgressionState;
+  revisionId?: number; definitionProgressionKey?: string;
 };
 export type EditorPrescriptionSet = PrescriptionSet & { editor: EditorSetMetadata };
 type DraftRow = { id: string; user_id: number; revision: number; document_json: string; updated_at: string; activated_program_id: number | null };

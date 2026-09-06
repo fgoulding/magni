@@ -115,9 +115,9 @@ test("create, log, finish, find, correct and repeat a past workout with a reusab
   await shot("correction");
   await page.route("**/api/sessions/*/corrections", async (route) => { if (!route.request().postDataJSON().preview) { expect((await route.fetch()).status()).toBe(200); await route.abort("failed"); } else await route.continue(); });
   await page.getByRole("button", { name: "Save correction", exact: true }).click();
-  await expect(page.getByRole("status").first()).toBeVisible();
+  await expect(page.getByRole("button", { name: "Resolve previous correction", exact: true })).toBeEnabled();
   await page.unroute("**/api/sessions/*/corrections");
-  await page.getByRole("button", { name: "Save correction", exact: true }).click();
+  await page.getByRole("button", { name: "Resolve previous correction", exact: true }).click();
   await expect(page.getByText(/1 of 2 sets logged · 320 kg volume/)).toBeVisible();
   await expect(page.getByText("Prescribed: 10 reps at 40 kg")).toHaveCount(2);
   const corrected = await (await page.request.get(`/api/sessions/${id}`)).json();

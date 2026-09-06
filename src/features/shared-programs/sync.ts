@@ -9,6 +9,7 @@ import type { TemplateWeek } from "@/features/training-templates/types";
 import { getSnapshotWeek } from "./week-utils";
 import { calculateWeight } from "@/lib/calculator";
 import { db } from "@/lib/db";
+import { userDateKey } from "@/lib/user-date";
 
 type ExpectedMaxes = Readonly<Record<string, number>>;
 type SyncAction = "apply" | "rollback";
@@ -448,10 +449,11 @@ function ensureSharedProgramRun({
         INSERT INTO program_runs (
           user_id,
           program_definition_id,
-          name
-        ) VALUES (?, ?, ?)
+          name,
+          start_date
+        ) VALUES (?, ?, ?, ?)
       `,
-    ).run(userId, definitionId, snapshot.name).lastInsertRowid,
+    ).run(userId, definitionId, snapshot.name, userDateKey(userId)).lastInsertRowid,
   );
 }
 

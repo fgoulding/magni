@@ -468,7 +468,7 @@ describe("program APIs", () => {
       }),
     );
     const homeText = collectRenderedText(await programsPage.default());
-    const todayCards = collectWorkoutProgramNames(await todayPage.default());
+    const todayCards = collectWorkoutProgramNames(await todayPage.default({}));
     expect(homeText).toContain("Canonical Run");
     expect(homeText).not.toContain("Stale Legacy");
     expect(todayCards).not.toContain("Canonical Run");
@@ -878,13 +878,16 @@ describe("program APIs", () => {
     await createProgramWithDay("Unscheduled Active", []);
 
     try {
-      const rendered = await todayPage.default();
+      const rendered = await todayPage.default({});
       const text = collectRenderedText(rendered);
       const workoutProgramNames = collectWorkoutProgramNames(rendered);
 
       expect(text).not.toContain("Catch up");
       expect(text).toContain("Other active runs");
-      expect(workoutProgramNames).toEqual(["Today Scheduled", "Unscheduled Active"]);
+      expect(workoutProgramNames).toEqual(["Today Scheduled"]);
+      expect(text).toContain("Unscheduled Active Day");
+      expect(text).toContain("Choose workout");
+      expect(text).not.toContain("Other Scheduled Day");
     } finally {
       vi.useRealTimers();
     }
@@ -908,7 +911,7 @@ describe("program APIs", () => {
       .run(program.id, userId, monday.id);
 
     try {
-      const rendered = await todayPage.default();
+      const rendered = await todayPage.default({});
 
       expect(collectWorkoutCards(rendered)).toEqual([
         { programName: "Mapped Program", dayName: "Wednesday Upper", currentDay: 2 },
@@ -954,7 +957,7 @@ describe("program APIs", () => {
       .run(program.id, userId, day.id, context.program_definition_id, definitionDay.id, context.program_run_id);
 
     try {
-      const rendered = await todayPage.default();
+      const rendered = await todayPage.default({});
       const text = collectRenderedText(rendered);
 
       expect(text).toContain("Workout complete today");
@@ -975,7 +978,7 @@ describe("program APIs", () => {
     dbModule.db.prepare("UPDATE days SET name = 'Stale Wednesday' WHERE id = ?").run(day.id);
 
     try {
-      const rendered = await todayPage.default();
+      const rendered = await todayPage.default({});
 
       expect(collectWorkoutCards(rendered)).toEqual([
         { programName: "Definition Today", dayName: "Canonical Wednesday", currentDay: 1 },

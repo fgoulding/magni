@@ -875,3 +875,62 @@ it("resumes an unfinished named quick workout from an earlier date with saved un
   dbModule.db.prepare("INSERT INTO session_sets(session_id,exercise_name,reps,sets,calculated_weight,actual_reps,actual_weight) VALUES (?,'Row',10,1,40,8,40)").run(id);
   expect(service.getQuickWorkoutForToday(userId, new Date("2026-09-05T12:00:00Z"))).toMatchObject({ id, name: "Past pull", date: "2026-08-31", unit: "kg", revision: 3, sets: [{ actual_reps: 8, actual_weight: 40 }] });
 });
+
+describe("active manual planned workout recovery", () => {
+  function manualSession(userId: number, name: string, date = "2026-08-31") {
+    const program = service.createProgramRun({ userId, name, numWeeks: 4 });
+    const day = service.addDefinitionDayForRun({ userId, legacyProgramId: program.legacyProgramId, name: "Saved lower" });
+    const sessionId = Number(dbModule.db.prepare(`INSERT INTO sessions
+      (user_id,program_id,program_run_id,day_id,program_definition_day_id,program_name,day_name,week_number,date,unit)
+      VALUES (?,?,?,?,?,?,'Saved lower',2,?,'kg')`).run(userId, program.legacyProgramId, program.runId, day.legacyDayId, day.definitionDayId, name, date).lastInsertRowid);
+    dbModule.db.prepare(`INSERT INTO session_sets(session_id,exercise_name,reps,sets,calculated_weight,actual_reps,actual_weight)
+      VALUES (?,'Saved row',8,2,42.5,7,40)`).run(sessionId);
+    return { ...program, ...day, sessionId };
+  }
+
+  it("prioritizes an old unlinked active session using saved context and prescriptions after the run changes", () => {
+    const userId = createUser("manual-active@example.test");
+    const active = manualSession(userId, "Saved program");
+    const unused = service.createProgramRun({ userId, name: "Newer unused program", numWeeks: 4 });
+    service.addDefinitionDayForRun({ userId, legacyProgramId: unused.legacyProgramId, name: "Newer day" });
+    dbModule.db.prepare("UPDATE program_runs SET name='Changed program',current_week=4,current_day=1,status='paused' WHERE id=?").run(active.runId);
+    dbModule.db.prepare("UPDATE program_definition_days SET name='Changed day' WHERE id=?").run(active.definitionDayId);
+
+    const dashboard = service.getTodayWorkoutDashboard(userId, new Date("2026-09-05T12:00:00Z"));
+    expect(dashboard.activeWorkouts).toHaveLength(1);
+    expect(dashboard.activeWorkouts[0]).toMatchObject({
+      program_id: active.legacyProgramId, program_run_id: active.runId,
+      program_name: "Saved program", day_name: "Saved lower", current_week: 2,
+      day_id: active.legacyDayId, definition_day_id: active.definitionDayId,
+      today_session_id: active.sessionId, today_session_status: null, started_date: "2026-08-31",
+      next_lifts: [{ name: "Saved row", set_count: 2, reps: 8, weight: 42.5, bodyweight: false, detail: "2×8 @ 42.5 kg" }],
+    });
+    expect(dashboard.activeWorkouts[0].occurrence_id).toBeUndefined();
+    expect(dashboard.activeWorkouts[0].scheduled_date).toBeUndefined();
+    expect(dashboard.otherActiveRuns.map(row => row.program_id)).toEqual([unused.legacyProgramId]);
+  });
+
+  it("keeps only owned active planned sessions and orders them by stable session creation identity", () => {
+    const userId = createUser("manual-order@example.test");
+    const first = manualSession(userId, "First started", "2026-09-04");
+    const second = manualSession(userId, "Second started", "2026-08-01");
+    const completed = manualSession(userId, "Finished");
+    dbModule.db.prepare("UPDATE sessions SET status='completed',completed=1 WHERE id=?").run(completed.sessionId);
+    manualSession(createUser("other-manual-owner@example.test"), "Other owner");
+    dbModule.db.prepare("INSERT INTO sessions(user_id,program_name,day_name,week_number,date) VALUES (?,'Quick','Quick',1,'2026-08-01')").run(userId);
+    const dashboard = service.getTodayWorkoutDashboard(userId, new Date("2026-09-05T12:00:00Z"));
+    expect(dashboard.activeWorkouts.map(row => row.today_session_id)).toEqual([first.sessionId, second.sessionId]);
+    expect(dashboard.otherActiveRuns.some(row => row.program_id === first.legacyProgramId || row.program_id === second.legacyProgramId)).toBe(false);
+  });
+
+  it("lists an active manual session once when a new schedule links it to an occurrence", () => {
+    const userId = createUser("manual-link@example.test");
+    const active = manualSession(userId, "Now scheduled");
+    dbModule.db.prepare("UPDATE program_runs SET schedule_mode='scheduled',schedule_weekdays='[0,1,2,3,4,5,6]',start_date='2026-08-30' WHERE id=?").run(active.runId);
+    const dashboard = service.getTodayWorkoutDashboard(userId, new Date("2026-09-05T12:00:00Z"));
+    expect(dashboard.activeWorkouts).toHaveLength(1);
+    expect(dashboard.activeWorkouts[0].today_session_id).toBe(active.sessionId);
+    expect(dashboard.activeWorkouts[0].occurrence_id).toEqual(expect.any(Number));
+    expect(service.getTodayWorkoutDashboard(userId).activeWorkouts.map(row => row.today_session_id)).toEqual([active.sessionId]);
+  });
+});

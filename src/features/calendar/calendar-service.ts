@@ -11,7 +11,8 @@ type Row = Record<string, string | number | null> & {
   program_name: string; week_number: number;
 };
 type Change = { id: number; name: string; from: string; to: string };
-export type CalendarResult = { operationId?: string; undone?: boolean; changes: Change[]; conflicts?: { id: number; date: string; name: string; revision: number }[] };
+export type CalendarConflict = { key:string; id:number|null; date:string; name:string; revision:number; canSwap:boolean };
+export type CalendarResult = { operationId?: string; undone?: boolean; changes: Change[]; conflicts?: CalendarConflict[] };
 type Journal = { id: string; before_json: string; after_json: string; undone_at: string | null };
 type RunState = { id:number; programId:number; status:string; is_active:number; archived_at:string|null };
 type SavedAfter = { request: string; rows: Row[]; runs:RunState[]; progression:EditorCompletionDecision[]; skipSessionId?: number; result: CalendarResult };
@@ -40,10 +41,20 @@ function requestFingerprint(body: Body): string {
   return JSON.stringify(Object.fromEntries(Object.entries(body).filter(([key]) => key !== "requestKey").sort(([a],[b]) => a.localeCompare(b))));
 }
 function conflictsAt(userId: number, dates: string[], excluded: number[]) {
-  return (db.prepare(`SELECT o.id,o.scheduled_date AS date,o.day_name AS name,o.revision FROM workout_occurrences o
-    JOIN program_runs pr ON pr.id=o.program_run_id WHERE o.user_id=? AND o.status IN ('scheduled','in_progress')
-    AND pr.status='active' AND pr.archived_at IS NULL`).all(userId) as NonNullable<CalendarResult["conflicts"]>)
-    .filter(row => dates.includes(row.date) && !excluded.includes(row.id));
+  const rows=db.prepare(`SELECT 'occurrence-' || o.id AS key,o.id,
+    CASE WHEN o.status='completed' THEN COALESCE(s.date,o.scheduled_date) ELSE o.scheduled_date END AS date,
+    o.day_name AS name,o.revision,
+    o.status='scheduled' AND s.id IS NULL AND pr.status='active' AND pr.archived_at IS NULL AS canSwap
+    FROM workout_occurrences o JOIN program_runs pr ON pr.id=o.program_run_id
+    LEFT JOIN sessions s ON s.occurrence_id=o.id
+    WHERE o.user_id=? AND (o.status IN ('in_progress','completed','skipped')
+      OR (pr.status='active' AND pr.archived_at IS NULL AND pr.schedule_mode='scheduled'))
+    UNION ALL SELECT 'session-' || s.id AS key,NULL AS id,s.date,
+      COALESCE(NULLIF(s.day_name,''),'Quick workout') AS name,s.revision,0 AS canSwap
+    FROM sessions s WHERE s.user_id=? AND s.occurrence_id IS NULL
+      AND s.status IN ('in_progress','completed','skipped')`).all(userId,userId) as (Omit<CalendarConflict,"canSwap">&{canSwap:number})[];
+  return rows.filter(row=>dates.includes(row.date) && (row.id===null || !excluded.includes(row.id)))
+    .map(row=>({...row,canSwap:!!row.canSwap}));
 }
 function runState(row:Row):RunState {
   return db.prepare("SELECT pr.id,p.id AS programId,pr.status,p.is_active,pr.archived_at FROM program_runs pr JOIN programs p ON p.program_run_id=pr.id WHERE pr.id=? AND p.id=?").get(row.program_run_id,row.program_id) as RunState;
@@ -148,7 +159,7 @@ export function applyCalendarAction(userId: number, input: unknown): CalendarRes
       } else {
         const target=date(body.date);
         const conflicts=conflictsAt(userId,[target],body.type==="move"?[row.id]:[]);
-        if (conflicts.length && body.collision!=="move" && body.collision!=="swap") throw new CalendarError("That date is occupied. Choose move or swap.",409,conflicts);
+        if (conflicts.length && body.collision!=="move" && body.collision!=="swap") throw new CalendarError("That date is occupied. Keep the workouts alongside each other or swap with an unstarted workout.",409,conflicts);
         if (body.type==="move") {
           changes=[{id:row.id,name:row.day_name,from:row.scheduled_date,to:target}];
           if (body.collision==="swap") {

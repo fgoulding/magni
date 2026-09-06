@@ -21,7 +21,12 @@ const rename = (name: string) => fireEvent.change(screen.getByLabelText("Program
 
 describe("program workspace recovery and authoring", () => {
   it("retains the activation action after an incomplete success response and retries safely", async () => {
-    const fetchMock = vi.fn().mockResolvedValueOnce(response({})).mockResolvedValueOnce(response({ programId: 42 }));
+    const activationReply = vi.fn().mockResolvedValueOnce(response({})).mockResolvedValueOnce(response({ programId: 42 }));
+    const fetchMock = vi.fn(async (url: string, options: RequestInit) => {
+      if (url === `/api/program-drafts/${id}/activate` && options.method === "POST") return activationReply();
+      if (url === "/api/programs/42/editor-changes" && options.method === "GET") return response({ draftId: id, publishedRevisionId: null, occurrences: [] });
+      throw new Error(`Unexpected request: ${options.method} ${url}`);
+    });
     vi.stubGlobal("fetch", fetchMock);
     render(<ProgramWorkspace {...props} />);
     fireEvent.click(screen.getByRole("button", { name: "Review & activate" }));
@@ -31,6 +36,9 @@ describe("program workspace recovery and authoring", () => {
     fireEvent.click(screen.getByRole("button", { name: /^Activate program$/ }));
     expect(await screen.findByText("Program activated")).toBeVisible();
     expect(fetchMock.mock.calls[0]).toEqual(fetchMock.mock.calls[1]);
+    expect(activationReply).toHaveBeenCalledTimes(2);
+    await waitFor(() => expect(screen.getByLabelText("Change scope")).toBeEnabled());
+    expect(fetchMock).toHaveBeenNthCalledWith(3, "/api/programs/42/editor-changes", expect.objectContaining({ method: "GET" }));
     expect(screen.queryByRole("alert")).not.toBeInTheDocument();
   });
   it("restores local pending text after navigation without claiming it is saved", () => {
@@ -136,6 +144,48 @@ describe("program workspace recovery and authoring", () => {
     expect(screen.getByLabelText("Set 3 minimum reps")).toHaveValue(9);
     fireEvent.click(screen.getByRole("button", { name: "Undo last edit" }));
     expect(screen.getByLabelText("Set 1 minimum reps")).toHaveValue(8);
+  });
+  it("copies a whole block and restores it with one undo", () => {
+    const blocks = makePreset("percentage", "2026-09-05");
+    render(<ProgramWorkspace {...props} initialDocument={blocks} />);
+    fireEvent.click(screen.getByRole("button", { name: "Copy block" }));
+    expect(screen.getByLabelText("Block name")).toHaveValue("Build copy");
+    expect(screen.getByLabelText("Week").querySelectorAll("option")).toHaveLength(7);
+    fireEvent.click(screen.getByRole("button", { name: "Undo last edit" }));
+    expect(screen.getByLabelText("Week").querySelectorAll("option")).toHaveLength(4);
+  });
+  it("fills only selected weeks and exposes the local override", () => {
+    const blocks = makePreset("percentage", "2026-09-05");
+    render(<ProgramWorkspace {...props} initialDocument={blocks} />);
+    fireEvent.click(screen.getByRole("button", { name: "Prescriptions" }));
+    fireEvent.click(screen.getByLabelText("Select Week 2"));
+    fireEvent.click(screen.getByRole("button", { name: "Fill selected weeks from this exercise" }));
+    fireEvent.change(screen.getByLabelText("Week"), { target: { value: "1" } });
+    expect(screen.getByLabelText("Set 1 minimum reps")).toHaveValue(8);
+    expect(screen.getByText(/Set prescriptions match the first appearance/)).toBeInTheDocument();
+    fireEvent.change(screen.getByLabelText("Week"), { target: { value: "2" } });
+    expect(screen.getByLabelText("Set 1 minimum reps")).toHaveValue(6);
+    expect(screen.getByText(/Local set override/)).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Undo last edit" }));
+    fireEvent.change(screen.getByLabelText("Week"), { target: { value: "1" } });
+    expect(screen.getByLabelText("Set 1 minimum reps")).toHaveValue(7);
+  });
+  it("applies a bulk change only to selected weeks", () => {
+    render(<ProgramWorkspace {...props} initialDocument={makePreset("percentage", "2026-09-05")} />);
+    fireEvent.click(screen.getByRole("button", { name: "Prescriptions" }));
+    fireEvent.change(screen.getByLabelText("Apply to"), { target: { value: "selected" } });
+    expect(screen.getByRole("button", { name: "Apply bulk edit" })).toBeDisabled();
+    fireEvent.click(screen.getByLabelText("Select Week 2"));
+    fireEvent.click(screen.getByLabelText("Select Week 3"));
+    fireEvent.change(screen.getByLabelText("Bulk minimum reps"), { target: { value: "9" } });
+    fireEvent.click(screen.getByRole("button", { name: "Apply bulk edit" }));
+    expect(screen.getByLabelText("Set 1 minimum reps")).toHaveValue(8);
+    fireEvent.change(screen.getByLabelText("Week"), { target: { value: "1" } });
+    expect(screen.getByLabelText("Set 1 minimum reps")).toHaveValue(9);
+    fireEvent.change(screen.getByLabelText("Week"), { target: { value: "2" } });
+    expect(screen.getByLabelText("Set 1 minimum reps")).toHaveValue(9);
+    fireEvent.change(screen.getByLabelText("Week"), { target: { value: "3" } });
+    expect(screen.getByLabelText("Set 1 minimum reps")).toHaveValue(5);
   });
   it("previews the configured rule using individual rep outcomes", () => {
     render(<ProgramWorkspace {...props} />);

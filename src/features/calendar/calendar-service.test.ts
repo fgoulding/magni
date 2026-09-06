@@ -54,6 +54,32 @@ describe("Calendar occurrence transactions", () => {
     calendar.applyCalendarAction(user, { type: "undo", operationId: result.operationId, requestKey: key() });
     expect(occurrences.getOccurrence(user, b.id)?.scheduled_date).toBe(b.scheduled_date);
   });
+  it.each(["completed", "skipped", "in_progress"])("discloses %s planned occupancy without offering it as a swap target", (status) => {
+    const { user, run, rows: [a,b] } = fixture();
+    const displayDate = status === "completed" ? "2090-07-01" : b.scheduled_date;
+    db.prepare("INSERT INTO sessions(user_id,program_id,day_id,program_definition_day_id,program_run_id,occurrence_id,date,scheduled_date,status,program_name,day_name,week_number) VALUES (?,?,?,?,?,?,?,?,?,?,?,1)")
+      .run(user,run.legacyProgramId,b.legacy_day_id,b.definition_day_id,run.runId,b.id,displayDate,b.scheduled_date,status,b.program_name,b.day_name);
+    const request = { type:"move", occurrenceId:a.id, revision:a.revision, date:displayDate, requestKey:key() };
+    let error: InstanceType<typeof calendar.CalendarError> | undefined;
+    try { calendar.applyCalendarAction(user,request); } catch (caught) { error=caught as typeof error; }
+    expect(error?.status).toBe(409);
+    expect(error?.conflicts).toEqual([expect.objectContaining({id:b.id,date:displayDate,name:b.day_name,canSwap:false})]);
+    expect(occurrences.getOccurrence(user,a.id)?.scheduled_date).toBe(a.scheduled_date);
+    calendar.applyCalendarAction(user,{...request,collision:"move"});
+    expect(occurrences.getOccurrence(user,a.id)?.scheduled_date).toBe(displayDate);
+    expect(occurrences.getOccurrence(user,b.id)?.status).toBe(status);
+  });
+  it.each(["completed", "skipped", "in_progress"])("requires add-alongside confirmation for %s unplanned workouts, including off-month targets", (status) => {
+    const { user, rows: [a] } = fixture();
+    const sessionId=Number(db.prepare("INSERT INTO sessions(user_id,date,status,day_name,week_number) VALUES (?,?,?,?,1)").run(user,"2090-07-01",status,"Independent workout").lastInsertRowid);
+    const request={type:"move",occurrenceId:a.id,revision:1,date:"2090-07-01",requestKey:key()};
+    let error: InstanceType<typeof calendar.CalendarError> | undefined;
+    try { calendar.applyCalendarAction(user,request); } catch (caught) { error=caught as typeof error; }
+    expect(error?.status).toBe(409);
+    expect(error?.conflicts).toEqual([expect.objectContaining({id:null,key:`session-${sessionId}`,name:"Independent workout",canSwap:false})]);
+    calendar.applyCalendarAction(user,{...request,collision:"move"});
+    expect(db.prepare("SELECT date,status FROM sessions WHERE id=?").get(sessionId)).toEqual({date:"2090-07-01",status});
+  });
   it("allows explicit same-day move without silently swapping, but rejects stale or foreign edits", () => {
     const { user, rows: [a,b] } = fixture();
     const other = fixture();

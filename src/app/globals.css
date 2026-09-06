@@ -149,6 +149,16 @@ textarea {
   padding-bottom: max(0.75rem, var(--safe-bottom));
 }
 
+.app-nav {
+  /* Keep labels above the home gesture area even if the first JS measurement
+     was zero. A solid surface avoids content flashing through while scrolling. */
+  padding-bottom: calc(max(0.75rem, var(--safe-bottom), env(safe-area-inset-bottom)) + 0.5rem);
+}
+
+.app-nav .touch-target {
+  min-height: 4rem;
+}
+
 .touch-target {
   min-height: 44px;
   min-width: 44px;

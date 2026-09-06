@@ -63,6 +63,67 @@ async function holdRefresh(page: Page) {
   return { received, release };
 }
 
+test("a bottom tab press survives the page shrinking before its release", async ({ page }, info) => {
+  await loggedWorkout(page, "top-backoff");
+  await page.evaluate(() => window.scrollTo(0, document.documentElement.scrollHeight));
+  expect(await page.evaluate(() => scrollY)).toBeGreaterThan(100);
+  await page.evaluate(() => {
+    const events: unknown[] = [];
+    Object.assign(window, { shrinkingPageEvents: events });
+    const calendar = document.querySelector('nav a[href="/calendar"]')!;
+    for (const type of ["pointerdown", "pointerup", "click"]) document.addEventListener(type, event => {
+      events.push({ type, target: (event.target as Element).closest("a")?.getAttribute("href"), captured: calendar.hasPointerCapture((event as PointerEvent).pointerId), sameAnchor: calendar === document.querySelector('nav a[href="/calendar"]'), scrollY, height: document.documentElement.scrollHeight });
+    }, true);
+    calendar.addEventListener("pointerdown", () => {
+      // A completion recap removes most of the scrolled page. Exercise that
+      // geometry change during a press and verify native release delivery.
+      const finish = [...document.querySelectorAll("button")].find(button => button.textContent === "Finish Workout")!;
+      setTimeout(() => { finish.closest("section")!.style.display = "none"; }, 0);
+    }, { once: true });
+  });
+  try {
+    const rect = (await page.getByRole("navigation", { name: "Main navigation" }).getByRole("link", { name: "Calendar", exact: true }).boundingBox())!;
+    const originalScroll = await page.evaluate(() => scrollY);
+    await page.mouse.move(rect.x + rect.width / 2, rect.y + rect.height / 2);
+    await page.mouse.down();
+    await expect.poll(() => page.evaluate(() => scrollY)).toBeLessThan(originalScroll);
+    await page.mouse.up();
+    await expect(page).toHaveURL(/\/calendar$/);
+    const events = await page.evaluate(() => (window as unknown as { shrinkingPageEvents: Array<{ type: string; target: string; captured: boolean; sameAnchor: boolean; scrollY: number; height: number }> }).shrinkingPageEvents);
+    const down = events.find(event => event.type === "pointerdown")!;
+    const up = events.find(event => event.type === "pointerup")!;
+    expect(up).toMatchObject({ target: "/calendar", captured: true, sameAnchor: true });
+    expect(up.scrollY).toBeLessThan(down.scrollY);
+    expect(up.height).toBeLessThan(down.height);
+  } finally {
+    await info.attach("shrinking-page-events", { contentType: "application/json", body: JSON.stringify(await page.evaluate(() => (window as unknown as { shrinkingPageEvents: unknown[] }).shrinkingPageEvents)) });
+  }
+});
+
+test("bottom tabs cancel dragged and interrupted presses while keeping keyboard navigation", async ({ page }) => {
+  await registerViaApi(page, "cancel-tab-press");
+  await page.goto("/today");
+  const calendar = page.getByRole("navigation", { name: "Main navigation" }).getByRole("link", { name: "Calendar", exact: true });
+  const rect = (await calendar.boundingBox())!;
+  const center = { x: rect.x + rect.width / 2, y: rect.y + rect.height / 2 };
+  await page.mouse.move(center.x, center.y);
+  await page.mouse.down();
+  await page.mouse.move(center.x, center.y - 100);
+  await page.mouse.up();
+  await expect(page).toHaveURL(/\/today$/);
+  await calendar.evaluate(link => link.addEventListener("pointerdown", event => { link.dataset.pointerId = String((event as PointerEvent).pointerId); }, { once: true }));
+  await page.mouse.move(center.x, center.y);
+  await page.mouse.down();
+  await calendar.evaluate(link => link.dispatchEvent(new PointerEvent("pointercancel", { pointerId: Number(link.dataset.pointerId), bubbles: true })));
+  await page.mouse.up();
+  await expect(page).toHaveURL(/\/today$/);
+  const length = await page.evaluate(() => history.length);
+  await calendar.focus();
+  await page.keyboard.press("Enter");
+  await expect(page).toHaveURL(/\/calendar$/);
+  expect(await page.evaluate(() => history.length)).toBe(length + 1);
+});
+
 test("a rejected completion cannot be mistaken for an unrelated Today refresh", async ({ page }) => {
   await loggedWorkout(page);
   await page.route("**/complete-and-advance", route => route.fulfill({ status: 500, contentType: "application/json", body: JSON.stringify({ error: "Injected completion rejection" }) }));

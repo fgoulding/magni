@@ -58,7 +58,7 @@ describe("authoritative workout occurrence workflows", () => {
       return isValidElement<{ children?: ReactNode }>(node) ? text(node.props.children) : "";
     }
     for (let render = 0; render < 2; render++) {
-      const content = text(await TodayPage());
+      const content = text(await TodayPage({}));
       expect(content).toContain("10 reps @ 40 lb");
       expect(content).toContain("400 lb total");
       expect(content).not.toContain("30 reps");
@@ -122,10 +122,10 @@ describe("authoritative workout occurrence workflows", () => {
     const TodayPage = (await import("@/app/today/page")).default;
     function occurrenceKeys(node: ReactNode): string[] {
       if (Array.isArray(node)) return node.flatMap(occurrenceKeys);
-      if (!isValidElement<{ children?: ReactNode; occurrenceId?: number }>(node)) return [];
-      return [...(node.props.occurrenceId ? [String(node.key)] : []), ...occurrenceKeys(node.props.children)];
+      if (!isValidElement<{ children?: ReactNode; occurrenceId?: number; "data-occurrence-id"?: number }>(node)) return [];
+      return [...(node.props.occurrenceId || node.props["data-occurrence-id"] ? [String(node.key)] : []), ...occurrenceKeys(node.props.children)];
     }
-    const keys = occurrenceKeys(await TodayPage());
+    const keys = occurrenceKeys(await TodayPage({}));
     expect(keys).toHaveLength(2);
     expect(new Set(keys).size).toBe(2);
   });

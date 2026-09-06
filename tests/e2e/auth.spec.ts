@@ -4,7 +4,8 @@ import { login, logout, register, registerViaApi } from "./helpers";
 test("registers, logs out, and logs back in", async ({ page }, info) => {
   const user = await register(page, "auth");
 
-  await expect(page.getByText(user.email)).toBeVisible();
+  await page.getByRole("navigation", { name: "Main navigation" }).getByRole("link", { name: "Settings", exact: true }).click();
+  await expect(page.getByRole("heading", { name: user.email, exact: true })).toBeVisible();
   await logout(page);
   await expect(page.getByLabel("Email")).toBeEnabled();
   await expect(page.getByLabel("Password")).toBeEnabled();
@@ -12,7 +13,8 @@ test("registers, logs out, and logs back in", async ({ page }, info) => {
   await page.screenshot({ path: info.outputPath("auth-ready.png"), fullPage: true, animations: "disabled" });
 
   await login(page, user.email, user.password);
-  await expect(page.getByText(user.email)).toBeVisible();
+  await page.getByRole("navigation", { name: "Main navigation" }).getByRole("link", { name: "Settings", exact: true }).click();
+  await expect(page.getByRole("heading", { name: user.email, exact: true })).toBeVisible();
 });
 
 test("redirects protected routes to login", async ({ page }) => {

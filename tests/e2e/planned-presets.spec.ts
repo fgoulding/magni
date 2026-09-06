@@ -15,10 +15,9 @@ test.beforeEach(async ({ page }) => {
     const events: unknown[] = []; Object.assign(window, { completionNavigationEvents: events });
     for (const type of ["pointerdown", "pointerup", "pointercancel", "mousedown", "mouseup", "click"]) document.addEventListener(type, event => {
       const target = event.target as Element;
-      if (!target.closest("nav")) return;
       const pointer = event as MouseEvent;
       const anchor = document.querySelector('nav a[href="/calendar"]');
-      events.push({ type, time: Date.now(), text: target.textContent?.trim(), tag: target.tagName, x: pointer.clientX, y: pointer.clientY, scrollY, nav: anchor?.getBoundingClientRect().toJSON() });
+      events.push({ type, time: Date.now(), text: target.textContent?.trim().slice(0, 100), tag: target.tagName, x: pointer.clientX, y: pointer.clientY, scrollY, height: innerHeight, documentHeight: document.documentElement.scrollHeight, viewport: { top: visualViewport?.offsetTop, height: visualViewport?.height }, nav: anchor?.getBoundingClientRect().toJSON() });
     }, true);
   });
 });

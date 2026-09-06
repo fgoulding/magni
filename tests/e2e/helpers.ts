@@ -150,6 +150,19 @@ export async function buildScheduledLinearProgram(
   await scheduleForToday(page);
 }
 
+export async function expectSavedLinearCalendarRecap(page: Page): Promise<void> {
+  const recap = page.getByRole("dialog");
+  await expect(recap.getByText("Completed workout", { exact: true })).toBeVisible();
+  await expect(recap.getByText("1 done", { exact: true })).toBeVisible();
+  await expect(recap.getByRole("listitem")).toHaveCount(1);
+  await expect(recap.getByRole("listitem").getByText("Squat", { exact: true })).toBeVisible();
+  await expect(recap.getByText("5/5/5 @ 200 lb", { exact: true })).toBeVisible();
+  await expect(recap.getByText("3,000 lb volume", { exact: true })).toBeVisible();
+  await expect(recap.getByRole("button", { name: "Repeat workout", exact: true })).toBeVisible();
+  await expect(recap.getByRole("button", { name: "Do workout", exact: true })).toHaveCount(0);
+  await expect(recap.getByRole("button", { name: "Finish Workout", exact: true })).toHaveCount(0);
+}
+
 export async function completeVisibleWorkout(page: Page, startButtonName = "Start Workout"): Promise<void> {
   await page.getByRole("button", { name: startButtonName }).click();
   await expect(page.getByRole("heading", { name: "Squat" })).toBeVisible();
@@ -159,6 +172,11 @@ export async function completeVisibleWorkout(page: Page, startButtonName = "Star
   await expect(page.getByText("Logged", { exact: true })).toBeVisible();
   await page.getByRole("button", { name: "Finish Workout" }).click();
 
+  // Calendar refresh replaces the live card with the persisted session recap.
+  if (new URL(page.url()).pathname === "/calendar") {
+    await expectSavedLinearCalendarRecap(page);
+    return;
+  }
   await expect(page.getByText("Workout complete")).toBeVisible();
   if (new URL(page.url()).pathname === "/today") {
     await expect(page.getByText("Workout complete today", { exact: true })).toBeVisible();

@@ -62,6 +62,18 @@ function makeCardProps(overrides?: Partial<Parameters<typeof WorkoutCard>[0]>) {
 }
 
 describe("WorkoutCard", () => {
+  it("offers an explicit unchanged-max finish only after a missing-template response", async () => {
+    const user = userEvent.setup();
+    const calls = vi.fn().mockResolvedValueOnce(jsonResponse({ id: 42, sets: [{ id: 7, exercise_name: "Squat", reps: 5, sets: 1, set_number: 1, rep_out_target: 5, calculated_weight: 100, actual_reps: 5, actual_weight: 100 }] }))
+      .mockResolvedValueOnce(jsonResponse({ error: "Original rule unavailable", code: "missing_legacy_template" }, { status: 409 }))
+      .mockResolvedValueOnce(jsonResponse({ success: true })).mockResolvedValue(jsonResponse({ prs: [] }));
+    stubFetch(calls);
+    render(<WorkoutCard {...makeCardProps()} />);
+    await user.click(screen.getByRole("button", { name: "Start Workout" }));
+    await user.click(await screen.findByRole("button", { name: "Finish Workout" }));
+    await user.click(await screen.findByRole("button", { name: "Finish without changing affected training maxes" }));
+    expect(JSON.parse(calls.mock.calls[2][1].body)).toEqual({ sessionId: 42, unavailableTemplatePolicy: "hold" });
+  });
   it("shows Start and Skip buttons before a session", () => {
     render(<WorkoutCard {...makeCardProps()} />);
 

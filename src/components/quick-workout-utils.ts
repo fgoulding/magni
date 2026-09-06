@@ -26,12 +26,13 @@ export function useWorkoutDraft<T>(key: string, initial: T): [T, (value: T | nul
   return [parsed ?? initial, (value) => write(key, value)];
 }
 export class WorkoutRequestError extends Error {
-  constructor(public status: number, message: string) { super(message); this.name = "WorkoutRequestError"; }
+  constructor(public status: number, message: string, public confirmedRejection = false, public confirmedClientError = false) { super(message); this.name = "WorkoutRequestError"; }
 }
 export async function workoutRequest<T>(url: string, method: string, data?: unknown): Promise<T> {
   const response = await fetch(url, { method, headers: { "Content-Type": "application/json" }, ...(data === undefined ? {} : { body: JSON.stringify(data) }) });
   const body = await readResponseJson<T & { error?: string }>(response);
-  if (!response.ok || !body) throw new WorkoutRequestError(response.status, body?.error ?? "Could not confirm this change. Your edits remain available to retry.");
+  const confirmedClientError = response.status >= 400 && response.status < 500 && typeof body?.error === "string" && body.error.trim().length > 0;
+  if (!response.ok || !body) throw new WorkoutRequestError(response.status, body?.error ?? "Could not confirm this change. Your edits remain available to retry.", response.status === 400 && confirmedClientError, confirmedClientError);
   return body;
 }
 export const workoutInput = "touch-target min-w-0 rounded-xl border border-line bg-surface px-3 text-base outline-none focus:border-brand";

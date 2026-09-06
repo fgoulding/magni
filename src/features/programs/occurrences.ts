@@ -19,6 +19,7 @@ export type PrescriptionSet = {
   superset_group: string | null; week_number: number; set_number: number;
   intensity_pct: number; reps: number; sets: number; rep_out_target: number;
   weight: number | null; training_max: number; calculated_weight: number;
+  template_snapshot_json?: string | null;
 };
 
 type Run = { program_id: number; id: number; program_definition_id: number; name: string; num_weeks: number; start_date: string; schedule_weekdays: string };
@@ -40,7 +41,7 @@ export function validDateKey(value: unknown): value is string {
 export function snapshotPrescription(run: Run, day: Day, week: number): PrescriptionSet[] {
   return db.prepare(`SELECT pdws.id AS week_setting_id, ws.id AS legacy_week_setting_id,
     pde.id AS exercise_id, pde.stable_key, pde.name AS exercise_name, pde.category,
-    pde.progression_type, pde.superset_group, pdws.week_number, pdws.set_number,
+    pde.progression_type, pde.template_snapshot_json, pde.superset_group, pdws.week_number, pdws.set_number,
     pdws.intensity_pct, pdws.reps, pdws.sets, pdws.rep_out_target, pdws.weight,
     COALESCE(prx.expected_max, 100) AS training_max
     FROM program_definition_exercises pde

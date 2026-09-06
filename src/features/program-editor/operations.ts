@@ -24,7 +24,66 @@ export function cloneDay(source: ProgramDayV1): ProgramDayV1 {
   return { ...structuredClone(source), id: crypto.randomUUID(), exercises: source.exercises.map(exercise => cloneExercise(exercise)) };
 }
 export function cloneWeek(source: ProgramWeekV1): ProgramWeekV1 {
-  return { ...structuredClone(source), id: crypto.randomUUID(), name: `${source.name} copy`, days: source.days.map(cloneDay) };
+  return { ...structuredClone(source), id: crypto.randomUUID(), name: `${source.name.slice(0, 130)} copy`, days: source.days.map(cloneDay) };
+}
+
+/** Blocks are adjacent weeks with the same explicit label, never all weeks
+ * sharing a label elsewhere in the document. Unnamed weeks stand alone. */
+export function getBlockRange(weeks: ProgramWeekV1[], index: number) {
+  let start = index;
+  let end = index + 1;
+  const label = weeks[index]?.block.trim();
+  if (label) {
+    while (start > 0 && weeks[start - 1].block.trim() === label) start--;
+    while (end < weeks.length && weeks[end].block.trim() === label) end++;
+  }
+  return { start, end };
+}
+
+export function copyBlock(document: ProgramDocumentV1, index: number): number {
+  const { start, end } = getBlockRange(document.weeks, index);
+  if (document.weeks.length + end - start > 52) throw new Error("A program can contain at most 52 weeks.");
+  const baseName = `${(document.weeks[index].block.trim() || document.weeks[index].name || "Block").slice(0, 120)} copy`;
+  const names = new Set(document.weeks.map(week => week.block.trim()));
+  let name = baseName;
+  for (let suffix = 2; names.has(name); suffix++) name = `${baseName} ${suffix}`;
+  const copies = document.weeks.slice(start, end).map(week => ({ ...cloneWeek(week), block: name.slice(0, 140) }));
+  document.weeks.splice(end, 0, ...copies);
+  return end;
+}
+
+export function prescriptionMatches(first: ProgramExerciseV1, second: ProgramExerciseV1): boolean {
+  const values = (exercise: ProgramExerciseV1) => exercise.sets.map(set => ({ ...set, id: "" }));
+  return JSON.stringify(values(first)) === JSON.stringify(values(second));
+}
+
+export function selectedPrescriptionTargets(document: ProgramDocumentV1, source: ProgramExerciseV1, weekIds: string[]) {
+  const selected = new Set(weekIds);
+  return document.weeks.filter(week => selected.has(week.id)).flatMap(week => week.days.flatMap(day =>
+    day.exercises.filter(exercise => exercise.id !== source.id && exercise.progressionKey === source.progressionKey)
+      .map(exercise => ({ week, day, exercise }))));
+}
+
+/** Fill explicit set overrides only. Retain existing IDs by role/ordinal so a
+ * warm-up insertion does not retarget a top-set rule or an active-day mapping. */
+export function fillSelectedPrescriptions(document: ProgramDocumentV1, sourceId: string, weekIds: string[]): number {
+  const source = document.weeks.flatMap(week => week.days.flatMap(day => day.exercises)).find(exercise => exercise.id === sourceId);
+  if (!source) throw new Error("Choose a source exercise before filling weeks.");
+  const updates = selectedPrescriptionTargets(document, source, weekIds).map(({ exercise }) => {
+    const roleCounts = new Map<string, number>();
+    const sets = source.sets.map(set => {
+      const ordinal = roleCounts.get(set.role) ?? 0;
+      roleCounts.set(set.role, ordinal + 1);
+      return { ...structuredClone(set), id: exercise.sets.filter(previous => previous.role === set.role)[ordinal]?.id ?? crypto.randomUUID() };
+    });
+    const condition = exercise.rule?.condition;
+    if (condition?.type === "designated_set" && !sets.some(set => set.id === condition.setId)) {
+      throw new Error("The fill would remove a designated progression set. Keep that set role or adjust the progression rule first.");
+    }
+    return { exercise, sets };
+  });
+  for (const { exercise, sets } of updates) exercise.sets = sets;
+  return updates.length;
 }
 
 /** Shared state and rule configuration follow one lift; set overrides stay local. */

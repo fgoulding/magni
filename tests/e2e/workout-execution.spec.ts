@@ -5,6 +5,7 @@ import {
   buildScheduledLinearProgram,
   completeVisibleWorkout,
   createProgram,
+  expectSavedLinearCalendarRecap,
   goToTab,
   register,
 } from "./helpers";
@@ -85,16 +86,31 @@ test("trains a missed calendar workout today and records it on the day it is don
   await page.getByRole("link", { name: `Scheduled: ${programName} - Late Lower on ${dates.yesterday}`, exact: true }).click();
   await expect(page.getByText("Run from calendar")).toBeVisible();
   await expect(page.getByText(`Originally scheduled ${dates.yesterday} · Late Lower`, { exact: true })).toBeVisible();
+  const occurrenceKey = new URL(page.url()).searchParams.get("workout");
+  expect(occurrenceKey).toMatch(/^occurrence-\d+$/);
+  const occurrenceId = Number(occurrenceKey!.slice("occurrence-".length));
 
   await completeVisibleWorkout(page, "Do workout");
+  await expect(page.getByText(`Completed on ${dates.today} · Late Lower`, { exact: true })).toBeVisible();
+  await page.reload();
+  await expectSavedLinearCalendarRecap(page);
+  await expect(page.getByText(`Completed on ${dates.today} · Late Lower`, { exact: true })).toBeVisible();
   await page.getByRole("link", { name: "Close workout" }).click();
+  await expect(page.getByRole("dialog")).toHaveCount(0);
 
   await goToTab(page, "Stats");
   await expect(page.getByRole("heading", { name: "Squat" })).toBeVisible();
 
   await goToTab(page, "Calendar");
   await expect(page.getByRole("link", { name: `Completed: ${programName} - Late Lower on ${dates.today}`, exact: true })).toBeVisible();
-  const sessions = await (await page.request.get("/api/sessions")).json();
+  const sessionsResponse = await page.request.get("/api/sessions");
+  expect(sessionsResponse.ok()).toBe(true);
+  const sessions = await sessionsResponse.json();
   expect(sessions).toHaveLength(1);
-  expect(sessions[0]).toMatchObject({ status: "completed", date: dates.today, scheduled_date: dates.yesterday });
+  expect(sessions[0]).toMatchObject({ occurrence_id: occurrenceId, status: "completed", date: dates.today, scheduled_date: dates.yesterday });
+  const detailResponse = await page.request.get(`/api/sessions/${sessions[0].id}`);
+  expect(detailResponse.ok()).toBe(true);
+  const detail = await detailResponse.json();
+  expect(detail).toMatchObject({ occurrence_id: occurrenceId, status: "completed", date: dates.today, scheduled_date: dates.yesterday, volume: 3000, loggedSets: 3, totalSets: 3 });
+  expect(detail.sets).toMatchObject([1, 2, 3].map(set_number => ({ set_number, exercise_name: "Squat", sets: 1, reps: 5, calculated_weight: 200, actual_reps: 5, actual_weight: 200 })));
 });

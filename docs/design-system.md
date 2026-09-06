@@ -140,14 +140,25 @@ Inputs are forced to 16px (prevents iOS zoom-on-focus).
 **Cards:** `.card`. Hero/featured cards get a `h-1 bg-brand` top accent bar.
 Card title = `.display`; small uppercase context = `.eyebrow text-brand-strong`.
 
+**Today:** one primary workout logger in normal document flow. Keep other
+workouts as compact named links; the whole workout card must never stick over
+later content. Use a compact Today/date header with access to workout history.
+
+**Calendar:** Week is the default, with workout names and small status dots.
+Full prescriptions are available when opening a workout or expanding details.
+Keep Month as a separate grid. Icon controls stay at least 44px without taking
+space away from names when text is enlarged.
+
 **Chips / badges:** `rounded-full px-2.5 py-1 text-xs font-semibold`. Neutral =
 `bg-surface-muted text-muted`. Status = soft+ink pair (e.g. Active =
 `bg-success-soft text-success-ink` with a `bg-success` dot).
 
-**Bottom nav** (`BottomNav.tsx`): fixed, `bg-surface/90 backdrop-blur-lg`,
+**Bottom nav** (`BottomNav.tsx`): fixed, solid `bg-surface`,
 `border-t border-line`. Active tab = `text-brand-strong` + a `bg-brand` top
-indicator bar + `aria-current="page"`. Inactive = `text-faint`. Labels are
-condensed uppercase.
+indicator bar + `aria-current="page"`. Inactive = `text-faint`. Labels use
+normal case at 11px. The `.app-nav` targets are at least 64px high; its bottom
+padding clears the device safe area and raises the controls above the home
+indicator. Keep matching content clearance in `layout.tsx`.
 
 **Dialogs/sheets:** overlay `bg-black/35`, panel `rounded-2xl bg-surface`,
 header with `.eyebrow` + `.display` title and a ghost Close.
