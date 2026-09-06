@@ -20,6 +20,56 @@ afterEach(() => { cleanup(); vi.restoreAllMocks(); vi.unstubAllGlobals(); });
 const rename = (name: string) => fireEvent.change(screen.getByLabelText("Program name"), { target: { value: name } });
 
 describe("program workspace recovery and authoring", () => {
+  it("can discard invalid local edits without saving them first", async () => {
+    const fetchMock = vi.fn(async (_url: string, options: RequestInit) => options.method === "DELETE" ? response({ deleted: true }) : response({ error: "Invalid draft" }, 400));
+    vi.stubGlobal("fetch", fetchMock);
+    render(<ProgramWorkspace {...props} />);
+    rename("x".repeat(141));
+    fireEvent.click(screen.getByRole("button", { name: "Delete draft" }));
+    fireEvent.click(screen.getByRole("button", { name: "Delete draft" }));
+    await waitFor(() => expect(router.push).toHaveBeenCalledWith("/programs"));
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(fetchMock.mock.calls[0][1].method).toBe("DELETE");
+  });
+  it("waits for an in-flight save before deleting and freezes further edits", async () => {
+    let finishSave!: (result: Response) => void;
+    const fetchMock = vi.fn().mockImplementationOnce(() => new Promise<Response>(resolve => { finishSave = resolve; })).mockResolvedValue(response({ deleted: true }));
+    vi.stubGlobal("fetch", fetchMock);
+    render(<ProgramWorkspace {...props} />);
+    rename("Remove this draft");
+    fireEvent.click(screen.getByRole("button", { name: "Save now" }));
+    fireEvent.click(screen.getByRole("button", { name: "Delete draft" }));
+    fireEvent.click(screen.getByRole("button", { name: "Delete draft" }));
+    expect(screen.getByLabelText("Program name")).toBeDisabled();
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    await act(async () => finishSave(response({ revision: 2 })));
+    await waitFor(() => expect(router.push).toHaveBeenCalledWith("/programs"));
+    expect(fetchMock).toHaveBeenLastCalledWith(`/api/program-drafts/${id}`, expect.objectContaining({ method: "DELETE", body: JSON.stringify({ expectedRevision: 2 }) }));
+    expect(localStorage.getItem(`magni:program-draft:7:${id}`)).toBeNull();
+  });
+  it("retries an uncertain deletion without trying to save to the removed draft", async () => {
+    const fetchMock = vi.fn().mockRejectedValueOnce(new Error("Response lost")).mockResolvedValue(response({ deleted: true }));
+    vi.stubGlobal("fetch", fetchMock);
+    render(<ProgramWorkspace {...props} />);
+    fireEvent.click(screen.getByRole("button", { name: "Delete draft" }));
+    fireEvent.click(screen.getByRole("button", { name: "Delete draft" }));
+    expect(await screen.findByRole("alert")).toHaveTextContent("Response lost");
+    fireEvent.click(screen.getByRole("button", { name: "Delete draft" }));
+    await waitFor(() => expect(router.push).toHaveBeenCalledWith("/programs"));
+    expect(fetchMock.mock.calls[0]).toEqual(fetchMock.mock.calls[1]);
+    expect(fetchMock.mock.calls[0][1].method).toBe("DELETE");
+  });
+  it("visibly distinguishes undo from navigation and reverses only the last edit", () => {
+    render(<ProgramWorkspace {...props} />);
+    const undo = screen.getByRole("button", { name: "Undo last edit" });
+    expect(undo).toHaveTextContent("Undo");
+    expect(undo).toBeDisabled();
+    rename("Changed name");
+    fireEvent.click(undo);
+    expect(screen.getByLabelText("Program name")).toHaveValue(document.name);
+    expect(router.push).not.toHaveBeenCalled();
+    expect(screen.getByRole("link", { name: "Back to programs" })).toHaveAttribute("href", "/programs");
+  });
   it("retains the activation action after an incomplete success response and retries safely", async () => {
     const activationReply = vi.fn().mockResolvedValueOnce(response({})).mockResolvedValueOnce(response({ programId: 42 }));
     const fetchMock = vi.fn(async (url: string, options: RequestInit) => {

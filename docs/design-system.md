@@ -152,6 +152,14 @@ Week at left and the Week/Month switch at right; week arrows cross month
 boundaries. Keep Month as a separate grid. Icon controls stay at least 44px without taking
 space away from names when text is enlarged.
 
+**Program creation:** `/programs/editor` is a dedicated workspace designed for a
+desktop screen. At desktop widths, use a wide canvas with a week/day outline
+beside the editing panels and omit the phone bottom navigation. Keep Back to
+programs at the upper left. Undo must have a visible text label alongside Save;
+an arrow alone must not stand in for an editing action. Unfinished drafts expose
+Delete draft with a named confirmation, separately from published programs.
+Retain a contained phone fallback and the existing compact shell for training.
+
 **Chips / badges:** `rounded-full px-2.5 py-1 text-xs font-semibold`. Neutral =
 `bg-surface-muted text-muted`. Status = soft+ink pair (e.g. Active =
 `bg-success-soft text-success-ink` with a `bg-success` dot).

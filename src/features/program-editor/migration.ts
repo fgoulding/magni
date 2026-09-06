@@ -60,6 +60,10 @@ export function runProgramEditorMigration(db: Database.Database): void {
         PRIMARY KEY(user_id, request_key)
       );
     `);
+    const draftColumns = db.prepare("PRAGMA table_info(program_editor_drafts)").all() as { name: string }[];
+    if (!draftColumns.some(column => column.name === "deleted_at")) {
+      db.exec("ALTER TABLE program_editor_drafts ADD COLUMN deleted_at TEXT");
+    }
     const columns = db.prepare("PRAGMA table_info(program_runs)").all() as { name: string }[];
     if (!columns.some((column) => column.name === "editor_version_id")) {
       db.exec("ALTER TABLE program_runs ADD COLUMN editor_version_id INTEGER REFERENCES program_editor_versions(id)");

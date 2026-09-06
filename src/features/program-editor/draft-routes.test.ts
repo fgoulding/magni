@@ -32,6 +32,53 @@ async function create() {
   return { id, document };
 }
 describe("draft routes", () => {
+  it("deletes a draft, safely retries and prevents stale autosaves from resurrecting it", async () => {
+    const { id, document } = await create();
+    expect(typeof drafts.DELETE).toBe("function");
+    expect((await drafts.DELETE(request({ expectedRevision: 1 }, "DELETE"), context(id))).status).toBe(200);
+    expect((await drafts.GET(new Request("http://localhost"), context(id))).status).toBe(404);
+    expect((await drafts.DELETE(request({ expectedRevision: 1 }, "DELETE"), context(id))).status).toBe(200);
+    for (const expectedRevision of [0, 1]) {
+      expect((await drafts.PUT(request({ document, expectedRevision }), context(id))).status).toBe(410);
+    }
+    expect((await activation.POST(request({ expectedRevision: 1 }, "POST"), context(id))).status).toBe(404);
+    const repository = await import("./repository");
+    expect(repository.listEditorDrafts(user).some(draft => draft.id === id)).toBe(false);
+  });
+  it("refuses deletion after another editor saves or activates the draft", async () => {
+    const { id, document } = await create();
+    expect(typeof drafts.DELETE).toBe("function");
+    await drafts.PUT(request({ document: { ...document, name: "Newer edit" }, expectedRevision: 1 }), context(id));
+    expect((await drafts.DELETE(request({ expectedRevision: 1 }, "DELETE"), context(id))).status).toBe(409);
+    const active = await (await activation.POST(request({ expectedRevision: 2 }, "POST"), context(id))).json();
+    const result = await drafts.DELETE(request({ expectedRevision: 2 }, "DELETE"), context(id));
+    expect(result.status).toBe(409);
+    expect((await result.json()).code).toBe("activated_draft");
+    expect(db.prepare("SELECT id FROM programs WHERE id=?").get(active.programId)).toEqual({ id: active.programId });
+    expect((await drafts.GET(new Request("http://localhost"), context(id))).status).toBe(200);
+  });
+  it("checks ownership, authentication, origin and revision before deletion", async () => {
+    const { id } = await create();
+    expect(typeof drafts.DELETE).toBe("function");
+    authState.userId = other;
+    expect((await drafts.DELETE(request({ expectedRevision: 1 }, "DELETE"), context(id))).status).toBe(404);
+    authState.signedIn = false;
+    expect((await drafts.DELETE(request({ expectedRevision: 1 }, "DELETE"), context(id))).status).toBe(401);
+    authState.userId = user; authState.signedIn = true;
+    expect((await drafts.DELETE(request({ expectedRevision: 1 }, "DELETE", "https://foreign.test"), context(id))).status).toBe(403);
+    for (const body of [null, [], {}, { expectedRevision: -1 }, { expectedRevision: "1" }]) {
+      expect((await drafts.DELETE(request(body, "DELETE"), context(id))).status).toBe(400);
+    }
+    expect((await drafts.GET(new Request("http://localhost"), context(id))).status).toBe(200);
+  });
+  it("remembers deletion before a new draft's first autosave arrives", async () => {
+    authState.userId = user; authState.signedIn = true;
+    const id = crypto.randomUUID();
+    const removed = await drafts.DELETE(request({ expectedRevision: 0 }, "DELETE"), context(id));
+    expect(removed.status).toBe(200);
+    expect((await drafts.PUT(request({ expectedRevision: 0, document: makePreset("double", "2026-09-06") }), context(id))).status).toBe(410);
+    expect((await drafts.GET(new Request("http://localhost"), context(id))).status).toBe(404);
+  });
   it("saves, reads, safely retries and activates once", async () => {
     const {id,document} = await create();
     const saved = await (await drafts.GET(new Request("http://localhost"),context(id))).json();

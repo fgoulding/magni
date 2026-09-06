@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import { requireUser } from "@/lib/auth";
 import { assertSameOrigin, isBadRequest, isUnauthorized, jsonError, readJson } from "@/lib/api";
-import { EditorRepositoryError, getEditorDraft, saveEditorDraft } from "@/features/program-editor/repository";
+import { EditorRepositoryError, deleteEditorDraft, getEditorDraft, saveEditorDraft } from "@/features/program-editor/repository";
 
 type Context = { params: Promise<{ draftId: string }> };
 function failure(error: unknown) {
@@ -28,5 +28,17 @@ export async function PUT(request: Request, context: Context) {
     const body = await readJson<{ document: unknown; expectedRevision: number }>(request);
     if (!body || typeof body !== "object" || Array.isArray(body)) return jsonError("Invalid request body", 400);
     return NextResponse.json(saveEditorDraft({ userId: user.id, id: draftId, expectedRevision: body.expectedRevision, document: body.document }));
+  } catch (error) { return failure(error); }
+}
+
+export async function DELETE(request: Request, context: Context) {
+  try {
+    assertSameOrigin(request);
+    const user = await requireUser();
+    const { draftId } = await context.params;
+    const body = await readJson<{ expectedRevision: number }>(request);
+    if (!body || typeof body !== "object" || Array.isArray(body)) return jsonError("Invalid request body", 400);
+    deleteEditorDraft({ userId: user.id, id: draftId, expectedRevision: body.expectedRevision });
+    return NextResponse.json({ deleted: true });
   } catch (error) { return failure(error); }
 }

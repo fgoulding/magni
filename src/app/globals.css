@@ -1,6 +1,19 @@
 @import "tailwindcss" source(none);
 @source "../**/*.{ts,tsx}";
 
+/* The program workspace owns a desktop canvas; training pages retain their
+   compact shell. The route layout sets the marker before client hydration. */
+@media (min-width: 64rem) {
+  .app-shell:has([data-program-workspace]) {
+    max-width: 90rem;
+    padding-inline: 2rem;
+    padding-bottom: 2rem;
+  }
+  body:has([data-program-workspace]) .app-nav {
+    display: none;
+  }
+}
+
 :root {
   /* iOS computes dvh/env(safe-area-*) lazily on first paint, so AppHeight freezes
      the real values into these vars on mount. These are the SSR/pre-JS fallbacks. */

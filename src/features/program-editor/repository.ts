@@ -1,6 +1,6 @@
 import { db } from "@/lib/db";
 import type { PrescriptionSet } from "@/features/programs/occurrences";
-import { validateDocument, validateDraftStructure, type DocumentIssue, type ProgramDocumentV1, type ProgramExerciseV1, type ProgramSetV1 } from "./document";
+import { createBlankDocument, validateDocument, validateDraftStructure, type DocumentIssue, type ProgramDocumentV1, type ProgramExerciseV1, type ProgramSetV1 } from "./document";
 import type { ProgressionState } from "./progression";
 
 export class EditorRepositoryError extends Error {
@@ -10,7 +10,7 @@ export class EditorRepositoryError extends Error {
   }
 }
 export type EditorDraft = {
-  id: string; revision: number; document: ProgramDocumentV1; activatedProgramId: number | null; updatedAt: string;
+  id: string; revision: number; document: ProgramDocumentV1; activatedProgramId: number | null; published: boolean; updatedAt: string;
 };
 export type EditorActivation = { programId: number; runId: number; versionId: number; draftId: string };
 export type EditorSetMetadata = {
@@ -20,24 +20,47 @@ export type EditorSetMetadata = {
   revisionId?: number; definitionProgressionKey?: string;
 };
 export type EditorPrescriptionSet = PrescriptionSet & { editor: EditorSetMetadata };
-type DraftRow = { id: string; user_id: number; revision: number; document_json: string; updated_at: string; activated_program_id: number | null };
+type DraftRow = { id: string; user_id: number; revision: number; document_json: string; updated_at: string; activated_program_id: number | null; version_id: number | null; deleted_at: string | null };
 
 function stableJson(value: unknown): string {
   return JSON.stringify(value, (_key, row) => row && typeof row === "object" && !Array.isArray(row)
     ? Object.fromEntries(Object.keys(row).sort().map((key) => [key, row[key]])) : row);
 }
 function asDraft(row: DraftRow): EditorDraft {
-  return { id: row.id, revision: row.revision, document: JSON.parse(row.document_json), activatedProgramId: row.activated_program_id, updatedAt: row.updated_at };
+  return { id: row.id, revision: row.revision, document: JSON.parse(row.document_json), activatedProgramId: row.activated_program_id, published: row.version_id !== null, updatedAt: row.updated_at };
 }
-const draftSelect = `SELECT d.*, v.program_id AS activated_program_id FROM program_editor_drafts d
+const draftSelect = `SELECT d.*, v.program_id AS activated_program_id, v.id AS version_id FROM program_editor_drafts d
   LEFT JOIN program_editor_versions v ON v.draft_id = d.id`;
 
 export function getEditorDraft(userId: number, id: string): EditorDraft | null {
-  const row = db.prepare(`${draftSelect} WHERE d.id = ? AND d.user_id = ?`).get(id, userId) as DraftRow | undefined;
+  const row = db.prepare(`${draftSelect} WHERE d.id = ? AND d.user_id = ? AND d.deleted_at IS NULL`).get(id, userId) as DraftRow | undefined;
   return row ? asDraft(row) : null;
 }
 export function listEditorDrafts(userId: number): EditorDraft[] {
-  return (db.prepare(`${draftSelect} WHERE d.user_id = ? ORDER BY d.updated_at DESC, d.id`).all(userId) as DraftRow[]).map(asDraft);
+  return (db.prepare(`${draftSelect} WHERE d.user_id = ? AND d.deleted_at IS NULL ORDER BY d.updated_at DESC, d.id`).all(userId) as DraftRow[]).map(asDraft);
+}
+
+export function isEditorDraftDeleted(userId: number, id: string): boolean {
+  return !!db.prepare("SELECT 1 FROM program_editor_drafts WHERE id = ? AND user_id = ? AND deleted_at IS NOT NULL").get(id, userId);
+}
+
+/** Retain the identity so a delayed save or an old editor URL cannot recreate it. */
+export function deleteEditorDraft(input: { userId: number; id: string; expectedRevision: number }): void {
+  if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(input.id)) throw new EditorRepositoryError(400, "invalid_id", "Draft ID must be a UUID.");
+  if (!Number.isSafeInteger(input.expectedRevision) || input.expectedRevision < 0) throw new EditorRepositoryError(400, "invalid_revision", "Expected revision must be a nonnegative integer.");
+  db.transaction(() => {
+    const current = db.prepare(`${draftSelect} WHERE d.id = ?`).get(input.id) as DraftRow | undefined;
+    if (current && current.user_id !== input.userId) throw new EditorRepositoryError(404, "not_found", "Draft not found.");
+    if (!current && input.expectedRevision === 0) {
+      db.prepare("INSERT INTO program_editor_drafts(id,user_id,document_json,revision,deleted_at) VALUES (?,?,?,1,datetime('now'))").run(input.id, input.userId, stableJson(createBlankDocument()));
+      return;
+    }
+    if (!current) throw new EditorRepositoryError(404, "not_found", "Draft not found.");
+    if (current.deleted_at) return;
+    if (current.version_id !== null) throw new EditorRepositoryError(409, "activated_draft", "This draft has been activated. Manage the program from Programs.");
+    if (current.revision !== input.expectedRevision) throw new EditorRepositoryError(409, "revision_conflict", "This draft changed in another tab or device. Reload it before deleting.");
+    db.prepare("UPDATE program_editor_drafts SET deleted_at = datetime('now'), updated_at = datetime('now') WHERE id = ? AND user_id = ?").run(input.id, input.userId);
+  }).immediate();
 }
 
 /** Client-generated draft identity and compare-and-swap revisions make both
@@ -51,6 +74,7 @@ export function saveEditorDraft(input: { userId: number; id: string; expectedRev
   return db.transaction(() => {
     const current = db.prepare(`${draftSelect} WHERE d.id = ?`).get(input.id) as DraftRow | undefined;
     if (current && current.user_id !== input.userId) throw new EditorRepositoryError(404, "not_found", "Draft not found.");
+    if (current?.deleted_at) throw new EditorRepositoryError(410, "draft_deleted", "This draft was deleted. Save your work as a copy to keep it.");
     if (current?.document_json === json) return asDraft(current);
     if ((current?.revision ?? 0) !== input.expectedRevision) throw new EditorRepositoryError(409, "revision_conflict", "This draft changed in another tab or device. Reload it before saving.");
     if (current) db.prepare("UPDATE program_editor_drafts SET document_json = ?, revision = revision + 1, updated_at = datetime('now') WHERE id = ? AND user_id = ?").run(json, input.id, input.userId);

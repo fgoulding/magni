@@ -2,6 +2,7 @@ import Link from "next/link";
 import { CalendarDays, Copy, Dumbbell, Library, Plus, Trash2 } from "lucide-react";
 import { redirect } from "next/navigation";
 import { DeleteButton } from "@/components/DeleteButton";
+import { ProgramDraftList } from "@/components/ProgramDraftList";
 import { ProgramActiveToggle } from "@/components/ProgramActiveToggle";
 import { ProgramHoldDialog } from "@/components/ProgramHoldForm";
 import { TrainingMaxesModal } from "@/components/TrainingMaxesModal";
@@ -153,8 +154,8 @@ export default async function ProgramsPage() {
         </div>
       </header>
 
-      <section className="card p-4"><h2 className="display text-2xl">Design your training</h2><p className="mt-2 text-sm leading-6 text-muted">Start blank or customize a preset. Build weeks, edit every set, and preview your progression before activation.</p><div className="mt-3 flex flex-wrap gap-2"><Link href="/programs/editor/new" className="touch-target inline-flex items-center rounded-xl bg-brand px-4 text-sm font-semibold text-white">Custom program</Link><Link href="/programs/new" className="touch-target inline-flex items-center rounded-xl border border-line px-4 text-sm font-semibold">Original training systems</Link></div></section>
-      {drafts.length ? <section className="flex flex-col gap-3"><h2 className="eyebrow text-xs text-faint">Your drafts</h2>{drafts.map(draft => <Link key={draft.id} href={`/programs/editor/${draft.id}`} className="card touch-target flex items-center justify-between gap-3 p-4"><div className="min-w-0"><h3 className="display truncate text-xl">{draft.document.name || "Untitled program"}</h3><p className="mt-1 text-xs text-muted">{draft.document.weeks.length} week(s) · {draft.activatedProgramId ? "Active version saved" : "Draft"}</p></div><span className="text-sm font-semibold text-brand-strong">Open</span></Link>)}</section> : null}
+      <section className="card p-4"><h2 className="display text-2xl">Program workspace</h2><p className="mt-2 text-sm leading-6 text-muted">Design your programs on a larger screen, then train here on your phone.</p><div className="mt-3 flex flex-wrap gap-2"><Link prefetch={false} href="/programs/editor" className="touch-target inline-flex items-center rounded-xl bg-brand px-4 text-sm font-semibold text-white">Open workspace</Link><Link prefetch={false} href="/programs/editor/new" className="touch-target inline-flex items-center rounded-xl border border-line px-4 text-sm font-semibold">Custom program</Link><Link href="/programs/new" className="touch-target inline-flex items-center rounded-xl border border-line px-4 text-sm font-semibold">Original training systems</Link></div></section>
+      <ProgramDraftList userId={user.id} drafts={drafts} />
       {library.definitions.length === 0 ? (
         <section className="flex min-h-80 flex-col items-center justify-center rounded-2xl border border-dashed border-line px-6 text-center">
           <Library aria-hidden="true" className="text-brand/40" size={34} />

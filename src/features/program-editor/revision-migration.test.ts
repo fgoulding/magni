@@ -29,17 +29,22 @@ it("adds reviewed-edit revisions beside populated pre-revision editor tables wit
       INSERT INTO program_editor_progression_events VALUES(1,1,'[{"result":"held"}]','2026-09-02');
     `);
     const tables=["programs","program_runs","sessions","session_sets","program_editor_drafts","program_editor_versions","program_editor_progression_state","program_editor_progression_events"];
-    const snapshot=()=>Object.fromEntries(tables.map(table=>[table,db.prepare(`SELECT * FROM ${table} ORDER BY rowid`).all()]));
+    const originalColumns = new Map(tables.map(table => [table, (db.prepare(`PRAGMA table_info(${table})`).all() as { name: string }[]).map(column => column.name).join(",")]));
+    const snapshot=()=>Object.fromEntries(tables.map(table=>[table,db.prepare(`SELECT ${originalColumns.get(table)} FROM ${table} ORDER BY rowid`).all()]));
     const before=snapshot();
     expect(db.prepare("SELECT name FROM sqlite_master WHERE name='program_editor_revisions'").get()).toBeUndefined();
     runProgramEditorMigration(db);
     expect(snapshot()).toEqual(before);
+    expect(db.prepare("SELECT deleted_at FROM program_editor_drafts").all()).toEqual([{ deleted_at: null }]);
     db.prepare("INSERT INTO program_editor_revisions(user_id,program_id,draft_id,source_revision,scope,document_json,preview_json) VALUES (1,1,'saved-draft',4,'occurrence',?,?)").run('{"name":"Reviewed version"}','{"affected":[1]}');
     db.prepare("INSERT INTO program_editor_change_requests VALUES (1,'safe-retry','{}','{\"changed\":1}')").run();
     const revision=db.prepare("SELECT * FROM program_editor_revisions").all();
     const requests=db.prepare("SELECT * FROM program_editor_change_requests").all();
+    // A previous deletion must stay deleted when startup replays the migration.
+    db.prepare("UPDATE program_editor_drafts SET deleted_at = '2026-09-06' WHERE id = 'saved-draft'").run();
     runProgramEditorMigration(db);runProgramEditorMigration(db);
     expect(snapshot()).toEqual(before);
+    expect(db.prepare("SELECT deleted_at FROM program_editor_drafts").all()).toEqual([{ deleted_at: "2026-09-06" }]);
     expect(db.prepare("SELECT * FROM program_editor_revisions").all()).toEqual(revision);
     expect(db.prepare("SELECT * FROM program_editor_change_requests").all()).toEqual(requests);
     expect(()=>db.prepare("UPDATE program_editor_revisions SET preview_json='{}'").run()).toThrow(/immutable/);
