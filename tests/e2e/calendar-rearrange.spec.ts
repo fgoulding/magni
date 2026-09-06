@@ -1,5 +1,5 @@
 import { test, expect, type Page, type Locator } from "@playwright/test";
-import { registerViaApi } from "./helpers";
+import { goToTab, registerViaApi } from "./helpers";
 
 async function fixture(page:Page) {
   await registerViaApi(page,"calendar-rearrange");
@@ -10,8 +10,16 @@ async function fixture(page:Page) {
   }
   expect((await page.request.put(`/api/programs/${program.id}`,{data:{scheduleWeekdays:[0,1,2,3,4,5,6],startDate:"2090-06-05"}})).ok()).toBe(true);
   await page.goto("/calendar?month=2090-06&date=2090-06-05");
-  await expect(page.getByRole("heading",{name:"Week",exact:true})).toBeVisible();
+  await expect(page.getByRole("heading",{name:"Jun 5 – Jun 11",exact:true})).toBeVisible();
 }
+// The global Undo control was intentionally removed. Reset independent UI cases
+// through the existing API, retaining its durable-operation regression coverage.
+async function resetCalendarChange(page:Page, saved:Promise<{operationId:string}>) {
+  const {operationId}=await saved;expect(operationId).toBeTruthy();
+  expect((await page.request.post("/api/calendar/actions",{data:{type:"undo",operationId,requestKey:crypto.randomUUID()}})).ok()).toBe(true);
+  await page.reload();
+}
+const calendarResponse=(page:Page)=>page.waitForResponse(response=>response.url().endsWith("/api/calendar/actions")&&response.request().method()==="POST").then(async response=>{expect(response.ok()).toBe(true);return await response.json() as {operationId:string};});
 async function dispatchTouch(handle:Locator,type:"touchstart"|"touchmove"|"touchend",point:{x:number;y:number}) {
   await handle.evaluate((element,{type,point})=>{
     const touch={identifier:1,target:element,clientX:point.x,clientY:point.y};
@@ -23,7 +31,7 @@ async function dispatchTouch(handle:Locator,type:"touchstart"|"touchmove"|"touch
     element.dispatchEvent(event);
   },{type,point});
 }
-test("Calendar move/swap, reload undo, duplicate, skip, group preview and each-day Add",async({page},info)=>{
+test("Calendar move/swap, duplicate, skip and each-day Add with durable API undo",async({page},info)=>{
   const errors:string[]=[];page.on("pageerror",error=>errors.push(error.message));
   page.on("console",entry=>{if(entry.type()==="error")errors.push(entry.text());});
   await fixture(page);
@@ -41,33 +49,28 @@ test("Calendar move/swap, reload undo, duplicate, skip, group preview and each-d
   await page.getByRole("dialog").getByRole("button",{name:"Tue, Jun 6",exact:true}).click();
   await expect(page.getByRole("dialog").getByText(/already has Upper/)).toBeVisible();
   await page.screenshot({path:info.outputPath("calendar-occupied-choice.png"),animations:"disabled"});
+  const swapped=calendarResponse(page);
   await page.getByRole("button",{name:"Swap with Upper",exact:true}).click();
   await expect(day("2090-06-06").locator(`[data-occurrence-id="${id}"]`)).toBeVisible();
+  await swapped;
   await page.reload();
-  await page.getByRole("button",{name:"Undo last change"}).click();
+  await resetCalendarChange(page,swapped);
   await expect(day("2090-06-05").locator(`[data-occurrence-id="${id}"]`)).toBeVisible();
   await first.getByRole("button",{name:"More options for Lower"}).click();
   await page.getByRole("button",{name:"Duplicate workout"}).click();
+  const duplicated=calendarResponse(page);
   await page.getByRole("dialog").getByRole("button",{name:"Fri, Jun 9",exact:true}).click();
   await expect(day("2090-06-09").getByRole("heading",{name:"Lower",exact:true})).toBeVisible();
-  await page.getByRole("button",{name:"Undo last change"}).click();
+  await resetCalendarChange(page,duplicated);
   await expect(day("2090-06-09").locator("article")).toHaveCount(0);
   await first.getByRole("button",{name:"More options for Lower"}).click();
+  const skipped=calendarResponse(page);
   await page.getByRole("button",{name:"Skip this workout"}).click();
   await expect(first.getByRole("link",{name:"Skipped: Calendar strength - Lower on 2090-06-05",exact:true})).toBeVisible();
-  await page.getByRole("button",{name:"Undo last change"}).click();
+  await resetCalendarChange(page,skipped);
   await expect(first.getByRole("link",{name:"Scheduled: Calendar strength - Lower on 2090-06-05",exact:true})).toBeVisible();
-  await page.getByRole("button",{name:"Select workouts",exact:true}).click();
-  await page.getByRole("checkbox",{name:"Select Lower on 2090-06-05"}).check();
-  await page.getByRole("checkbox",{name:"Select Upper on 2090-06-06"}).check();
-  await page.getByRole("button",{name:"Shift 2 selected"}).click();
-  await page.getByRole("button",{name:"Preview shift"}).click();
-  await expect(page.getByRole("dialog").getByText("Mon, Jun 5 → Mon, Jun 12")).toBeVisible();
-  await page.screenshot({path:info.outputPath("calendar-shift-preview.png"),animations:"disabled"});
-  await page.getByRole("button",{name:"Confirm shift"}).click();
-  await expect(first).toHaveCount(0);
-  await page.getByRole("button",{name:"Undo last change"}).click();
-  await expect(first).toBeVisible();
+  await expect(page.getByRole("button",{name:"Undo last change"})).toHaveCount(0);
+  await expect(page.getByRole("button",{name:"Select workouts",exact:true})).toHaveCount(0);
   await page.evaluate(()=>{document.documentElement.dataset.theme="dark";});
   await page.screenshot({path:info.outputPath("calendar-week-dark.png"),fullPage:true,animations:"disabled"});
   expect(await page.evaluate(()=>document.documentElement.scrollWidth<=window.innerWidth)).toBe(true);
@@ -174,7 +177,19 @@ test("Week uses one compact header and opens workout details, with a separate Mo
   await expect(lower.getByText("Calendar strength",{exact:true})).toHaveCount(0);
   await expect(lower.getByText("Scheduled",{exact:true})).toHaveCount(0);
   await expect(lower.getByRole("heading",{name:"Lower",exact:true})).toBeVisible();
-  await expect(page.getByRole("heading", {name:"Week", exact:true})).toBeVisible();
+  await expect(page.getByRole("heading", {name:"Week", exact:true})).toHaveCount(0);
+  const heading=page.getByRole("heading", {name:"Jun 5 – Jun 11", exact:true});
+  await expect(heading).toBeVisible();
+  await expect(page.getByRole("button", {name:"Undo last change", exact:true})).toHaveCount(0);
+  await expect(page.getByRole("button", {name:"Select workouts", exact:true})).toHaveCount(0);
+  const headingBox=(await heading.boundingBox())!, switcherBox=(await switcher.boundingBox())!;
+  expect(Math.abs(headingBox.y+headingBox.height/2-switcherBox.y-switcherBox.height/2)).toBeLessThan(2);
+  const todayBox=(await page.getByRole("navigation",{name:"Week navigation",exact:true}).getByRole("link",{name:"Today",exact:true}).boundingBox())!;
+  for(const name of ["Previous week","Next week"]){
+    const arrow=(await page.getByRole("link",{name,exact:true}).boundingBox())!;
+    expect(Math.abs(todayBox.y-arrow.y)).toBeLessThan(2);
+    expect(arrow.width).toBeGreaterThanOrEqual(44);
+  }
   await expect(page.getByRole("link", {name:/^(Previous|Next) month$/})).toHaveCount(0);
   await expect(page.getByRole("link", {name:"Expand details", exact:true})).toHaveCount(0);
   await lower.locator("article a").click();
@@ -211,19 +226,25 @@ test("Week uses one compact header and opens workout details, with a separate Mo
   expect(await page.evaluate(()=>document.documentElement.scrollWidth<=window.innerWidth)).toBe(true);
   expect(await lower.getByRole("heading",{name:"Lower",exact:true}).evaluate(heading=>heading.getBoundingClientRect().height/parseFloat(getComputedStyle(heading).lineHeight))).toBeLessThanOrEqual(1.1);
   await page.screenshot({path:info.outputPath("calendar-week-collapsed-dark-large.png"),fullPage:true,animations:"disabled"});
-  await page.getByRole("button",{name:"Select workouts",exact:true}).click();
   const more=lower.getByRole("button",{name:"More options for Lower"});
   expect(await more.evaluate(button=>{
     const card=button.closest("article")!;
     return button.getBoundingClientRect().right-(card.getBoundingClientRect().right-parseFloat(getComputedStyle(card).paddingRight));
   })).toBeLessThanOrEqual(1);
-  await page.screenshot({path:info.outputPath("calendar-week-collapsed-selection-dark-large.png"),fullPage:true,animations:"disabled"});
-  await page.getByRole("button",{name:"Cancel selection",exact:true}).click();
+  await page.screenshot({path:info.outputPath("calendar-week-actions-dark-large.png"),fullPage:true,animations:"disabled"});
   await page.goto("/calendar?month=2090-06&date=2090-06-30");
   await page.getByRole("link", {name:"Next week", exact:true}).click();
   await expect(page).toHaveURL("/calendar?month=2090-07&date=2090-07-03");
   await switcher.getByRole("link", {name:"Month", exact:true}).click();
   await expect(page.getByRole("heading", {name:"July 2090", exact:true})).toBeVisible();
+  await switcher.getByRole("link",{name:"Week",exact:true}).click();
+  const today=page.getByRole("navigation",{name:"Week navigation",exact:true}).getByRole("link",{name:"Today",exact:true});
+  const todayDate=new URL((await today.getAttribute("href"))!,page.url()).searchParams.get("date");
+  await today.click();
+  await expect(page.locator(`[data-calendar-date="${todayDate}"]`)).toBeVisible();
+  await goToTab(page,"Today");
+  await goToTab(page,"Calendar");
+  await expect(page.getByRole("heading",{name:"Week",exact:true})).toHaveCount(0);
 });
 
 test("Calendar context survives resuming a manual planned session by its exact ID",async({page})=>{

@@ -16,7 +16,6 @@ import { db } from "@/lib/db";
 import { CalendarNavigation } from "@/components/CalendarNavigation";
 import { withCalendarReturn } from "@/features/calendar/navigation";
 import { CalendarAgenda } from "@/components/CalendarAgenda";
-import { latestCalendarOperation } from "@/features/calendar/calendar-service";
 
 type CalendarPageProps = {
   searchParams?: Promise<{ month?: string | string[]; date?: string | string[]; train?: string | string[]; workout?: string | string[]; view?: string | string[]; compact?: string | string[] }>;
@@ -65,6 +64,7 @@ type CalendarDayEventSummary = Readonly<{
 }>;
 
 const WEEKDAY_LABELS = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
+const WEEK_DATE_FORMATTER = new Intl.DateTimeFormat("en-US", { month: "short", day: "numeric" });
 const MONTH_FORMATTER = new Intl.DateTimeFormat("en-US", { month: "long", year: "numeric" });
 
 function parseMonth(value: string | string[] | undefined, now: Date): Date {
@@ -279,15 +279,15 @@ export default async function CalendarPage({ searchParams }: CalendarPageProps) 
   return (
     <div className="safe-x flex flex-col gap-4 py-5">
       <CalendarNavigation returnTo={returnTo} />
-      <header className="flex flex-wrap items-center justify-between gap-2">
-        <h1 className="display text-3xl">{view === "week" ? "Week" : MONTH_FORMATTER.format(monthStart)}</h1>
+      <header className="flex items-center justify-between gap-2">
+        <h1 className={`display min-w-0 ${view === "week" ? "text-2xl leading-tight" : "text-3xl"}`}>{view === "week" ? `${WEEK_DATE_FORMATTER.format(weekStart)} – ${WEEK_DATE_FORMATTER.format(weekEnd)}` : MONTH_FORMATTER.format(monthStart)}</h1>
         <nav aria-label="Calendar view" className="inline-flex shrink-0 rounded-xl border border-line bg-surface p-1">
           <Link prefetch={false} href={selectedHref} scroll={false} aria-current={view === "week" ? "page" : undefined} className={`touch-target inline-flex items-center justify-center rounded-lg px-4 text-sm font-semibold ${view === "week" ? "bg-brand-soft text-brand-strong" : "text-muted"}`}>Week</Link>
           <Link prefetch={false} href={`${selectedHref}&view=month`} scroll={false} aria-current={view === "month" ? "page" : undefined} className={`touch-target inline-flex items-center justify-center rounded-lg px-4 text-sm font-semibold ${view === "month" ? "bg-brand-soft text-brand-strong" : "text-muted"}`}>Month</Link>
         </nav>
       </header>
       <section aria-label="Week calendar" hidden={view !== "week"}>
-        <CalendarAgenda compact returnTo={returnTo} key={toLocalDateKey(weekStart)} events={weekEvents} weekStart={toLocalDateKey(weekStart)} today={todayKey} undoOperation={latestCalendarOperation(user.id)} />
+        <CalendarAgenda compact returnTo={returnTo} key={toLocalDateKey(weekStart)} events={weekEvents} weekStart={toLocalDateKey(weekStart)} today={todayKey} />
       </section>
 
       <section aria-label="Month calendar" hidden={view !== "month"} className="overflow-hidden rounded-xl border border-line bg-surface shadow-sm">

@@ -148,8 +148,9 @@ Today/date header with access to workout history.
 
 **Calendar:** Week is the default, with workout names and small status dots.
 Full prescriptions are available when opening a workout. Keep one header with
-Week at left and the Week/Month switch at right; week arrows cross month
-boundaries. Keep Month as a separate grid. Icon controls stay at least 44px without taking
+the week’s month/day date range at left and the Week/Month switch at right.
+Put Today and the week arrows together on the next row; arrows cross month
+boundaries. Omit global selection and undo controls from this compact toolbar. Keep Month as a separate grid. Icon controls stay at least 44px without taking
 space away from names when text is enlarged.
 
 **Program creation:** `/programs/editor` is a dedicated workspace designed for a
