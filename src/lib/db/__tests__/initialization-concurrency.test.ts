@@ -129,6 +129,44 @@ describe("database initialization under concurrent requests", () => {
     } finally { db.close(); }
   });
 
+  it("runs the draft deletion migration when opening a populated revision-three database", async () => {
+    const dbPath = databasePath();
+    const previousPath = process.env.DB_PATH;
+    const legacy = openDatabase(dbPath);
+    populateLegacy(legacy);
+    runMigrations(legacy);
+    legacy.exec("ALTER TABLE program_editor_drafts DROP COLUMN deleted_at");
+    legacy.prepare("INSERT INTO program_editor_drafts(id,user_id,document_json,revision) VALUES ('existing-draft',1,?,4)").run('{"name":"Existing draft"}');
+    legacy.pragma("user_version = 3");
+    const quote = (name: string) => `"${name.replaceAll('"', '""')}"`;
+    const tables = (legacy.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%' ORDER BY name").all() as { name: string }[])
+      .map(({ name }) => ({ name, columns: (legacy.pragma(`table_info(${quote(name)})`) as { name: string }[]).map(column => column.name) }));
+    const snapshot = (connection: Database.Database) => Object.fromEntries(tables.map(table => [table.name,
+      connection.prepare(`SELECT ${table.columns.map(quote).join(",")} FROM ${quote(table.name)}`).all().map(row => JSON.stringify(row)).sort(),
+    ]));
+    const original = snapshot(legacy);
+    legacy.close();
+    process.env.DB_PATH = dbPath;
+    vi.resetModules();
+    let initialized: typeof import("../index") | undefined;
+    try {
+      initialized = await import("../index");
+      expect((initialized.db.pragma("table_info(program_editor_drafts)") as { name: string }[]).map(column => column.name)).toContain("deleted_at");
+      expect(initialized.db.prepare("SELECT deleted_at FROM program_editor_drafts WHERE id='existing-draft'").get()).toEqual({ deleted_at: null });
+      expect(snapshot(initialized.db)).toEqual(original);
+      expect(initialized.db.pragma("user_version", { simple: true })).toBe(DATABASE_SCHEMA_REVISION);
+      expect(DATABASE_SCHEMA_REVISION).toBeGreaterThan(3);
+      expect(initialized.db.pragma("foreign_key_check")).toEqual([]);
+      expect(initialized.db.pragma("integrity_check", { simple: true })).toBe("ok");
+    } finally {
+      initialized?.db.close();
+      if (previousPath === undefined) delete process.env.DB_PATH;
+      else process.env.DB_PATH = previousPath;
+      vi.resetModules();
+      fs.rmSync(path.dirname(dbPath), { recursive: true, force: true });
+    }
+  });
+
   it("retries an interrupted current-revision repair on the next module initialization", async () => {
     const dbPath = databasePath();
     const previousPath = process.env.DB_PATH;

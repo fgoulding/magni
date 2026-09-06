@@ -9,7 +9,7 @@ import { runLegacyTemplateSnapshotMigration } from "@/features/training-template
  * the editor/calendar/history migration helpers. Revision 0 covers all releases
  * before migration tracking. Initialization may skip writes only at this exact
  * revision; a newer database requires its matching release, never a downgrade. */
-export const DATABASE_SCHEMA_REVISION = 3;
+export const DATABASE_SCHEMA_REVISION = 4;
 
 export function isDatabaseSchemaCurrent(db: Database.Database): boolean {
   const revision = db.pragma("user_version", { simple: true }) as number;
