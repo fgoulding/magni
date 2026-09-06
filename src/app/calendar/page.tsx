@@ -282,8 +282,8 @@ export default async function CalendarPage({ searchParams }: CalendarPageProps) 
       <header className="flex flex-wrap items-center justify-between gap-2">
         <h1 className="display text-3xl">{view === "week" ? "Week" : MONTH_FORMATTER.format(monthStart)}</h1>
         <nav aria-label="Calendar view" className="inline-flex shrink-0 rounded-xl border border-line bg-surface p-1">
-          <Link href={selectedHref} scroll={false} aria-current={view === "week" ? "page" : undefined} className={`touch-target inline-flex items-center justify-center rounded-lg px-4 text-sm font-semibold ${view === "week" ? "bg-brand-soft text-brand-strong" : "text-muted"}`}>Week</Link>
-          <Link href={`${selectedHref}&view=month`} scroll={false} aria-current={view === "month" ? "page" : undefined} className={`touch-target inline-flex items-center justify-center rounded-lg px-4 text-sm font-semibold ${view === "month" ? "bg-brand-soft text-brand-strong" : "text-muted"}`}>Month</Link>
+          <Link prefetch={false} href={selectedHref} scroll={false} aria-current={view === "week" ? "page" : undefined} className={`touch-target inline-flex items-center justify-center rounded-lg px-4 text-sm font-semibold ${view === "week" ? "bg-brand-soft text-brand-strong" : "text-muted"}`}>Week</Link>
+          <Link prefetch={false} href={`${selectedHref}&view=month`} scroll={false} aria-current={view === "month" ? "page" : undefined} className={`touch-target inline-flex items-center justify-center rounded-lg px-4 text-sm font-semibold ${view === "month" ? "bg-brand-soft text-brand-strong" : "text-muted"}`}>Month</Link>
         </nav>
       </header>
       <section aria-label="Week calendar" hidden={view !== "week"}>
@@ -314,7 +314,7 @@ export default async function CalendarPage({ searchParams }: CalendarPageProps) 
                 key={dateKey}
                 className={`min-h-24 min-w-0 border-b border-r border-line ${isToday ? "bg-brand-soft" : ""}`}
               >
-                <Link
+                <Link prefetch={false}
                   href={`${monthHref(monthStart)}&date=${dateKey}`}
                   scroll={false}
                   aria-label={`See week containing ${dateKey}`}
@@ -326,7 +326,7 @@ export default async function CalendarPage({ searchParams }: CalendarPageProps) 
                 </Link>
                 <div className="flex flex-wrap justify-center gap-0" aria-label={`${dateKey} workouts`}>
                   {dayEvents.map((event) => (
-                    <Link
+                    <Link prefetch={false}
                       key={event.key}
                       href={`${calendarHref(monthStart, event.key)}${viewSuffix}`}
                       scroll={false}
@@ -369,7 +369,7 @@ export default async function CalendarPage({ searchParams }: CalendarPageProps) 
                 <h2 id="calendar-workout-title" className="display mt-1 text-2xl">{selectedEvent.programName}</h2>
                 <p className="mt-0.5 text-sm text-muted">{modalDateLine(selectedEvent)}</p>
               </div>
-              <Link
+              <Link prefetch={false}
                 href={returnTo}
                 scroll={false}
                 aria-label="Close workout"
@@ -383,12 +383,12 @@ export default async function CalendarPage({ searchParams }: CalendarPageProps) 
                 <SessionRecapView recap={sessionRecap} />
               </div>
             ) : null}
-            {selectedEvent.sessionId && selectedEvent.kind === "in_progress" ? <Link href={withCalendarReturn(`/workouts/${selectedEvent.sessionId}`, returnTo)} className="touch-target m-4 inline-flex items-center justify-center rounded-xl bg-brand px-4 py-3 font-semibold text-white">Resume workout</Link> : selectedEvent.sessionId && selectedEvent.kind !== "scheduled" ? (
+            {selectedEvent.sessionId && selectedEvent.kind === "in_progress" ? <Link prefetch={false} href={withCalendarReturn(`/workouts/${selectedEvent.sessionId}`, returnTo)} className="touch-target m-4 inline-flex items-center justify-center rounded-xl bg-brand px-4 py-3 font-semibold text-white">Resume workout</Link> : selectedEvent.sessionId && selectedEvent.kind !== "scheduled" ? (
               <section className="px-4 pb-4">
                 <h3 className="display text-xl">Use this workout again</h3>
                 <p className="my-3 text-sm text-muted">Repeat the saved sets as a separate workout. The original program and its progression stay unchanged.</p>
                 <WorkoutReuse sessionId={selectedEvent.sessionId} name={[selectedEvent.programName,selectedEvent.dayName].filter(Boolean).join(" · ")} today={todayKey} returnTo={returnTo}/>
-                <Link href={withCalendarReturn(`/workouts/${selectedEvent.sessionId}`, returnTo)} className="touch-target mt-3 inline-flex items-center text-sm font-semibold text-brand-strong">View history and corrections</Link>
+                <Link prefetch={false} href={withCalendarReturn(`/workouts/${selectedEvent.sessionId}`, returnTo)} className="touch-target mt-3 inline-flex items-center text-sm font-semibold text-brand-strong">View history and corrections</Link>
               </section>
             ) : selectedEvent.programId && selectedEvent.dayId && selectedEvent.currentWeek && selectedEvent.currentDay ? (
               <WorkoutCard
@@ -411,7 +411,7 @@ export default async function CalendarPage({ searchParams }: CalendarPageProps) 
               />
             ) : (
               <div className="px-4 pb-4">
-                <Link
+                <Link prefetch={false}
                   href={withCalendarReturn(selectedEvent.sessionId ? `/workouts/${selectedEvent.sessionId}` : "/workouts", returnTo)}
                   className="touch-target inline-flex w-full items-center justify-center rounded-xl bg-foreground px-4 text-sm font-medium text-background"
                 >

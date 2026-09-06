@@ -37,7 +37,7 @@ export function BottomNav() {
           const Icon = tab.Icon;
 
           return (
-            <Link
+            <Link prefetch={false}
               key={tab.href}
               href={tab.href}
               aria-current={active ? "page" : undefined}

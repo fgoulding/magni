@@ -40,7 +40,7 @@ function DragHandle({event}:{event:AgendaEvent}) {
 export function CalendarAgenda({events,weekStart,today,undoOperation,returnTo,compact=false}:{events:AgendaEvent[];weekStart:string;today:string;undoOperation?:string;returnTo?:string;compact?:boolean}) {
   const router=useRouter();
   const viewSuffix=compact?"":"&compact=0";
-  const addLink=(date:string)=><Link className={`${button} px-0 text-muted`} href={withCalendarReturn(`/workouts/new?date=${date}`,returnTo??null)} aria-label={`Add workout on ${date}`}><Plus aria-hidden="true" size={18}/></Link>;
+  const addLink=(date:string)=><Link prefetch={false} className={`${button} px-0 text-muted`} href={withCalendarReturn(`/workouts/new?date=${date}`,returnTo??null)} aria-label={`Add workout on ${date}`}><Plus aria-hidden="true" size={18}/></Link>;
   const [action,setAction]=useState<{event:AgendaEvent;type:"move"|"duplicate";date:string;conflicts?:Preview["conflicts"]}|null>(null);
   const [menu,setMenu]=useState<AgendaEvent|null>(null);
   const [selecting,setSelecting]=useState(false);
@@ -89,9 +89,9 @@ export function CalendarAgenda({events,weekStart,today,undoOperation,returnTo,co
   return <div className="flex flex-col gap-3" aria-label="Weekly workout agenda">
     <header className="flex items-center justify-between gap-2">
       <h2 className="display text-xl">{dateLabel(weekStart)} – {dateLabel(plus(weekStart,6))}</h2>
-      <div className="flex gap-2"><Link className={button} aria-label="Previous week" scroll={false} href={`/calendar?month=${plus(weekStart,-7).slice(0,7)}&date=${plus(weekStart,-7)}${viewSuffix}`}><ChevronLeft aria-hidden="true" size={18}/></Link><Link className={button} aria-label="Next week" scroll={false} href={`/calendar?month=${plus(weekStart,7).slice(0,7)}&date=${plus(weekStart,7)}${viewSuffix}`}><ChevronRight aria-hidden="true" size={18}/></Link></div>
+      <div className="flex gap-2"><Link prefetch={false} className={button} aria-label="Previous week" scroll={false} href={`/calendar?month=${plus(weekStart,-7).slice(0,7)}&date=${plus(weekStart,-7)}${viewSuffix}`}><ChevronLeft aria-hidden="true" size={18}/></Link><Link prefetch={false} className={button} aria-label="Next week" scroll={false} href={`/calendar?month=${plus(weekStart,7).slice(0,7)}&date=${plus(weekStart,7)}${viewSuffix}`}><ChevronRight aria-hidden="true" size={18}/></Link></div>
     </header>
-    <div className="flex flex-wrap gap-2"><Link className={button} scroll={false} href={`/calendar?date=${today}${viewSuffix}`}>Today</Link><button className={button} aria-pressed={selecting} onClick={()=>{setSelecting(!selecting);setSelected([]);}}>{selecting?"Cancel selection":"Select workouts"}</button>{selecting&&<button className={`${button} bg-foreground text-background`} disabled={!selected.length} onClick={()=>{setPreview(null);setShift(true);}}>Shift {selected.length} selected</button>}{undoId&&<button className={button} disabled={busy} onClick={()=>void send({type:"undo",operationId:undoId})}><Undo2 size={16}/>Undo last change</button>}</div>
+    <div className="flex flex-wrap gap-2"><Link prefetch={false} className={button} scroll={false} href={`/calendar?date=${today}${viewSuffix}`}>Today</Link><button className={button} aria-pressed={selecting} onClick={()=>{setSelecting(!selecting);setSelected([]);}}>{selecting?"Cancel selection":"Select workouts"}</button>{selecting&&<button className={`${button} bg-foreground text-background`} disabled={!selected.length} onClick={()=>{setPreview(null);setShift(true);}}>Shift {selected.length} selected</button>}{undoId&&<button className={button} disabled={busy} onClick={()=>void send({type:"undo",operationId:undoId})}><Undo2 size={16}/>Undo last change</button>}</div>
     {message&&<p role="status" className="rounded-xl border border-success-line bg-success-soft p-3 text-sm text-success-ink">{message}</p>}
     {error&&!action&&!menu&&!shift&&<p role="alert" className="rounded-xl bg-danger-soft p-3 text-sm text-danger-ink">{error}</p>}
     <p className="sr-only">Hold a grip to drag between days, or use Move to choose a date.</p>
@@ -101,7 +101,7 @@ export function CalendarAgenda({events,weekStart,today,undoOperation,returnTo,co
         <div className="flex flex-col gap-2">{events.filter(event=>event.date===date).map(event=><article className={`card min-w-0 ${compact?"p-2":"p-3"}`} key={event.key} data-occurrence-id={event.occurrenceId}>
           <div className={`flex gap-2 ${compact?"items-center":"items-start"}`}>
             {selecting&&event.occurrenceId&&event.status==="scheduled"&&date>=today&&<label className="touch-target flex shrink-0 items-center justify-center"><input type="checkbox" className="size-5 accent-brand" aria-label={`Select ${event.dayName} on ${date}`} checked={selected.includes(event.occurrenceId)} onChange={e=>setSelected(e.target.checked?[...selected,event.occurrenceId!]:selected.filter(id=>id!==event.occurrenceId))}/></label>}
-            <Link href={`${event.href}&date=${date}${viewSuffix}`} scroll={false} aria-label={`${event.title} on ${date}`} className={`touch-target min-w-0 flex-1 ${compact?"flex items-center gap-2":""}`}>
+            <Link prefetch={false} href={`${event.href}&date=${date}${viewSuffix}`} scroll={false} aria-label={`${event.title} on ${date}`} className={`touch-target min-w-0 flex-1 ${compact?"flex items-center gap-2":""}`}>
               {compact&&<span aria-hidden="true" className={`size-2 shrink-0 rounded-full ${event.status==="completed"?"bg-success":event.status==="skipped"?"bg-muted":"bg-brand"}`}/>}
               {!compact&&<p className="truncate text-xs font-medium text-muted">{event.programName||"Workout"}{event.currentWeek?` · Week ${event.currentWeek}`:""}</p>}
               <h4 className={`display break-words ${compact?"min-w-0 text-xl":"mt-0.5 text-2xl"}`}>{event.dayName||"Quick workout"}</h4>
