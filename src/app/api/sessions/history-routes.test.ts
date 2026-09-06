@@ -76,3 +76,21 @@ it("retains server values on stale actual updates and allows an identical lost-r
   expect((await setRoute.PUT(req(body), context(session.id))).status).toBe(200);
   expect((await (await detail.GET(req(), context(session.id))).json()).sets[0].actual_reps).toBe(10);
 });
+
+it("returns the current user date while preserving a start retried after midnight", async () => {
+  vi.useFakeTimers({ toFake: ["Date"] });
+  try {
+    vi.setSystemTime(new Date("2090-01-01T20:00:00Z"));
+    cookie.token = auth.createSession(userId).token;
+    const intent = { newWorkout: true, requestKey: crypto.randomUUID() };
+    const original = await (await root.POST(req(intent))).json();
+    expect(original).toMatchObject({ date: "2090-01-01", currentDate: "2090-01-01" });
+    vi.setSystemTime(new Date("2090-01-02T20:00:00Z"));
+    const retry = await (await root.POST(req(intent))).json();
+    expect(retry).toMatchObject({ id: original.id, date: "2090-01-01", currentDate: "2090-01-02" });
+    expect(db.db.prepare("SELECT COUNT(*) n FROM sessions WHERE id=?").get(original.id)).toEqual({ n: 1 });
+  } finally {
+    vi.useRealTimers();
+    cookie.token = auth.createSession(userId).token;
+  }
+});

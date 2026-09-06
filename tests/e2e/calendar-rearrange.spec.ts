@@ -10,7 +10,7 @@ async function fixture(page:Page) {
   }
   expect((await page.request.put(`/api/programs/${program.id}`,{data:{scheduleWeekdays:[0,1,2,3,4,5,6],startDate:"2090-06-05"}})).ok()).toBe(true);
   await page.goto("/calendar?month=2090-06&date=2090-06-05");
-  await expect(page.getByRole("heading",{name:"June 2090",exact:true})).toBeVisible();
+  await expect(page.getByRole("heading",{name:"Week",exact:true})).toBeVisible();
 }
 async function dispatchTouch(handle:Locator,type:"touchstart"|"touchmove"|"touchend",point:{x:number;y:number}) {
   await handle.evaluate((element,{type,point})=>{
@@ -116,13 +116,19 @@ test("Calendar retry keeps the same command ID after a lost save response",async
   expect(requests).toHaveLength(2);expect(requests[0]).toBe(requests[1]);
 });
 
-test("Calendar Add returns to the selected week and departure scroll",async({page})=>{
+test("Calendar Add returns to the selected week and departure scroll",async({page},info)=>{
   await fixture(page);
   const returnTo="/calendar?month=2090-06&date=2090-06-05";
   const add=page.getByRole("link",{name:"Add workout on 2090-06-11"});
   await add.scrollIntoViewIfNeeded();
-  const before=await page.evaluate(()=>window.scrollY);
+  // Hydration can reveal the iPhone install hint after scrolling into view.
+  // Capture the actual departure tap, including any browser click positioning.
+  await add.evaluate(link=>link.addEventListener("click",()=>sessionStorage.setItem("e2e.calendar.departureScroll",String(window.scrollY)),{once:true}));
   await add.click();
+  const recorded=await page.evaluate(()=>sessionStorage.getItem("e2e.calendar.departureScroll"));
+  expect(recorded).not.toBeNull();
+  const before=Number(recorded);
+  if(info.project.name==="mobile-safari")expect(before).toBeGreaterThan(0);
   await expect(page.getByLabel("Workout date",{exact:true})).toHaveValue("2090-06-11");
   await page.getByRole("link",{name:"Back to Calendar"}).click();
   await expect(page).toHaveURL(returnTo);
@@ -158,7 +164,7 @@ test("Calendar repeat keeps the original and returns from the new workout to its
   await expect(page).toHaveURL(new RegExp(`/workouts/${repeatedId}\\?returnTo=`));
 });
 
-test("Week is the default with collapsible details and a separate Month grid",async({page},info)=>{
+test("Week uses one compact header and opens workout details, with a separate Month grid",async({page},info)=>{
   await fixture(page);
   const switcher=page.getByRole("navigation",{name:"Calendar view"});
   await expect(switcher.getByRole("link",{name:"Week",exact:true})).toHaveAttribute("aria-current","page");
@@ -168,21 +174,21 @@ test("Week is the default with collapsible details and a separate Month grid",as
   await expect(lower.getByText("Calendar strength",{exact:true})).toHaveCount(0);
   await expect(lower.getByText("Scheduled",{exact:true})).toHaveCount(0);
   await expect(lower.getByRole("heading",{name:"Lower",exact:true})).toBeVisible();
-  await page.getByRole("link",{name:"Expand details",exact:true}).click();
-  await expect(lower.getByText(/Squat/)).toBeVisible();
-  const fullHeight=(await lower.boundingBox())!.height;
-  await page.getByRole("link",{name:"Collapse details",exact:true}).click();
-  await expect(lower.getByText(/Squat/)).toHaveCount(0);
-  await expect(lower.getByRole("heading",{name:"Lower",exact:true})).toBeVisible();
-  expect((await lower.boundingBox())!.height).toBeLessThan(fullHeight);
+  await expect(page.getByRole("heading", {name:"Week", exact:true})).toBeVisible();
+  await expect(page.getByRole("link", {name:/^(Previous|Next) month$/})).toHaveCount(0);
+  await expect(page.getByRole("link", {name:"Expand details", exact:true})).toHaveCount(0);
+  await lower.locator("article a").click();
+  await expect(page.getByRole("dialog")).toContainText("Squat");
+  await page.getByRole("link", {name:"Close workout", exact:true}).click();
   expect((await page.locator('[data-calendar-date="2090-06-10"]').boundingBox())!.height).toBeLessThan(75);
   await lower.getByRole("button",{name:"More options for Lower"}).click();
   await page.getByRole("dialog").getByRole("button",{name:"Move",exact:true}).click();
   await expect(page.getByRole("dialog").getByRole("button",{name:"Tue, Jun 6",exact:true})).toBeVisible();
   await page.getByRole("button",{name:"Close calendar action"}).click();
   await page.reload();
-  await expect(page.getByRole("link",{name:"Expand details",exact:true})).toBeVisible();
+  await expect(page.getByRole("link",{name:"Expand details",exact:true})).toHaveCount(0);
   await page.screenshot({path:info.outputPath("calendar-week-collapsed-light.png"),fullPage:true,animations:"disabled"});
+  await page.screenshot({path:info.outputPath("calendar-header-viewport.png"),animations:"disabled"});
   await switcher.getByRole("link",{name:"Month",exact:true}).click();
   const month=page.getByRole("region",{name:"Month calendar",exact:true});
   await expect(month).toBeVisible();
@@ -201,7 +207,7 @@ test("Week is the default with collapsible details and a separate Month grid",as
   await date.click();
   await expect(switcher.getByRole("link",{name:"Week",exact:true})).toHaveAttribute("aria-current","page");
   await expect(page).toHaveURL("/calendar?month=2090-06&date=2090-06-06");
-  await expect(page.getByRole("link",{name:"Expand details",exact:true})).toBeVisible();
+  await expect(page.getByRole("link",{name:"Expand details",exact:true})).toHaveCount(0);
   expect(await page.evaluate(()=>document.documentElement.scrollWidth<=window.innerWidth)).toBe(true);
   expect(await lower.getByRole("heading",{name:"Lower",exact:true}).evaluate(heading=>heading.getBoundingClientRect().height/parseFloat(getComputedStyle(heading).lineHeight))).toBeLessThanOrEqual(1.1);
   await page.screenshot({path:info.outputPath("calendar-week-collapsed-dark-large.png"),fullPage:true,animations:"disabled"});
@@ -213,8 +219,11 @@ test("Week is the default with collapsible details and a separate Month grid",as
   })).toBeLessThanOrEqual(1);
   await page.screenshot({path:info.outputPath("calendar-week-collapsed-selection-dark-large.png"),fullPage:true,animations:"disabled"});
   await page.getByRole("button",{name:"Cancel selection",exact:true}).click();
-  await page.getByRole("link",{name:"Expand details",exact:true}).click();
-  await expect(lower.getByText(/Squat/)).toBeVisible();
+  await page.goto("/calendar?month=2090-06&date=2090-06-30");
+  await page.getByRole("link", {name:"Next week", exact:true}).click();
+  await expect(page).toHaveURL("/calendar?month=2090-07&date=2090-07-03");
+  await switcher.getByRole("link", {name:"Month", exact:true}).click();
+  await expect(page.getByRole("heading", {name:"July 2090", exact:true})).toBeVisible();
 });
 
 test("Calendar context survives resuming a manual planned session by its exact ID",async({page})=>{
@@ -225,7 +234,7 @@ test("Calendar context survives resuming a manual planned session by its exact I
   const started=await page.request.post(`/api/programs/${program.id}/sessions`,{data:{dayId:day.id}});
   expect(started.ok()).toBe(true);const session=await started.json();
   expect(session.occurrence_id).toBeNull();
-  const returnTo=`/calendar?month=${session.date.slice(0,7)}&date=${session.date}&view=month&compact=0`;
+  const returnTo=`/calendar?month=${session.date.slice(0,7)}&date=${session.date}&view=month`;
   await page.goto(returnTo);
   await page.getByRole("region",{name:"Month calendar",exact:true}).getByRole("link",{name:`In progress: Manual strength - Bench, Deadlift on ${session.date}`,exact:true}).click();
   await page.getByRole("link",{name:"Resume workout",exact:true}).click();

@@ -168,7 +168,11 @@ export async function completeVisibleWorkout(page: Page, startButtonName = "Star
   await expect(page.getByRole("heading", { name: "Squat" })).toBeVisible();
 
   await page.getByRole("button", { name: "Log Set" }).click();
-  await expect(page.getByText("3,000 lb · 3 sets", { exact: true })).toBeVisible();
+  if (new URL(page.url()).pathname === "/today") {
+    await expect(page.getByText("3 sets saved", { exact: true })).toBeVisible();
+  } else {
+    await expect(page.getByText("3,000 lb · 3 sets", { exact: true })).toBeVisible();
+  }
   await expect(page.getByText("Logged", { exact: true })).toBeVisible();
   await page.getByRole("button", { name: "Finish Workout" }).click();
 
@@ -189,7 +193,7 @@ export async function completeVisibleWorkout(page: Page, startButtonName = "Star
 export async function goToTab(page: Page, name: "Today" | "Programs" | "Calendar" | "Stats" | "Settings"): Promise<void> {
   await page.getByRole("navigation").getByRole("link", { name }).click();
   if (name === "Calendar") {
-    await expect(page.getByText("Training calendar")).toBeVisible();
+    await expect(page.getByRole("heading", { name: "Week", exact: true })).toBeVisible();
     return;
   }
   if (name === "Stats") {

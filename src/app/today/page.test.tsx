@@ -27,35 +27,25 @@ beforeEach(() => { state.dashboard = { activeWorkouts: [], scheduledToday: [], m
 afterEach(cleanup);
 
 describe('focused Today layout', () => {
-  it('shows one today logger and compact exact-occurrence links for other today and overdue workouts', async () => {
+  it('shows one today logger and exact-occurrence links for other today workouts without overdue reminders', async () => {
     state.dashboard.scheduledToday = [row(1), row(2)];
     state.dashboard.missedWorkouts = [row(3, { scheduled_date: '2026-09-04' }), row(4, { scheduled_date: '2026-09-05' })];
     render(await TodayPage({}));
     expect(screen.getAllByRole('region', { name: 'Primary workout' })).toHaveLength(1);
     expect(screen.getByRole('region', { name: 'Primary workout' })).toHaveAttribute('data-occurrence-id', '1');
     expect(screen.getByRole('link', { name: /Program 2.*Day 2/ })).toHaveAttribute('href', '/calendar?month=2026-09&date=2026-09-06&workout=occurrence-2');
-    expect(screen.getByRole('link', { name: /Program 3.*Day 3/ })).toHaveAttribute('href', '/calendar?month=2026-09&date=2026-09-04&workout=occurrence-3');
+    expect(screen.queryByRole('link', { name: /Program 3.*Day 3/ })).not.toBeInTheDocument();
     expect(screen.getByRole('link', { name: 'Quick workout' })).toHaveAttribute('href', '/workouts/new?date=2026-09-06');
     expect(screen.queryByRole('button', { name: 'Quick workout' })).not.toBeInTheDocument();
   });
-  it('keeps an old active session primary and links every other active session by its exact ID', async () => {
-    state.dashboard.activeWorkouts = [row(5, { scheduled_date: '2026-09-01', today_session_id: 50 }), row(6, { scheduled_date: '2026-09-02', today_session_id: 60 })];
+  it('does not automatically resume old planned or unplanned workouts', async () => {
+    state.dashboard.activeWorkouts = [row(5, { started_date: '2026-08-10', scheduled_date: '2026-08-09', today_session_id: 50 })];
+    state.quick = { id: 80, name: 'Past quick session', date: '2026-09-01', unit: 'lb', revision: 0, sets: [] };
     state.dashboard.scheduledToday = [row(7)];
     render(await TodayPage({}));
-    expect(screen.getAllByRole('region', { name: 'Primary workout' })).toHaveLength(1);
-    expect(screen.getByRole('region', { name: 'Primary workout' })).toHaveAttribute('data-occurrence-id', '5');
-    expect(screen.getByRole('region', { name: 'Primary workout' })).toHaveAttribute('data-scheduled-date', '2026-09-01');
-    expect(screen.getByRole('link', { name: /Resume.*Program 6.*Day 6/ })).toHaveAttribute('href', '/workouts/60');
-    expect(screen.getByRole('link', { name: /Program 7.*Day 7/ })).toHaveAttribute('href', '/calendar?month=2026-09&date=2026-09-06&workout=occurrence-7');
-  });
-  it('makes a past unplanned session the only logger while planned active sessions remain resumable', async () => {
-    state.quick = { id: 80, name: 'Past quick session', date: '2026-09-01', unit: 'lb', revision: 0, sets: [] };
-    state.dashboard.activeWorkouts = [row(8, { today_session_id: 81 })];
-    state.dashboard.scheduledToday = [row(9)];
-    render(await TodayPage({}));
-    expect(screen.getByRole('region', { name: 'Active quick workout' })).toBeVisible();
-    expect(screen.queryByRole('region', { name: 'Primary workout' })).not.toBeInTheDocument();
-    expect(screen.getByRole('link', { name: /Resume.*Program 8.*Day 8/ })).toHaveAttribute('href', '/workouts/81');
+    expect(screen.getByRole('region', { name: 'Primary workout' })).toHaveAttribute('data-occurrence-id', '7');
+    expect(screen.queryByRole('region', { name: 'Active quick workout' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('link', { name: /Program 5/ })).not.toBeInTheDocument();
   });
   it('does not promote missed sessions into today and keeps the empty quick starter available', async () => {
     state.dashboard.missedWorkouts = [row(10, { scheduled_date: '2026-09-03' })];
@@ -63,7 +53,7 @@ describe('focused Today layout', () => {
     expect(screen.queryByRole('region', { name: 'Primary workout' })).not.toBeInTheDocument();
     expect(screen.getByText('No workout scheduled today')).toBeVisible();
     expect(screen.getByRole('button', { name: 'Quick workout' })).toBeVisible();
-    expect(screen.getByRole('link', { name: /Program 10.*Day 10/ })).toHaveAttribute('href', '/calendar?month=2026-09&date=2026-09-03&workout=occurrence-10');
+    expect(screen.queryByRole('link', { name: /Program 10.*Day 10/ })).not.toBeInTheDocument();
   });
   it('lets an owned unscheduled program be chosen without stacking its logger or exposing another user program', async () => {
     state.dashboard.otherActiveRuns = [row(11, { occurrence_id: undefined, scheduled_date: undefined }), row(12, { occurrence_id: undefined, scheduled_date: undefined })];
@@ -84,7 +74,7 @@ describe('focused Today layout', () => {
     expect(screen.getByRole('region', { name: 'Primary workout' })).toHaveAttribute('data-occurrence-id', '14');
   });
   it('keeps an active session primary even when an alternate program URL is requested', async () => {
-    state.dashboard.activeWorkouts = [row(15, { today_session_id: 150, scheduled_date: '2026-09-01' })];
+    state.dashboard.activeWorkouts = [row(15, { today_session_id: 150, started_date: '2026-09-06', scheduled_date: '2026-09-01' })];
     state.dashboard.otherActiveRuns = [row(16, { occurrence_id: undefined, scheduled_date: undefined })];
     render(await TodayPage({ searchParams: Promise.resolve({ program: '16' }) }));
     expect(screen.getAllByRole('region', { name: 'Primary workout' })).toHaveLength(1);
@@ -92,7 +82,7 @@ describe('focused Today layout', () => {
     expect(screen.getByRole('link', { name: /View program.*Program 16.*Day 16/ })).toHaveAttribute('href', '/programs/16');
   });
   it('resumes an unlinked manual active session by exact ID and keeps account details out of the training header', async () => {
-    state.dashboard.activeWorkouts = [row(17, { occurrence_id: undefined, today_session_id: 170, scheduled_date: undefined, last_session_date: '2026-09-01' })];
+    state.dashboard.activeWorkouts = [row(17, { occurrence_id: undefined, today_session_id: 170, started_date: '2026-09-06', scheduled_date: undefined, last_session_date: '2026-09-01' })];
     render(await TodayPage({}));
     expect(screen.getByRole('region', { name: 'Primary workout' })).toHaveAttribute('data-resume-session-id', '170');
     expect(screen.getByRole('region', { name: 'Primary workout' })).not.toHaveAttribute('data-scheduled-date');

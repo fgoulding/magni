@@ -81,10 +81,6 @@ function parseMonth(value: string | string[] | undefined, now: Date): Date {
   return new Date(year, month - 1, 1);
 }
 
-function addMonths(monthStart: Date, amount: number): Date {
-  return new Date(monthStart.getFullYear(), monthStart.getMonth() + amount, 1);
-}
-
 function monthHref(monthStart: Date): string {
   const month = String(monthStart.getMonth() + 1).padStart(2, "0");
   return `/calendar?month=${monthStart.getFullYear()}-${month}`;
@@ -233,9 +229,7 @@ export default async function CalendarPage({ searchParams }: CalendarPageProps) 
 
   const params = await searchParams;
   const view = params?.view === "month" ? "month" : "week";
-  const compact = params?.compact !== "0";
-  const compactSuffix = compact ? "" : "&compact=0";
-  const viewSuffix = `${view === "month" ? "&view=month" : ""}${compactSuffix}`;
+  const viewSuffix = view === "month" ? "&view=month" : "";
   const today = parseDateKey(userDateKey(user.id))!;
   const rawDate = Array.isArray(params?.date) ? params.date[0] : params?.date;
   const queryDate = rawDate ? parseDateKey(rawDate) : null;
@@ -268,7 +262,6 @@ export default async function CalendarPage({ searchParams }: CalendarPageProps) 
   for (const event of events) {
     eventsByDate.set(event.date, [...(eventsByDate.get(event.date) ?? []), event]);
   }
-  const hasEvents = events.length > 0;
   const leadingBlanks = monthStart.getDay();
   const todayKey = toLocalDateKey(today);
   const selectedDate = queryDate ?? (selectedEvent ? parseDateKey(selectedEvent.date)! : (today.getMonth() === monthStart.getMonth() && today.getFullYear() === monthStart.getFullYear() ? today : monthStart));
@@ -280,42 +273,21 @@ export default async function CalendarPage({ searchParams }: CalendarPageProps) 
   weekEnd.setDate(weekEnd.getDate() + 6);
   const weekScheduled = getScheduledEvents(user.id, weekStart, weekEnd);
   const weekEvents = [...weekScheduled, ...getHistoryEvents(user.id, weekStart, weekEnd)].sort((a,b) => a.date.localeCompare(b.date));
+  const visibleEvents = view === "week" ? weekEvents : events;
+
 
   return (
     <div className="safe-x flex flex-col gap-4 py-5">
       <CalendarNavigation returnTo={returnTo} />
-      <header className="flex items-center justify-between gap-3">
-        <div>
-          <p className="eyebrow text-[11px] text-faint">Training calendar</p>
-          <h1 className="display text-4xl">{MONTH_FORMATTER.format(monthStart)}</h1>
-        </div>
-        <div className="flex gap-2">
-          <Link
-            href={`${monthHref(addMonths(monthStart, -1))}${viewSuffix}`}
-            aria-label="Previous month"
-            className="touch-target inline-flex items-center justify-center rounded-xl border border-line bg-surface px-3 text-sm font-semibold text-muted transition-colors active:bg-surface-muted"
-          >
-            Prev
-          </Link>
-          <Link
-            href={`${monthHref(addMonths(monthStart, 1))}${viewSuffix}`}
-            aria-label="Next month"
-            className="touch-target inline-flex items-center justify-center rounded-xl border border-line bg-surface px-3 text-sm font-semibold text-muted transition-colors active:bg-surface-muted"
-          >
-            Next
-          </Link>
-        </div>
-      </header>
-
-      <div className="flex flex-wrap items-center justify-between gap-2">
-        <nav aria-label="Calendar view" className="inline-flex rounded-xl border border-line bg-surface p-1">
-          <Link href={`${selectedHref}${compactSuffix}`} scroll={false} aria-current={view === "week" ? "page" : undefined} className={`touch-target inline-flex items-center justify-center rounded-lg px-5 text-sm font-semibold ${view === "week" ? "bg-brand-soft text-brand-strong" : "text-muted"}`}>Week</Link>
-          <Link href={`${selectedHref}&view=month${compactSuffix}`} scroll={false} aria-current={view === "month" ? "page" : undefined} className={`touch-target inline-flex items-center justify-center rounded-lg px-5 text-sm font-semibold ${view === "month" ? "bg-brand-soft text-brand-strong" : "text-muted"}`}>Month</Link>
+      <header className="flex flex-wrap items-center justify-between gap-2">
+        <h1 className="display text-3xl">{view === "week" ? "Week" : MONTH_FORMATTER.format(monthStart)}</h1>
+        <nav aria-label="Calendar view" className="inline-flex shrink-0 rounded-xl border border-line bg-surface p-1">
+          <Link href={selectedHref} scroll={false} aria-current={view === "week" ? "page" : undefined} className={`touch-target inline-flex items-center justify-center rounded-lg px-4 text-sm font-semibold ${view === "week" ? "bg-brand-soft text-brand-strong" : "text-muted"}`}>Week</Link>
+          <Link href={`${selectedHref}&view=month`} scroll={false} aria-current={view === "month" ? "page" : undefined} className={`touch-target inline-flex items-center justify-center rounded-lg px-4 text-sm font-semibold ${view === "month" ? "bg-brand-soft text-brand-strong" : "text-muted"}`}>Month</Link>
         </nav>
-        {view === "week" && <Link href={`${selectedHref}${compact ? "&compact=0" : ""}`} scroll={false} aria-expanded={!compact} className="touch-target inline-flex items-center rounded-xl border border-line px-3 text-sm font-semibold text-muted">{compact ? "Expand details" : "Collapse details"}</Link>}
-      </div>
+      </header>
       <section aria-label="Week calendar" hidden={view !== "week"}>
-        <CalendarAgenda compact={compact} returnTo={returnTo} key={toLocalDateKey(weekStart)} events={weekEvents} weekStart={toLocalDateKey(weekStart)} today={todayKey} undoOperation={latestCalendarOperation(user.id)} />
+        <CalendarAgenda compact returnTo={returnTo} key={toLocalDateKey(weekStart)} events={weekEvents} weekStart={toLocalDateKey(weekStart)} today={todayKey} undoOperation={latestCalendarOperation(user.id)} />
       </section>
 
       <section aria-label="Month calendar" hidden={view !== "month"} className="overflow-hidden rounded-xl border border-line bg-surface shadow-sm">
@@ -343,7 +315,7 @@ export default async function CalendarPage({ searchParams }: CalendarPageProps) 
                 className={`min-h-24 min-w-0 border-b border-r border-line ${isToday ? "bg-brand-soft" : ""}`}
               >
                 <Link
-                  href={`${monthHref(monthStart)}&date=${dateKey}${compactSuffix}`}
+                  href={`${monthHref(monthStart)}&date=${dateKey}`}
                   scroll={false}
                   aria-label={`See week containing ${dateKey}`}
                   className={`touch-target flex w-full items-center justify-center text-sm font-display font-semibold ${
@@ -451,9 +423,9 @@ export default async function CalendarPage({ searchParams }: CalendarPageProps) 
         </div>
       ) : null}
 
-      {!hasEvents ? (
+      {visibleEvents.length === 0 ? (
         <section className="rounded-xl border border-line bg-surface p-4 text-sm leading-6 text-muted shadow-sm">
-          No workouts on this calendar yet.
+          No workouts scheduled for this {view}.
         </section>
       ) : null}
     </div>

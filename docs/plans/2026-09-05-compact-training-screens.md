@@ -1,0 +1,7 @@
+# Compact training screens
+
+**Goal:** Fit Today's primary workout controls in the phone viewport and free space above the weekly agenda, following the user's explicit layout instructions.
+
+**Approach:** Keep the existing logger and saving semantics. Give Today a compact presentation with an exercise selector, concise set controls and secondary details on demand. Retain readable text and 44px controls; never hide overflowing inputs or introduce a sticky workout overlay. Calendar gets one header: Week (or month name) at left and the Week/Month switch at right. Remove month arrows and the expanded agenda option. Existing week arrows cross month boundaries. The user clarified that old workouts must appear only when selected from Calendar. Do not surface old sessions or missed-workout reminders on Today, and keep new default quick-workout starts scoped to today. Preserve the original sessions and dates.
+
+**Validation:** Use disposable data and the current iPhone WebKit viewport, including a four-exercise legacy workout and a configured per-set workout. Check top-to-bottom logger geometry and entered values across exercise/set selection. Update the existing Calendar mode regression to open workout details and traverse a month boundary. Verify cross-date active workout visibility/ownership. Run affected unit/browser checks, typecheck and lint, then release gates before the already authorized commit/push and staging rollout. Physical Safari/PWA verification is recorded separately and requires a working device connection.

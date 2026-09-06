@@ -27,6 +27,8 @@ import {
 
 import { isDraftVolatile, parseDrafts, readDraftSnapshot, subscribeDrafts, writeDrafts, type SetDraft, type ActualBaseline } from "@/components/planned-workout-drafts";
 
+import styles from "./WorkoutCard.module.css";
+
 /** Compact "last time" line, e.g. "5/5/8 @ 225 lb" or "12/12/12 BW +25". */
 function formatLastPerformance(last: LastPerformance): string {
   const scheme = last.reps.join("/");
@@ -36,6 +38,7 @@ function formatLastPerformance(last: LastPerformance): string {
 
 export function WorkoutCard({
   occurrenceId,
+  focusMode = false,
   resumeSessionId,
   programId,
   dayId,
@@ -56,6 +59,8 @@ export function WorkoutCard({
   rounding = 2.5,
 }: {
   occurrenceId?: number;
+  /** Compact primary logger used on Today. */
+  focusMode?: boolean;
   /** Exact legacy session selected from History; resume never creates a substitute. */
   resumeSessionId?: number;
   programId: number;
@@ -83,6 +88,7 @@ export function WorkoutCard({
 }) {
   const [session, setSession] = useState<SessionResponse | null>(null);
   const [currentGroupIdx, setCurrentGroupIdx] = useState(0);
+  const [selectedSetId, setSelectedSetId] = useState<number | null>(null);
   const [values, setValues] = useState<Record<number, number>>({});
   // Optional added weight per set for bodyweight exercises (keyed by set id).
   const [added, setAdded] = useState<Record<number, number>>({});
@@ -120,6 +126,7 @@ export function WorkoutCard({
   const groups = buildGroups(session?.sets ?? []);
   const currentGroup = groups[currentGroupIdx];
   const currentSet = currentGroup?.sets[currentGroup.sets.length - 1];
+  const focusedEditorSet = currentGroup?.sets.find(set => set.id === selectedSetId) ?? currentGroup?.sets.find(set => drafts[set.id]) ?? currentGroup?.sets.find(set => !completedSetIds.has(set.id)) ?? currentGroup?.sets[0];
   const prevGroups = groups.slice(0, currentGroupIdx);
   const upcomingGroups = groups.slice(currentGroupIdx + 1);
   const isLastGroup = currentGroupIdx === lastGroupIndex(groups);
@@ -509,8 +516,35 @@ export function WorkoutCard({
   const idle = !session && !finished && !skipped;
   const showPreview = idle && (Boolean(nextLifts?.length) || Boolean(scheduleLabel) || Boolean(statusLine));
 
+  const addExerciseControl = session ? (<AddSessionExerciseForm
+    sessionId={session.id}
+            onAdded={(newSets) => {
+              setSession((prev) => (prev ? { ...prev, sets: [...prev.sets, ...newSets] } : prev));
+              setValues((prev) => ({
+                ...prev,
+                ...Object.fromEntries(newSets.map((set) => [set.id, set.rep_out_target])),
+              }));
+            }}
+            onError={setError}
+          />) : null;
+  const cancelControl = (<button
+              type="button"
+              disabled={canceling || saving}
+              onClick={cancelWorkout}
+              onBlur={() => setConfirmingCancel(false)}
+              className={`touch-target rounded-xl px-4 py-2 text-xs font-medium transition-colors disabled:opacity-50 ${
+                confirmingCancel ? "bg-danger-soft text-danger-ink" : "text-faint active:bg-surface-muted"
+              }`}
+            >
+              {canceling
+                ? "Canceling…"
+                : confirmingCancel
+                  ? "Tap again to discard this workout"
+                  : "Cancel workout"}
+            </button>);
+
   return (
-    <section className={`card overflow-hidden ${isLive ? "border-brand-line" : ""}`}>
+    <section data-workout-focus={focusMode || undefined} className={`card overflow-hidden ${isLive ? "border-brand-line" : ""} ${focusMode ? styles.focus : ""}`}>
       {showPreview ? (
         <>
           <div className="h-1 bg-brand" aria-hidden="true" />
@@ -558,7 +592,7 @@ export function WorkoutCard({
           </div>
         </>
       ) : (
-        <div className="flex items-center gap-3 px-4 py-3.5">
+        <div data-workout-header className="flex items-center gap-3 px-4 py-3.5">
           <span aria-hidden="true" className={`h-9 w-1 rounded-full ${isLive ? "bg-brand" : "bg-line"}`} />
           <div className="min-w-0">
             <p className="display truncate text-lg leading-tight">{programName}</p>
@@ -668,7 +702,14 @@ export function WorkoutCard({
       ) : (
         <fieldset disabled={completing || refreshingCompletion} className="min-w-0 border-0 border-t border-line p-0">
           {/* Progress header */}
-          <div className="px-4 pt-3.5">
+          {focusMode && <label className={styles.exercisePicker}>
+            <span className="sr-only">Exercise</span>
+            <select aria-label="Exercise" value={currentGroupIdx} disabled={saving} onChange={event => selectGroup(Number(event.target.value))} className="touch-target min-w-0 flex-1 rounded-lg border border-line bg-surface px-2 text-sm font-semibold disabled:opacity-50">
+              {groups.map(group => <option key={groupKey(group)} value={group.index}>{group.index + 1}. {groupExerciseNames(group).join(" + ")}{isGroupSkipped(group) ? " · Skipped" : allSetsInGroupLogged(group) ? " · Done" : ""}</option>)}
+            </select>
+            <span className="shrink-0 text-xs text-muted">{totalSets} sets saved</span>
+          </label>}
+          <div className={focusMode ? "hidden" : "px-4 pt-3.5"}>
             <div className="flex items-center justify-between">
               <span className="eyebrow text-[11px] text-brand-strong">
                 Exercise {Math.min(currentGroupIdx + 1, groups.length)} of {groups.length}
@@ -692,7 +733,7 @@ export function WorkoutCard({
             </div>
           ) : null}
 
-          {prevGroups.length > 0 && (
+          {!focusMode && prevGroups.length > 0 && (
             <div className="px-4 pt-3">
               {prevGroups.map((group) =>
                 isGroupSkipped(group) ? (
@@ -749,7 +790,7 @@ export function WorkoutCard({
 
           {currentGroup && !isGroupSkipped(currentGroup) && (
             <div className="px-4 py-3">
-              <div className="rounded-2xl border border-brand-line bg-brand-soft px-4 py-4">
+              <div data-active-lift className="rounded-2xl border border-brand-line bg-brand-soft px-4 py-4">
                 <div className="flex items-start gap-2">
                   {allSetsInGroupLogged(currentGroup) ? (
                     <Check aria-hidden="true" size={22} className="mt-1 shrink-0 text-success" strokeWidth={3} />
@@ -788,7 +829,11 @@ export function WorkoutCard({
 
                 {currentGroup.sets.some((set) => set.editor_json) ? (
                   <div className="mt-4 flex flex-col gap-3">
+                    {focusMode && <select aria-label="Set" value={focusedEditorSet?.id} onChange={event => setSelectedSetId(Number(event.target.value))} className="touch-target w-full rounded-lg border border-line bg-surface px-2 text-sm font-semibold">
+                      {currentGroup.sets.map((set, index) => <option key={set.id} value={set.id}>Set {index + 1} of {currentGroup.sets.length}{currentGroup.supersetGroup ? ` · ${set.exercise_name}` : ""}{completedSetIds.has(set.id) && !drafts[set.id] ? " · Saved" : ""}</option>)}
+                    </select>}
                     {currentGroup.sets.map((set, index) => {
+                      if (focusMode && set.id !== focusedEditorSet?.id) return null;
                       const editor = editorMetadata(set);
                       const spec = editor?.set;
                       const number = index + 1;
@@ -801,24 +846,26 @@ export function WorkoutCard({
                       const roleLabel = role === "amrap" ? "AMRAP" : role[0].toUpperCase() + role.slice(1);
                       const range = set.reps === set.rep_out_target ? String(set.reps) : `${set.reps}–${set.rep_out_target}`;
                       const loadLabel = isBodyweight(set) ? `BW${set.calculated_weight > 0 ? ` +${set.calculated_weight} ${rowUnit}` : ""}` : `${set.calculated_weight} ${rowUnit}`;
+                      const saveButton = (<button type="button" aria-label={`Save set ${number}`} aria-pressed={saved} disabled={saving || Boolean(conflicts[set.id])} onClick={() => { if (focusMode) setSelectedSetId(set.id); void saveSets([set]); }} className={`touch-target mt-3 w-full rounded-lg px-3 py-2 text-base font-semibold disabled:opacity-50 ${saved ? "bg-success-soft text-success-ink" : "bg-brand text-white active:bg-brand-strong"}`}>{saved ? "Saved" : "Save set"}</button>);
                       return (
-                        <div key={set.id} className="rounded-xl border border-line bg-surface p-3">
+                        <div key={set.id} data-editor-set className="rounded-xl border border-line bg-surface p-3">
                           <div className="flex items-start justify-between gap-2">
                             <p className="text-sm font-semibold">{currentGroup.supersetGroup ? `${set.exercise_name} · ` : ""}Set {number}</p>
                             <span role="status" className={`text-xs font-semibold ${saved ? "text-success-ink" : "text-muted"}`}>{rowSaving ? "Saving…" : rowFailed ? "Save failed" : pending ? "Unsaved" : saved ? "Saved" : "Not logged"}</span>
                           </div>
                           <p className="mt-1 text-sm text-muted">{roleLabel} · {range} reps · {loadLabel}</p>
                           {spec ? <p className="mt-1 text-xs text-muted">{[spec.effortKind !== "none" ? `${spec.effortKind.toUpperCase()} ${spec.effort}` : "", `Rest ${spec.restSeconds} s`, spec.tempo ? `Tempo ${spec.tempo}` : ""].filter(Boolean).join(" · ")}</p> : null}
-                          {spec?.notes ? <p className="mt-2 text-sm text-muted">{spec.notes}</p> : null}
-                          <div className="mt-3 grid grid-cols-2 gap-2">
+                          {spec?.notes ? focusMode ? <details className="mt-1"><summary className="touch-target flex cursor-pointer items-center text-sm font-semibold text-muted">Exercise notes</summary><p className="text-sm text-muted">{spec.notes}</p></details> : <p className="mt-2 text-sm text-muted">{spec.notes}</p> : null}
+                          <div data-entry-fields className="mt-3 grid grid-cols-2 gap-2">
                             <label className="min-w-0 text-xs font-semibold text-muted">Reps
                               <input type="number" min={0} step={1} value={inputValues(set).reps} onChange={(event) => editSet(set, "reps", event.target.value)} aria-label={`${set.exercise_name} set ${number} reps`} className="touch-target mt-1 w-full rounded-lg border border-line bg-surface px-2 py-2 text-center font-display text-xl text-foreground outline-none focus:border-brand" />
                             </label>
                             <label className="min-w-0 text-xs font-semibold text-muted">{isBodyweight(set) ? "Added weight" : "Weight"} ({rowUnit})
                               <input type="number" min={0} step="any" value={inputValues(set).weight} onChange={(event) => editSet(set, "weight", event.target.value)} aria-label={`${set.exercise_name} set ${number} weight (${rowUnit})`} className="touch-target mt-1 w-full rounded-lg border border-line bg-surface px-2 py-2 text-center font-display text-xl text-foreground outline-none focus:border-brand" />
                             </label>
+                            {focusMode && saveButton}
                           </div>
-                          <button type="button" aria-label={`Save set ${number}`} aria-pressed={saved} disabled={saving || Boolean(conflicts[set.id])} onClick={() => saveSets([set])} className={`touch-target mt-3 w-full rounded-lg px-3 py-2 text-base font-semibold disabled:opacity-50 ${saved ? "bg-success-soft text-success-ink" : "bg-brand text-white active:bg-brand-strong"}`}>{saved ? "Saved" : "Save set"}</button>
+                          {!focusMode && saveButton}
                           {conflicts[set.id] ? <div className="mt-3 rounded-lg border border-warn-line bg-warn-soft p-2 text-sm text-warn-ink">
                             <p>Saved elsewhere: {conflicts[set.id].reps == null ? "unperformed" : `${conflicts[set.id].reps} reps at ${conflicts[set.id].weight ?? 0} ${rowUnit}`}.</p>
                             <button type="button" disabled={saving} onClick={() => discardSetChanges(set)} className="touch-target mt-2 w-full rounded-lg border border-line bg-surface px-2 text-sm font-semibold text-muted">Use saved values</button>
@@ -830,7 +877,7 @@ export function WorkoutCard({
                     })}
                   </div>
                 ) : isFlatSingle(currentGroup) ? (
-                  <>
+                  <div data-flat-prescription>
                     <div className="mt-2.5 flex items-end gap-2.5">
                       <span className="display text-5xl leading-none">
                         {currentGroup.sets[0].calculated_weight}
@@ -855,7 +902,7 @@ export function WorkoutCard({
                         />
                       </label>
                     ) : null}
-                  </>
+                  </div>
                 ) : (
                   <div className="mt-2.5 flex flex-col gap-2.5">
                     {currentGroup.sets.map((set) => (
@@ -947,7 +994,7 @@ export function WorkoutCard({
                     </button>
                   </div>
                 ) : (
-                  <>
+                  <div data-log-actions>
                     <button
                       type="button"
                       disabled={saving}
@@ -963,15 +1010,15 @@ export function WorkoutCard({
                       className="touch-target mt-2 inline-flex w-full items-center justify-center gap-1.5 rounded-xl px-4 py-2 text-sm font-semibold text-faint transition-colors active:bg-surface-muted disabled:opacity-50"
                     >
                       <SkipForward aria-hidden="true" size={14} />
-                      Skip this lift
+                      {focusMode ? "Skip lift" : "Skip this lift"}
                     </button>
-                  </>
+                  </div>
                 )}
               </div>
             </div>
           )}
 
-          {upcomingGroups.length > 0 && (
+          {!focusMode && upcomingGroups.length > 0 && (
             <div className="px-4 pb-1">
               {upcomingGroups.map((group) =>
                 isGroupSkipped(group) ? (
@@ -1004,21 +1051,11 @@ export function WorkoutCard({
             </div>
           )}
 
-          <AddSessionExerciseForm
-            sessionId={session.id}
-            onAdded={(newSets) => {
-              setSession((prev) => (prev ? { ...prev, sets: [...prev.sets, ...newSets] } : prev));
-              setValues((prev) => ({
-                ...prev,
-                ...Object.fromEntries(newSets.map((set) => [set.id, set.rep_out_target])),
-              }));
-            }}
-            onError={setError}
-          />
+          {!focusMode && addExerciseControl}
 
           <div className="flex flex-col gap-2 px-4 pb-4 pt-3">
             {hasPending ? <p className="text-xs text-muted">Save pending edits before finishing. Sets left unlogged stay unperformed.</p> : null}
-            <div className="flex gap-2">
+            <div className="flex items-start gap-2">
               <button
                 type="button"
                 disabled={completing || refreshingCompletion || saving || hasPending}
@@ -1027,23 +1064,13 @@ export function WorkoutCard({
               >
                 {completing || refreshingCompletion ? "Finishing…" : "Finish Workout"}
               </button>
+              {focusMode && <details className={styles.options}>
+                <summary className="touch-target flex cursor-pointer items-center justify-center rounded-xl border border-line px-3 text-sm font-semibold text-muted">More</summary>
+                <div className="rounded-xl border border-line bg-surface py-2">{addExerciseControl}{cancelControl}</div>
+              </details>}
             </div>
             {unavailableTemplate ? <button type="button" className="touch-target rounded-xl border border-warn-line bg-warn-soft px-4 py-3 text-sm font-semibold text-warn-ink disabled:opacity-50" disabled={completing || refreshingCompletion || saving || hasPending} onClick={() => { void complete(true); }}>Finish without changing affected training maxes</button> : null}
-            <button
-              type="button"
-              disabled={canceling || saving}
-              onClick={cancelWorkout}
-              onBlur={() => setConfirmingCancel(false)}
-              className={`touch-target rounded-xl px-4 py-2 text-xs font-medium transition-colors disabled:opacity-50 ${
-                confirmingCancel ? "bg-danger-soft text-danger-ink" : "text-faint active:bg-surface-muted"
-              }`}
-            >
-              {canceling
-                ? "Canceling…"
-                : confirmingCancel
-                  ? "Tap again to discard this workout"
-                  : "Cancel workout"}
-            </button>
+            {!focusMode && cancelControl}
           </div>
         </fieldset>
       )}

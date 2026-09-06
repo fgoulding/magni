@@ -24,6 +24,8 @@ async function nextScheduledWorkout(page: Page) {
 }
 
 async function saveSet(page: Page, number: number, reps: string) {
+  const picker = page.getByRole("combobox", { name: "Set", exact: true });
+  if (await picker.count()) await picker.selectOption({ index: number - 1 });
   await page.getByRole("spinbutton", { name: `Dumbbell row set ${number} reps`, exact: true }).fill(reps);
   await page.getByRole("button", { name: `Save set ${number}`, exact: true }).click();
   await expect(page.getByRole("button", { name: `Save set ${number}`, exact: true })).toHaveAttribute("aria-pressed", "true");

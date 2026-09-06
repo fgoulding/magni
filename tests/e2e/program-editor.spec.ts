@@ -131,6 +131,13 @@ test("author a custom double progression program, preview, reload and activate",
   expect(session.sets.map((set: {calculated_weight:number}) => set.calculated_weight)).toEqual([40,40,40]);
   expect(session.sets.every((set: {editor_json:string}) => JSON.parse(set.editor_json).rule.condition.type === "double_progression")).toBe(true);
   await expect(page.getByRole("heading", { name: "Dumbbell row", exact: true })).toBeVisible();
+  const install = page.getByRole("button", { name: "Dismiss install help", exact: true });
+  if (await install.count()) await install.click();
+  await page.evaluate(() => window.scrollTo(0, 0));
+  const cardBounds = (await page.locator("[data-workout-focus]").boundingBox())!;
+  const navBounds = (await page.getByRole("navigation", { name: "Main navigation" }).boundingBox())!;
+  await page.screenshot({ path: info.outputPath("editor-focused-logger-viewport.png") });
+  expect(cardBounds.y + cardBounds.height).toBeLessThanOrEqual(navBounds.y);
   await page.screenshot({ path: info.outputPath("editor-trained-prescription.png"), fullPage: true });
 });
 

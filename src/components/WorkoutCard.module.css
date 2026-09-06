@@ -1,0 +1,30 @@
+.focus [data-workout-header] { padding-block: 0.5rem; }
+.exercisePicker { display: flex; align-items: center; gap: 0.5rem; padding: 0.5rem 0.75rem 0; }
+.focus fieldset > div { padding-inline: 0.75rem; }
+.focus [data-active-lift] { padding: 0.75rem; }
+.focus [data-active-lift] h3 { font-size: 1.5rem; line-height: 1.1; }
+.focus [data-active-lift] label:has(> input[aria-label="Reps"]) { margin-top: 0.5rem; }
+.focus [data-active-lift] input { min-height: 44px; padding-block: 0.25rem; }
+.focus [data-active-lift] :global(.display) { font-size: 2rem; }
+.focus [data-editor-set] { padding: 0.5rem; }
+.focus [data-editor-set] > div:has(> label) { margin-top: 0.5rem; }
+.focus [data-editor-set] > button { margin-top: 0.5rem; }
+.options { flex: 0 0 auto; }
+.options[open] { flex: 1 0 100%; }
+.focus div:has(> .options[open]) { flex-wrap: wrap; }
+.options > div { margin-top: 0.5rem; }
+.options summary { list-style: none; }
+.options summary::-webkit-details-marker { display: none; }
+
+.focus [data-flat-prescription] { display: grid; grid-template-columns: 1fr 1fr; align-items: end; gap: 0.75rem; margin-top: 0.5rem; }
+.focus [data-flat-prescription] > div { flex-wrap: wrap; gap: 0.25rem; margin-top: 0; }
+.focus [data-flat-prescription] > div > span:last-child { margin: 0; }
+.focus [data-flat-prescription] > label { margin-top: 0; }
+.focus [data-log-actions] { display: grid; grid-template-columns: 2fr 1fr; align-items: center; gap: 0.5rem; margin-top: 0.5rem; }
+.focus [data-log-actions] button { margin-top: 0; padding: 0.5rem; min-height: 44px; }
+
+.focus [data-entry-fields] { grid-template-columns: repeat(3, minmax(0, 1fr)); align-items: end; }
+.focus [data-entry-fields] > button { margin: 0; min-height: 44px; padding: 0.5rem; }
+
+.focus fieldset > div:last-child { padding-top: 0.25rem; padding-bottom: 0.5rem; }
+.focus [data-active-lift] > div:has(> select[aria-label="Set"]) { margin-top: 0.5rem; gap: 0.5rem; }

@@ -961,6 +961,7 @@ export function getTodayWorkoutDashboard(userId: number, today = new Date()): To
     const row: TodayWorkoutSummary = {
       ...enrichTodayRow(userId, { ...day, current_week: occurrence.week_number }, isToday ? WEEKDAY_LABELS[todayWeekday] : `Missed ${occurrence.scheduled_date}`, todayDateKey, occurrence.scheduled_date, cache),
       occurrence_id: occurrence.id,
+      started_date: active ? occurrence.performed_date ?? undefined : undefined,
       day_name: occurrence.day_name,
       day_number: occurrence.day_number,
       today_session_id: occurrence.session_id,
@@ -1029,11 +1030,10 @@ export type QuickWorkoutSet = {
 
 export type QuickWorkout = { id: number; name: string; date: string; unit: "lb" | "kg"; revision: number; sets: QuickWorkoutSet[] };
 
-/** Recover the newest active quick workout even after midnight or on a past date. */
+/** Today is date-scoped; older unfinished workouts resume from Calendar/history. */
 export function getQuickWorkoutForToday(userId: number, today = new Date()): QuickWorkout | null {
-  void today; // Retained for older callers; recovery deliberately spans dates.
   const session = db.prepare(`SELECT id,day_name AS name,date,unit,revision FROM sessions
-    WHERE user_id=? AND program_id IS NULL AND status='in_progress' ORDER BY id DESC LIMIT 1`).get(userId) as Omit<QuickWorkout, "sets"> | undefined;
+    WHERE user_id=? AND program_id IS NULL AND status='in_progress' AND date=? ORDER BY id DESC LIMIT 1`).get(userId, userDateKey(userId, today)) as Omit<QuickWorkout, "sets"> | undefined;
   if (!session) return null;
   const sets = db.prepare(`SELECT * FROM session_sets WHERE session_id=? ORDER BY sort_order,id`).all(session.id) as QuickWorkoutSet[];
   return { ...session, sets };

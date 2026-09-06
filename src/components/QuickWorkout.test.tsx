@@ -23,6 +23,24 @@ beforeEach(() => {
 afterEach(() => { cleanup(); vi.restoreAllMocks(); vi.unstubAllGlobals(); });
 
 describe("QuickWorkout save recovery", () => {
+  it("resolves a lost older start without opening it on Today and uses a fresh key for today", async () => {
+    localStorage.setItem("magni.quick.start.today", JSON.stringify({ name: "Quick Workout", date: "", unit: "lb", requestKey: "original-start" }));
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(response({ id: 41, name: "Yesterday workout", date: "2026-09-04", currentDate: "2026-09-05", sets: [] }))
+      .mockResolvedValueOnce(response({ id: 42, name: "Today workout", date: "2026-09-05", currentDate: "2026-09-05", sets: [] }));
+    vi.stubGlobal("fetch", fetchMock);
+    render(<QuickWorkout initialSession={null} todayOnly />);
+    fireEvent.click(screen.getByRole("button", { name: "Retry starting workout" }));
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(1));
+    expect(await screen.findByText(/Your earlier workout is saved in Calendar/)).toBeVisible();
+    expect(screen.queryByRole("heading", { name: "Yesterday workout" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Finish workout" })).not.toBeInTheDocument();
+    expect(localStorage.getItem("magni.quick.start.today")).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: "Quick workout" }));
+    await screen.findByRole("heading", { name: "Today workout" });
+    expect(JSON.parse(fetchMock.mock.calls[0][1].body).requestKey).toBe("original-start");
+    expect(JSON.parse(fetchMock.mock.calls[1][1].body).requestKey).not.toBe("original-start");
+  });
   it("marks an edited logged set unsaved immediately and restores it after navigation or reload", () => {
     const first = render(<QuickWorkout initialSession={initialSession} />);
     editReps("7");

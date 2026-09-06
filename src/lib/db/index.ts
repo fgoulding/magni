@@ -13,7 +13,6 @@ if (!fs.existsSync(dbDir)) {
 export const db = new Database(dbPath);
 
 db.pragma("busy_timeout = 5000");
-db.pragma("journal_mode = WAL");
 // FULL durability: a committed write survives an OS crash / power loss, not just
 // an app crash. Writes here are infrequent, so the extra fsync cost is moot — we
 // trade a hair of speed for not losing the last logged set on a power cut.
@@ -61,13 +60,21 @@ function withInitLock(callback: () => void): void {
 
 export function initDb(): void {
   // Next can load this module in multiple route workers. A current database
-  // needs no schema/backfill writes, especially while requests hold the writer.
-  if (!isDatabaseSchemaCurrent(db)) {
-    const schemaPath = path.join(process.cwd(), "src", "lib", "db", "schema.sql");
-    const schema = fs.readFileSync(schemaPath, "utf8");
+  // already in WAL needs no initialization writes or lock acquisition while
+  // requests hold the writer. Journal conversion itself needs the same lock as
+  // schema creation: competing DELETE-to-WAL upgrades can fail SQLITE_BUSY.
+  const schemaCurrent = isDatabaseSchemaCurrent(db);
+  const walCurrent = db.pragma("journal_mode", { simple: true }) === "wal";
+  if (!schemaCurrent || !walCurrent) {
     withInitLock(() => {
       // Another initializer may have completed while this worker waited.
-      if (isDatabaseSchemaCurrent(db)) return;
+      const current = isDatabaseSchemaCurrent(db);
+      if (db.pragma("journal_mode", { simple: true }) !== "wal") {
+        db.pragma("journal_mode = WAL");
+      }
+      if (current) return;
+      const schemaPath = path.join(process.cwd(), "src", "lib", "db", "schema.sql");
+      const schema = fs.readFileSync(schemaPath, "utf8");
       db.exec(schema);
       runMigrations(db);
     });

@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 
 import "@testing-library/jest-dom/vitest";
-import { cleanup, render, screen } from "@testing-library/react";
+import { act, cleanup, render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { WorkoutCard } from "@/components/WorkoutCard";
@@ -62,6 +62,24 @@ function makeCardProps(overrides?: Partial<Parameters<typeof WorkoutCard>[0]>) {
 }
 
 describe("WorkoutCard", () => {
+  it("keeps exercise selection stable until Log and Next finishes saving", async () => {
+    const user = userEvent.setup();
+    let acknowledge!: (response: Response) => void;
+    stubFetch(vi.fn().mockResolvedValueOnce(jsonResponse({ id: 42, sets: [
+      { id: 7, exercise_name: "Squat", reps: 5, sets: 1, set_number: 1, rep_out_target: 5, calculated_weight: 225, actual_reps: null, actual_weight: null },
+      { id: 8, exercise_name: "Bench Press", reps: 5, sets: 1, set_number: 1, rep_out_target: 5, calculated_weight: 185, actual_reps: null, actual_weight: null },
+    ] })).mockImplementationOnce(() => new Promise<Response>(resolve => { acknowledge = resolve; })));
+    render(<WorkoutCard {...makeCardProps({ focusMode: true })} />);
+    await user.click(screen.getByRole("button", { name: "Start Workout" }));
+    const exercise = await screen.findByRole("combobox", { name: "Exercise" });
+    await user.click(screen.getByRole("button", { name: "Log & Next" }));
+    expect(exercise).toBeDisabled();
+    await user.selectOptions(exercise, "1");
+    await act(async () => acknowledge(jsonResponse({ success: true })));
+    expect(exercise).toBeEnabled();
+    expect(exercise).toHaveValue("1");
+    expect(screen.getByRole("heading", { name: "Bench Press" })).toBeVisible();
+  });
   it("offers an explicit unchanged-max finish only after a missing-template response", async () => {
     const user = userEvent.setup();
     const calls = vi.fn().mockResolvedValueOnce(jsonResponse({ id: 42, sets: [{ id: 7, exercise_name: "Squat", reps: 5, sets: 1, set_number: 1, rep_out_target: 5, calculated_weight: 100, actual_reps: 5, actual_weight: 100 }] }))

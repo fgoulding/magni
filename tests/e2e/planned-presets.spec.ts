@@ -78,12 +78,16 @@ async function start(page: Page, fromCalendar = false): Promise<PlannedSession> 
 async function perform(page: Page, actualReps?: number[]): Promise<Completion> {
   const reps = page.getByRole("spinbutton", { name: / set \d+ reps$/ });
   const saves = page.getByRole("button", { name: /^Save set \d+$/ });
-  const count = await reps.count();
+  const setPicker = page.getByRole("combobox", { name: "Set", exact: true });
+  const focused = await setPicker.count() > 0;
+  const count = focused ? await setPicker.locator("option").count() : await reps.count();
   expect(count).toBeGreaterThan(0);
   for (let index = 0; index < count; index++) {
-    if (actualReps) await reps.nth(index).fill(String(actualReps[index]));
-    await saves.nth(index).click();
-    await expect(saves.nth(index)).toHaveAttribute("aria-pressed", "true");
+    if (focused) await setPicker.selectOption({ index });
+    const visibleIndex = focused ? 0 : index;
+    if (actualReps) await reps.nth(visibleIndex).fill(String(actualReps[index]));
+    await saves.nth(visibleIndex).click();
+    await expect(saves.nth(visibleIndex)).toHaveAttribute("aria-pressed", "true");
   }
   const response = page.waitForResponse(item => item.url().endsWith("/complete-and-advance") && item.request().method() === "POST");
   await page.getByRole("button", { name: "Finish Workout", exact: true }).click();

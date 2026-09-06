@@ -111,7 +111,7 @@ export function createQuickSession(input: { userId: number; requestKey?: string;
       name = nameText(input.name, routine.name);
       unit = routine.unit;
     } else if (!input.newWorkout && !input.date && !input.name) {
-      const existing = db.prepare("SELECT id FROM sessions WHERE user_id=? AND program_id IS NULL AND status='in_progress' ORDER BY id DESC LIMIT 1").get(input.userId) as { id: number } | undefined;
+      const existing = db.prepare("SELECT id FROM sessions WHERE user_id=? AND program_id IS NULL AND status='in_progress' AND date=? ORDER BY id DESC LIMIT 1").get(input.userId, date) as { id: number } | undefined;
       if (existing) return { session: requireWorkout(input.userId, existing.id), created: false };
     }
     const id = Number(db.prepare("INSERT INTO sessions(user_id,program_name,day_name,week_number,date,unit) VALUES (?,'Quick Workout',?,1,?,?)").run(input.userId, name, date, unit).lastInsertRowid);

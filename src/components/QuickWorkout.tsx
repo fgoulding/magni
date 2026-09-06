@@ -21,7 +21,7 @@ type Recap = {
 /** Inline "Quick Workout" card for the Today tab: start a program-less session,
  *  add exercises on the fly, log each set, and finish. Reuses the program-agnostic
  *  session routes (POST /api/sessions, POST/PUT .../sets, PATCH/DELETE the session). */
-export function QuickWorkout({ initialSession, initialDate }: { initialSession: QuickSession | null; initialDate?: string }) {
+export function QuickWorkout({ initialSession, initialDate, todayOnly = false }: { initialSession: QuickSession | null; initialDate?: string; todayOnly?: boolean }) {
   // The HTML preview must not accept edits before draft change handlers are attached.
   const hydrated = useSyncExternalStore(subscribeHydration, () => true, () => false);
   const [startDraft, storeStart] = useWorkoutDraft<{ name: string; date: string; unit: "lb" | "kg"; requestKey?: string }>(`magni.quick.start.${initialDate ?? "today"}`, { name: "Quick Workout", date: initialDate ?? "", unit: "lb" });
@@ -54,12 +54,20 @@ export function QuickWorkout({ initialSession, initialDate }: { initialSession: 
       const requestKey = startDraft.requestKey ?? crypto.randomUUID();
       storeStart({ ...startDraft, requestKey });
       const response = await fetch("/api/sessions", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ requestKey, ...(initialDate ? { date: startDraft.date, name: startDraft.name, unit: startDraft.unit, newWorkout: true } : {}) }) });
-      const body = await readResponseJson<QuickSession & { error?: string }>(response);
+      const body = await readResponseJson<QuickSession & { error?: string; currentDate?: string }>(response);
       if (!response.ok || !body?.id) {
         // This API's structured 400 errors precede writes or roll back the whole
         // create transaction. Unconfirmed outcomes must retain the original intent.
         if (response.status === 400 && typeof body?.error === "string") storeStart({ ...startDraft, requestKey: undefined });
         throw new Error(body?.error ?? "Could not start workout");
+      }
+      // Confirm the old idempotent intent before clearing it. Its session remains
+      // available on its saved date; retrying it must not take over Today.
+      if (todayOnly && (!body.date || !body.currentDate)) throw new Error("Could not confirm the workout date. Retry starting.");
+      if (todayOnly && body.date !== body.currentDate) {
+        storeStart(null);
+        setError("Your earlier workout is saved in Calendar. Tap Quick workout to start today.");
+        return;
       }
       setSession({ ...body, sets: body.sets ?? [] });
       if (initialDate) window.history.replaceState(null, "", `/workouts/${body.id}`);

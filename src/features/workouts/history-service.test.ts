@@ -29,12 +29,14 @@ function row(sessionId: number, name = "Dumbbell Row") {
 }
 
 describe("unplanned workout and history lifecycle", () => {
-  it("creates a named past workout once after a lost response and resumes it across dates", () => {
+  it("creates a past workout once after a lost response and starts Today separately", () => {
     const key = requestKey();
     const first = service.createQuickSession({ userId, requestKey: key, newWorkout: true, name: "Monday pull", date: "2026-09-01" });
     const retry = service.createQuickSession({ userId, requestKey: key, newWorkout: true, name: "Monday pull", date: "2026-09-01" });
     expect(retry.session.id).toBe(first.session.id);
-    expect(service.createQuickSession({ userId }).session.id).toBe(first.session.id);
+    const today = service.createQuickSession({ userId });
+    expect(today.session.id).not.toBe(first.session.id);
+    expect(service.createQuickSession({ userId }).session.id).toBe(today.session.id);
     expect(first.session).toMatchObject({ name: "Monday pull", date: "2026-09-01", status: "in_progress" });
     expect(() => service.createQuickSession({ userId, requestKey: key, newWorkout: true, name: "Different", date: "2026-09-01" })).toThrow(/retry key/i);
   });

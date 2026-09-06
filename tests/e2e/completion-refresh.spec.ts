@@ -16,12 +16,15 @@ async function loggedWorkout(page: Page, preset = "linear", fromEditor = false) 
     await page.getByRole("link", { name: "Train this program", exact: true }).click();
   } else await page.goto("/today");
   await page.getByRole("button", { name: "Start Workout", exact: true }).click();
-  const saves = page.getByRole("button", { name: /^Save set \d+$/ });
-  await expect(saves).toHaveCount(3);
+  const selector = page.getByRole("combobox", { name: "Set", exact: true });
+  await expect(selector.locator("option")).toHaveCount(3);
   for (let index = 0; index < 3; index++) {
-    await saves.nth(index).click();
-    await expect(saves.nth(index)).toHaveAttribute("aria-pressed", "true");
+    await selector.selectOption({ index });
+    const save = page.getByRole("button", { name: `Save set ${index + 1}`, exact: true });
+    await save.click();
+    await expect(save).toHaveAttribute("aria-pressed", "true");
   }
+  await selector.selectOption({ index: 0 });
 }
 
 async function holdRefresh(page: Page) {
@@ -64,6 +67,8 @@ async function holdRefresh(page: Page) {
 }
 
 test("a bottom tab press survives the page shrinking before its release", async ({ page }, info) => {
+  // A short viewport keeps the scroll/shrink regression meaningful with the compact logger.
+  await page.setViewportSize({ width: page.viewportSize()!.width, height: 360 });
   await loggedWorkout(page, "top-backoff");
   await page.evaluate(() => window.scrollTo(0, document.documentElement.scrollHeight));
   expect(await page.evaluate(() => scrollY)).toBeGreaterThan(100);

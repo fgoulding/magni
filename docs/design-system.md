@@ -140,13 +140,16 @@ Inputs are forced to 16px (prevents iOS zoom-on-focus).
 **Cards:** `.card`. Hero/featured cards get a `h-1 bg-brand` top accent bar.
 Card title = `.display`; small uppercase context = `.eyebrow text-brand-strong`.
 
-**Today:** one primary workout logger in normal document flow. Keep other
-workouts as compact named links; the whole workout card must never stick over
-later content. Use a compact Today/date header with access to workout history.
+**Today:** one primary workout logger for today, in normal document flow. Its
+exercise selector and set controls fit above the bottom navigation; extra actions
+open from More. Old sessions stay on their Calendar dates and never take over
+Today. The whole workout card must never stick over later content. Use a compact
+Today/date header with access to workout history.
 
 **Calendar:** Week is the default, with workout names and small status dots.
-Full prescriptions are available when opening a workout or expanding details.
-Keep Month as a separate grid. Icon controls stay at least 44px without taking
+Full prescriptions are available when opening a workout. Keep one header with
+Week at left and the Week/Month switch at right; week arrows cross month
+boundaries. Keep Month as a separate grid. Icon controls stay at least 44px without taking
 space away from names when text is enlarged.
 
 **Chips / badges:** `rounded-full px-2.5 py-1 text-xs font-semibold`. Neutral =

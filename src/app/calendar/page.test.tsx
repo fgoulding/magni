@@ -236,7 +236,7 @@ describe("CalendarPage", () => {
     });
     const text = collectRenderedText(rendered);
 
-    expect(text).toContain("June 2026");
+    expect(text).toContain("Week");
     expect(text).toContain("Mon");
     expect(text).toContain("Wed");
     expect(text).not.toContain("Completed: Shared Strength - Lower");
@@ -270,7 +270,7 @@ describe("CalendarPage", () => {
     });
     const text = collectRenderedText(rendered);
 
-    expect(text).toContain("No workouts on this calendar yet.");
+    expect(text).toContain("No workouts scheduled for this  week .");
     expect(text).not.toContain("Scheduled");
   });
 
@@ -292,8 +292,8 @@ describe("CalendarPage", () => {
     const text = collectRenderedText(rendered);
     const startLabels = collectWorkoutStartLabels(rendered);
 
-    expect(text).toContain("May 2026");
-    expect(text).toContain("No workouts on this calendar yet.");
+    expect(text).toContain("Week");
+    expect(text).toContain("No workouts scheduled for this  week .");
     expect(text).not.toContain("Scheduled: Shared Strength");
     expect(text).not.toContain("Run from calendar");
     expect(startLabels).not.toContain("Train today");
@@ -311,8 +311,8 @@ describe("CalendarPage", () => {
     });
     const text = collectRenderedText(rendered);
 
-    expect(text).toContain("September 2026");
-    expect(text).toContain("No workouts on this calendar yet.");
+    expect(text).toContain("Week");
+    expect(text).toContain("No workouts scheduled for this  week .");
     expect(text).not.toContain("Scheduled: Shared Strength");
   });
 
@@ -468,4 +468,20 @@ describe("CalendarPage", () => {
     expect(text).toContain("Originally scheduled 2026-06-01");
     expect(startLabels).toContain("Do workout");
   });
+  it("keeps unfinished workouts on their original dates until selected", async () => {
+    const userId = createUser("calendar-carryover@example.com");
+    const other = createUser("calendar-private-carryover@example.com");
+    authenticate(userId);
+    const insert = dbModule.db.prepare("INSERT INTO sessions(user_id,date,week_number,status,day_name) VALUES (?,'2026-08-10',1,'in_progress',?)");
+    const sessionId = Number(insert.run(userId, "Old unfinished workout").lastInsertRowid);
+    insert.run(other, "Private unfinished workout");
+    const rendered = await calendarPage.default({ searchParams: Promise.resolve({ month: "2026-09", date: "2026-09-05" }) });
+    const text = collectRenderedText(rendered);
+    expect(text).not.toContain("Old unfinished workout");
+    expect(text).not.toContain("Started 2026-08-10");
+    expect(text).not.toContain("Private unfinished workout");
+    expect(collectLinks(rendered)).not.toContain(`/workouts/${sessionId}?returnTo=${encodeURIComponent("/calendar?month=2026-09&date=2026-09-05")}`);
+    expect(dbModule.db.prepare("SELECT date,status FROM sessions WHERE id=?").get(sessionId)).toEqual({ date: "2026-08-10", status: "in_progress" });
+  });
+
 });

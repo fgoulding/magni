@@ -869,11 +869,12 @@ describe("program service", () => {
   });
 });
 
-it("resumes an unfinished named quick workout from an earlier date with saved units and metadata", () => {
+it("leaves earlier quick workouts in history instead of resuming them on Today", () => {
   const userId = createUser("past-quick-recovery@example.com");
   const id = Number(dbModule.db.prepare("INSERT INTO sessions(user_id,program_name,day_name,week_number,date,unit,revision) VALUES (?,'Quick Workout','Past pull',1,'2026-08-31','kg',3)").run(userId).lastInsertRowid);
   dbModule.db.prepare("INSERT INTO session_sets(session_id,exercise_name,reps,sets,calculated_weight,actual_reps,actual_weight) VALUES (?,'Row',10,1,40,8,40)").run(id);
-  expect(service.getQuickWorkoutForToday(userId, new Date("2026-09-05T12:00:00Z"))).toMatchObject({ id, name: "Past pull", date: "2026-08-31", unit: "kg", revision: 3, sets: [{ actual_reps: 8, actual_weight: 40 }] });
+  expect(service.getQuickWorkoutForToday(userId, new Date("2026-09-05T12:00:00Z"))).toBeNull();
+  expect(dbModule.db.prepare("SELECT date,status FROM sessions WHERE id=?").get(id)).toEqual({ date: "2026-08-31", status: "in_progress" });
 });
 
 describe("active manual planned workout recovery", () => {
