@@ -27,7 +27,9 @@ jobs:
   verify:
     name: Verify release candidate
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    # Browser OS dependencies can take 14 minutes on a slow package mirror.
+    # Leave room for the complete release suite; individual test limits stay strict.
+    timeout-minutes: 45
     env:
       CI: "true"
       E2E_NAV_DIAGNOSTICS: "1"
