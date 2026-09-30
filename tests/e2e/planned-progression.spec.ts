@@ -110,6 +110,11 @@ test("custom set drafts recover and double progression advances once from real U
   await page.getByRole("button", { name: "Finish Workout", exact: true }).click();
   const retried = await (await retry).json();
   expect(retried.progressionDecisions).toEqual(committed?.progressionDecisions);
+  // Wait for the refreshed recap, which must remain open even when completing
+  // this occurrence moves its actual date to a different calendar month.
+  await expect(page.getByRole("dialog").getByText("Completed workout", { exact: true })).toBeVisible();
+  await expect(page.getByRole("dialog").getByRole("link", { name: "Close workout", exact: true })).toBeInViewport({ ratio: 1 });
+  await page.screenshot({ path: info.outputPath("calendar-completed-month-boundary.png") });
   await nextScheduledWorkout(page);
   await expect(page.getByRole("dialog")).toContainText("42.5 lb");
   await page.screenshot({ path: info.outputPath("planned-next-load-dark-iphone.png"), fullPage: true });

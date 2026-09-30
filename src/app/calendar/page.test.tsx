@@ -1,11 +1,13 @@
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { isValidElement, type ComponentProps, type ReactNode } from "react";
+import { isValidElement, type ComponentProps, type ElementType, type ReactNode } from "react";
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { createUnexpiredAuthSession } from "@/__tests__/auth-fixture";
 import { WorkoutReuse } from "@/components/WorkoutReuse";
 import { WorkoutCard } from "@/components/WorkoutCard";
+import { CalendarAgenda } from "@/components/CalendarAgenda";
+import { SessionRecapView } from "@/components/SessionRecapView";
 
 const cookieMock = vi.hoisted(() => {
   const store = new Map<string, string>();
@@ -66,10 +68,10 @@ function collectWorkoutStartLabels(node: ReactNode): string[] {
   return [];
 }
 
-function collectWorkoutCards(node: ReactNode): ComponentProps<typeof WorkoutCard>[] {
-  if (Array.isArray(node)) return node.flatMap(collectWorkoutCards);
-  if (!isValidElement<ComponentProps<typeof WorkoutCard> & { children?: ReactNode }>(node)) return [];
-  return [...(node.type === WorkoutCard ? [node.props] : []), ...collectWorkoutCards(node.props.children)];
+function collectComponentProps<T extends ElementType>(node: ReactNode, component: T): ComponentProps<T>[] {
+  if (Array.isArray(node)) return node.flatMap(child => collectComponentProps(child, component));
+  if (!isValidElement<ComponentProps<T> & { children?: ReactNode }>(node)) return [];
+  return [...(node.type === component ? [node.props] : []), ...collectComponentProps(node.props.children, component)];
 }
 
 function collectRepeats(node: ReactNode): {sessionId?:number;name:string;today:string}[] {
@@ -78,13 +80,13 @@ function collectRepeats(node: ReactNode): {sessionId?:number;name:string;today:s
   return [...(node.type === WorkoutReuse ? [node.props] : []), ...collectRepeats(node.props.children)];
 }
 
-function collectLinks(node: ReactNode): string[] {
+function collectLinks(node: ReactNode, ariaLabel?: string): string[] {
   if (node === null || node === undefined || typeof node === "boolean") return [];
   if (typeof node === "string" || typeof node === "number" || typeof node === "bigint") return [];
-  if (Array.isArray(node)) return node.flatMap(collectLinks);
-  if (isValidElement<{ children?: ReactNode; href?: unknown }>(node)) {
-    const hrefs = typeof node.props.href === "string" ? [node.props.href] : [];
-    return [...hrefs, ...collectLinks(node.props.children)];
+  if (Array.isArray(node)) return node.flatMap(child => collectLinks(child, ariaLabel));
+  if (isValidElement<{ children?: ReactNode; href?: unknown; "aria-label"?: string }>(node)) {
+    const hrefs = typeof node.props.href === "string" && (!ariaLabel || node.props["aria-label"] === ariaLabel) ? [node.props.href] : [];
+    return [...hrefs, ...collectLinks(node.props.children, ariaLabel)];
   }
   return [];
 }
@@ -237,7 +239,7 @@ describe("CalendarPage", () => {
     expect(collectRenderedText(rendered)).toContain("Workout in progress");
     expect(collectRenderedText(rendered)).toContain("Originally scheduled 2026-06-01");
     expect(collectRenderedText(rendered)).not.toContain("Started on 2026-06-01");
-    expect(collectWorkoutCards(rendered)).toEqual([expect.objectContaining({
+    expect(collectComponentProps(rendered, WorkoutCard)).toEqual([expect.objectContaining({
       occurrenceId: occurrence.id,
       programId: program.programId,
       dayId: program.lowerDayId,
@@ -247,6 +249,85 @@ describe("CalendarPage", () => {
     })]);
     expect(collectRepeats(rendered)).toEqual([]);
     expect(collectLinks(rendered).some(href => href.startsWith(`/workouts/${session.id}`))).toBe(false);
+  });
+
+  it.each([
+    { scheduledDate: "2026-06-30", performedDate: "2026-07-01", view: "week" },
+    { scheduledDate: "2026-06-30", performedDate: "2026-07-01", view: "month" },
+    { scheduledDate: "2026-06-01", performedDate: "2026-05-31", view: "week" },
+    { scheduledDate: "2026-06-01", performedDate: "2026-05-31", view: "month" },
+  ])("keeps the selected $scheduledDate workout recap open when performed $performedDate in $view view", async ({ scheduledDate, performedDate, view }) => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date(`${performedDate}T12:00:00-07:00`));
+    const userId = createUser("calendar-completed-month-boundary@example.com");
+    authenticate(userId);
+    const program = createScheduledProgram(userId);
+    const occurrence = occurrenceAt(userId, program.programId, "2026-06-01");
+    dbModule.db.prepare("UPDATE workout_occurrences SET scheduled_date = ? WHERE id = ?").run(scheduledDate, occurrence.id);
+    const { POST: start } = await import("@/app/api/programs/[id]/sessions/route");
+    const response = await start(new Request(`http://localhost/api/programs/${program.programId}/sessions`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ occurrenceId: occurrence.id }),
+    }), { params: Promise.resolve({ id: String(program.programId) }) });
+    expect(response.status).toBe(201);
+    const session = await response.json();
+    expect(session).toMatchObject({ occurrence_id: occurrence.id, date: performedDate, scheduled_date: scheduledDate });
+    dbModule.db.prepare("UPDATE session_sets SET actual_reps = 7, actual_weight = 42.5 WHERE id = ?").run(session.sets[0].id);
+    const selection = { month: "2026-06", view, workout: `occurrence-${occurrence.id}` };
+    const before = await calendarPage.default({ searchParams: Promise.resolve(selection) });
+    const returnTo = `/calendar?month=2026-06&date=${scheduledDate}${view === "month" ? "&view=month" : ""}`;
+    expect(collectLinks(before, "Close workout")).toEqual([returnTo]);
+
+    dbModule.db.prepare("UPDATE sessions SET status = 'completed', completed = 1 WHERE id = ?").run(session.id);
+    const withoutSelection = await calendarPage.default({ searchParams: Promise.resolve({ month: "2026-06", date: scheduledDate, view }) });
+    for (const date of [undefined, scheduledDate]) {
+      const rendered = await calendarPage.default({ searchParams: Promise.resolve({ ...selection, date }) });
+      expect(collectRenderedText(rendered)).toContain("Completed workout");
+      expect(collectRenderedText(rendered)).toContain(`Completed on ${performedDate} · Lower`);
+      expect(collectComponentProps(rendered, SessionRecapView)).toEqual([expect.objectContaining({
+        recap: expect.objectContaining({ status: "completed", date: performedDate, volume: 298, loggedCount: 1 }),
+      })]);
+      expect(collectRepeats(rendered)).toEqual([expect.objectContaining({ sessionId: session.id })]);
+      expect(collectComponentProps(rendered, WorkoutCard)).toEqual([]);
+      expect(collectLinks(rendered, "Close workout")).toEqual([returnTo]);
+      expect(collectComponentProps(rendered, CalendarAgenda)).toEqual(collectComponentProps(withoutSelection, CalendarAgenda));
+      expect(collectAriaLabels(rendered)).not.toContain(`Completed: Shared Strength - Lower on ${performedDate}`);
+    }
+    expect(dbModule.db.prepare("SELECT id, actual_reps, actual_weight FROM session_sets WHERE id = ?").get(session.sets[0].id))
+      .toEqual({ id: session.sets[0].id, actual_reps: 7, actual_weight: 42.5 });
+  });
+
+  it.each(["foreign", "missing", "deleted"])("does not open a %s selected occurrence", async (kind) => {
+    const userId = createUser("calendar-selection-owner@example.com");
+    const ownerId = kind === "foreign" ? createUser("calendar-selection-other@example.com") : userId;
+    const program = createScheduledProgram(ownerId);
+    const occurrence = occurrenceAt(ownerId, program.programId, "2026-06-01");
+    const selectedId = kind === "missing" ? occurrence.id + 100_000 : occurrence.id;
+    if (kind === "deleted") dbModule.db.prepare("DELETE FROM workout_occurrences WHERE id = ?").run(selectedId);
+    if (kind === "foreign") {
+      dbModule.db.prepare("INSERT INTO sessions (user_id, program_id, occurrence_id, week_number, status, date, program_name, day_name) VALUES (?, ?, ?, 1, 'completed', '2026-07-01', 'Private program', 'Private workout')")
+        .run(ownerId, program.programId, occurrence.id);
+      expect(occurrences.getOccurrence(ownerId, occurrence.id)).toMatchObject({ status: "completed", performed_date: "2026-07-01" });
+    }
+    authenticate(userId);
+    const rendered = await calendarPage.default({ searchParams: Promise.resolve({ month: "2026-06", workout: `occurrence-${selectedId}` }) });
+    expect(collectLinks(rendered, "Close workout")).toEqual([]);
+    expect(collectComponentProps(rendered, SessionRecapView)).toEqual([]);
+    expect(collectComponentProps(rendered, WorkoutCard)).toEqual([]);
+    expect(collectRepeats(rendered)).toEqual([]);
+    expect(collectRenderedText(rendered)).not.toContain("Private workout");
+  });
+
+  it.each(["paused", "archived"])("keeps a selected pending occurrence hidden when its run is %s", async (status) => {
+    const userId = createUser("calendar-hidden-pending@example.com");
+    authenticate(userId);
+    const program = createScheduledProgram(userId);
+    const occurrence = occurrenceAt(userId, program.programId, "2026-06-01");
+    dbModule.db.prepare("UPDATE program_runs SET status = ? WHERE id = ?").run(status, program.runId);
+    const rendered = await calendarPage.default({ searchParams: Promise.resolve({ month: "2026-06", workout: `occurrence-${occurrence.id}` }) });
+    expect(collectLinks(rendered, "Close workout")).toEqual([]);
+    expect(collectComponentProps(rendered, WorkoutCard)).toEqual([]);
   });
 
   it("renders completed session history and future workouts for active scheduled programs", async () => {
@@ -489,7 +570,7 @@ describe("CalendarPage", () => {
     expect(collectAriaLabels(rendered)).toContain("In progress:  - Independent row on 2026-07-03");
     expect(collectLinks(rendered)).toContain(`/workouts/${sessionId}?returnTo=%2Fcalendar%3Fmonth%3D2026-07%26date%3D2026-07-03`);
     expect(collectRenderedText(rendered)).toContain("Started on 2026-07-03");
-    expect(collectWorkoutCards(rendered)).toEqual([]);
+    expect(collectComponentProps(rendered, WorkoutCard)).toEqual([]);
   });
 
   it("shows a do-workout modal for a selected scheduled calendar workout", async () => {

@@ -96,14 +96,10 @@ async function perform(page: Page, actualReps?: number[]): Promise<Completion> {
   const finished = await response;
   expect(finished.ok()).toBe(true);
   const completed: Completion = await finished.json();
-  // The API response precedes the refreshed page. A future month's workout
-  // completed today can leave that month's selection and close its dialog.
-  // Wait for the rendered result before openNext decides whether Close exists.
+  // The API reply precedes the refreshed page. Calendar must keep the selected
+  // completed recap open even when its actual date moves to another month.
   if (fromCalendar) {
-    await expect.poll(async () => {
-      const dialog = page.getByRole("dialog");
-      return await dialog.count() === 0 || await dialog.getByText("Completed workout", { exact: true }).isVisible();
-    }, { message: "Calendar commits the completed workout before navigating onward" }).toBe(true);
+    await expect(page.getByRole("dialog").getByText("Completed workout", { exact: true })).toBeVisible();
   } else {
     await expect(page.getByText("Workout complete today", { exact: true })).toBeVisible();
   }

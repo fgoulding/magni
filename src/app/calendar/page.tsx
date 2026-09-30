@@ -1,6 +1,6 @@
 import { userDateKey } from "@/lib/user-date";
 import Link from "next/link";
-import { getOccurrences, getOccurrence, occurrenceLiftPreview } from "@/features/programs/occurrences";
+import { getOccurrences, getOccurrence, occurrenceLiftPreview, type Occurrence } from "@/features/programs/occurrences";
 import { redirect } from "next/navigation";
 import { SessionRecapView } from "@/components/SessionRecapView";
 import { WorkoutCard } from "@/components/WorkoutCard";
@@ -158,20 +158,23 @@ function getHistoryEvents(userId: number, monthStart: Date, monthEnd: Date): Cal
   }));
 }
 
+function occurrenceEvent(row: Occurrence): CalendarEvent {
+  const kind = row.status;
+  const date = kind === "completed" ? (row.performed_date ?? row.scheduled_date) : row.scheduled_date;
+  return {
+    key: `occurrence-${row.id}`, occurrenceId: row.id, date, kind,
+    title: `${kind === "completed" ? "Completed" : kind === "skipped" ? "Skipped" : kind === "in_progress" ? "In progress" : "Scheduled"}: ${row.program_name} - ${row.day_name}`,
+    href: `/calendar?month=${date.slice(0,7)}&workout=occurrence-${row.id}`, sessionId: row.session_id ?? undefined,
+    programId: row.program_id, dayId: row.legacy_day_id ?? row.definition_day_id,
+    definitionDayId: row.definition_day_id, programName: row.program_name, dayName: row.day_name,
+    currentWeek: row.week_number, currentDay: row.day_number, scheduledDate: row.scheduled_date,
+    status: row.status, revision: row.revision,
+    summary: occurrenceLiftPreview(row).slice(0, 3).map(lift => `${lift.name} ${formatLiftDetail(lift)}`).join(" · "),
+  };
+}
+
 function getScheduledEvents(userId: number, monthStart: Date, monthEnd: Date): CalendarEvent[] {
-  return getOccurrences(userId, toLocalDateKey(monthStart), toLocalDateKey(monthEnd)).map(row => {
-    const kind = row.status;
-    return {
-      key: `occurrence-${row.id}`, occurrenceId: row.id, date: kind === "completed" ? (row.performed_date ?? row.scheduled_date) : row.scheduled_date, kind,
-      title: `${kind === "completed" ? "Completed" : kind === "skipped" ? "Skipped" : kind === "in_progress" ? "In progress" : "Scheduled"}: ${row.program_name} - ${row.day_name}`,
-      href: `/calendar?month=${(kind === "completed" ? (row.performed_date ?? row.scheduled_date) : row.scheduled_date).slice(0,7)}&workout=occurrence-${row.id}`, sessionId: row.session_id ?? undefined,
-      programId: row.program_id, dayId: row.legacy_day_id ?? row.definition_day_id,
-      definitionDayId: row.definition_day_id, programName: row.program_name, dayName: row.day_name,
-      currentWeek: row.week_number, currentDay: row.day_number, scheduledDate: row.scheduled_date,
-      status: row.status, revision: row.revision,
-      summary: occurrenceLiftPreview(row).slice(0, 3).map(lift => `${lift.name} ${formatLiftDetail(lift)}`).join(" · "),
-    };
-  });
+  return getOccurrences(userId, toLocalDateKey(monthStart), toLocalDateKey(monthEnd)).map(occurrenceEvent);
 }
 
 function eventKindLabel(kind: CalendarEvent["kind"]): string {
@@ -237,14 +240,20 @@ export default async function CalendarPage({ searchParams }: CalendarPageProps) 
   const historyEvents = getHistoryEvents(user.id, monthStart, monthEnd);
   const events = [...historyEvents, ...scheduledEvents].sort((a, b) => a.date.localeCompare(b.date) || a.key.localeCompare(b.key));
   const selectedWorkout = Array.isArray(params?.workout) ? params.workout[0] : (params?.workout ?? params?.train);
-  const selectedEvent = events.find((event) => event.key === selectedWorkout);
+  const selectedMonthEvent = events.find((event) => event.key === selectedWorkout);
+  const selectedOccurrenceId = typeof selectedWorkout === "string" ? Number(selectedWorkout.match(/^occurrence-([1-9]\d*)$/)?.[1]) : NaN;
+  const selectedOccurrence = Number.isSafeInteger(selectedOccurrenceId) ? getOccurrence(user.id, selectedOccurrenceId) : undefined;
+  // Completion can move the selected workout outside this month. Keep its saved
+  // recap open without adding it to the calendar or revealing hidden pending runs.
+  const selectedEvent = selectedMonthEvent ?? (selectedOccurrence?.status === "completed" && selectedOccurrence.session_id
+    ? occurrenceEvent(selectedOccurrence)
+    : undefined);
   const sessionRecap =
     selectedEvent && (selectedEvent.kind === "completed" || selectedEvent.kind === "skipped") && selectedEvent.sessionId
       ? getSessionRecap(user.id, selectedEvent.sessionId)
       : null;
   // What's in the workout, so you can see it before choosing "Do workout".
-  const selectedOccurrence = selectedEvent?.occurrenceId ? getOccurrence(user.id, selectedEvent.occurrenceId) : undefined;
-  const selectedLifts = selectedOccurrence ? occurrenceLiftPreview(selectedOccurrence) :
+  const selectedLifts = selectedEvent && selectedOccurrence ? occurrenceLiftPreview(selectedOccurrence) :
     selectedEvent?.programId && selectedEvent.definitionDayId && selectedEvent.currentWeek
       ? getProgramDayLiftPreview(
           user.id,
@@ -259,7 +268,8 @@ export default async function CalendarPage({ searchParams }: CalendarPageProps) 
   }
   const leadingBlanks = monthStart.getDay();
   const todayKey = toLocalDateKey(today);
-  const selectedDate = queryDate ?? (selectedEvent ? parseDateKey(selectedEvent.date)! : (today.getMonth() === monthStart.getMonth() && today.getFullYear() === monthStart.getFullYear() ? today : monthStart));
+  const selectedDateKey = selectedMonthEvent?.date ?? selectedEvent?.scheduledDate;
+  const selectedDate = queryDate ?? (selectedDateKey ? parseDateKey(selectedDateKey)! : (today.getMonth() === monthStart.getMonth() && today.getFullYear() === monthStart.getFullYear() ? today : monthStart));
   const selectedHref = `${monthHref(monthStart)}&date=${toLocalDateKey(selectedDate)}`;
   const returnTo = `${selectedHref}${viewSuffix}`;
   const weekStart = new Date(selectedDate);
@@ -358,7 +368,8 @@ export default async function CalendarPage({ searchParams }: CalendarPageProps) 
 
       {selectedEvent ? (
         <div className="fixed inset-0 z-[60] flex items-end justify-center bg-black/35 px-3 pt-[calc(0.75rem+env(safe-area-inset-top))] pb-[calc(5.5rem+env(safe-area-inset-bottom))] sm:items-center sm:py-3">
-          <div role="dialog" aria-modal="true" aria-labelledby="calendar-workout-title" className="max-h-full w-full max-w-xl overflow-y-auto rounded-xl bg-surface shadow-xl">
+          {/* A completed recap opens at the top instead of inheriting logger scroll. */}
+          <div key={`${selectedEvent.key}:${sessionRecap ? "recap" : "workout"}`} role="dialog" aria-modal="true" aria-labelledby="calendar-workout-title" className="max-h-full w-full max-w-xl overflow-y-auto rounded-xl bg-surface shadow-xl">
             <div className="flex items-start justify-between gap-3 border-b border-line px-4 py-3">
               <div>
                 <p className="eyebrow text-[11px] text-brand-strong">{modalEyebrow(selectedEvent.kind)}</p>
