@@ -18,10 +18,8 @@ test("creates a custom program, adds a day and lift, and schedules it for Today"
   await expect(program.getByText("Wk 1 · Day 1", { exact: true })).toBeVisible();
 
   await goToTab(page, "Today");
-  await expect(page.getByText("Scheduled today")).toBeVisible();
-  await expect(page.getByText(programName, { exact: true })).toBeVisible();
-  await expect(page.getByText("Week 1 · Day 1 · Today Lower", { exact: true })).toBeVisible();
-  await expect(page.getByText("Today's lifts", { exact: true })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Today Lower", exact: true })).toBeVisible();
+  await expect(page.getByText(`${programName} · Week 1`, { exact: true })).toBeVisible();
   await expect(page.getByText("Squat")).toBeVisible();
   await expect(page.getByText("3×5 @ 200 lb", { exact: true })).toBeVisible();
   await expect(page.getByRole("button", { name: "Start Workout" })).toBeVisible();
@@ -60,10 +58,10 @@ test("starts Day 1 on the first eligible date and Day 2 on the next selected wee
   await expect(schedule.getByText("2 days each week")).toBeVisible();
 
   await goToTab(page, "Today");
-  const scheduledToday = page.locator("section").filter({ hasText: "Scheduled today" }).filter({ hasText: programName });
-  await expect(scheduledToday.getByText(programName, { exact: true })).toBeVisible();
-  await expect(scheduledToday.getByText("Week 1 · Day 1 · Earlier Day", { exact: true })).toBeVisible();
-  await expect(scheduledToday.getByText(`Originally scheduled ${dates.first}`, { exact: true })).toBeVisible();
+  const scheduledToday = page.locator("section[data-workout-focus]");
+  await expect(scheduledToday.getByText(`${programName} · Week 1`, { exact: true })).toBeVisible();
+  await expect(scheduledToday.getByRole("heading", { name: "Earlier Day", exact: true })).toBeVisible();
+  await expect(scheduledToday.getByText(`Originally scheduled ${dates.first}`, { exact: true })).toHaveCount(0);
   await goToTab(page, "Calendar");
   await page.goto(`/calendar?date=${dates.second}`);
   await expect(page.getByRole("link", { name: `Scheduled: ${programName} - Today Day on ${dates.second}`, exact: true })).toBeVisible();

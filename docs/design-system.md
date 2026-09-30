@@ -145,8 +145,14 @@ exercise selector and set controls fit above the bottom navigation; extra action
 open from More. Old sessions stay on their Calendar dates and never take over
 Today. The whole workout card must never stick over later content. Use a compact
 Today/date header with access to workout history.
+Lead the workout card with its authored workout name, then muted program/week
+context. Use a plain lift list and one prominent Start/Resume action. Idle Pause
+and Skip actions live under More. Show dates only when they add new context.
 
-**Calendar:** Week is the default, with workout names and small status dots.
+**Calendar:** Week is the default, with workout names and quiet status symbols.
+Use the shared `CalendarStatus` shapes in Week, Month and the legend: completed
+check, scheduled circle, in-progress play and skipped dash. Drag, More and Add
+are borderless controls with visible focus/press feedback and 44px hit areas.
 Full prescriptions are available when opening a workout. Keep one header with
 the week’s month/day date range at left and the Week/Month switch at right.
 Put Today and the week arrows together on the next row; arrows cross month
@@ -160,6 +166,13 @@ programs at the upper left. Undo must have a visible text label alongside Save;
 an arrow alone must not stand in for an editing action. Unfinished drafts expose
 Delete draft with a named confirmation, separately from published programs.
 Retain a contained phone fallback and the existing compact shell for training.
+Use the sidebar as the desktop week/day navigator, with selectors below that
+breakpoint. Prescriptions use aligned Set / Reps / Load / Rest rows and native
+labelled form controls; Details reveals advanced fields and row actions. Keep
+configured effort, tempo and notes visible in a short summary when collapsed.
+Use aligned columns from `xl`; stack the rows below it even when the `lg`
+sidebar is visible. Numeric fields need room for their digits, padding and native
+spinner, including enlarged text, in addition to a 44px outer target.
 
 **Chips / badges:** `rounded-full px-2.5 py-1 text-xs font-semibold`. Neutral =
 `bg-surface-muted text-muted`. Status = soft+ink pair (e.g. Active =

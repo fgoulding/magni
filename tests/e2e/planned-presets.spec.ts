@@ -1,5 +1,6 @@
 import { expect, test, type Page, type TestInfo } from "@playwright/test";
 import { registerViaApi } from "./helpers";
+import { selectEditorWeek } from "./editor-navigation";
 
 type PlannedSet = { id: number; calculated_weight: number; reps: number; rep_out_target: number; editor_json: string };
 type PlannedSession = { id: number; sets: PlannedSet[] };
@@ -40,10 +41,10 @@ async function authorPreset(page: Page, preset: string): Promise<string> {
   await page.getByRole("button", { name: "Save now", exact: true }).click();
   await expect(page.getByText("Draft saved", { exact: true })).toBeVisible();
   await page.reload();
-  await page.getByRole("combobox", { name: "Week", exact: true }).selectOption({ label: "Override week" });
+  await selectEditorWeek(page, 1);
   await page.getByRole("button", { name: "Prescriptions", exact: true }).click();
   await expect(page.getByLabel("Set 1 minimum reps", { exact: true })).toHaveValue("4");
-  await page.getByRole("combobox", { name: "Week", exact: true }).selectOption("0");
+  await selectEditorWeek(page, 0);
   await page.getByRole("button", { name: "Progression & preview", exact: true }).click();
   if (preset === "reset") for (const index of [1, 2, 3]) await page.getByLabel(`Set ${index} reps`, { exact: true }).fill("4");
   const preview = await page.getByRole("status", { name: "Progression preview result", exact: true }).innerText();

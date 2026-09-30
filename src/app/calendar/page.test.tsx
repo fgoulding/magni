@@ -206,6 +206,20 @@ beforeEach(() => {
 });
 
 describe("CalendarPage", () => {
+  it("keeps an active planned workout in progress in the month and its details", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-06-01T12:00:00-07:00"));
+    const userId = createUser("calendar-active-status@example.com");
+    authenticate(userId);
+    const program = createScheduledProgram(userId);
+    const occurrence = occurrenceAt(userId, program.programId, "2026-06-01");
+    dbModule.db.prepare("UPDATE workout_occurrences SET status='in_progress' WHERE id=?").run(occurrence.id);
+    const rendered = await calendarPage.default({ searchParams: Promise.resolve({ month: "2026-06", view: "month", workout: `occurrence-${occurrence.id}` }) });
+    expect(collectAriaLabels(rendered)).toContain("In progress: Shared Strength - Lower on 2026-06-01");
+    expect(collectAriaLabels(rendered)).not.toContain("Scheduled: Shared Strength - Lower on 2026-06-01");
+    expect(collectRenderedText(rendered)).toContain("Workout in progress");
+  });
+
   it("renders completed session history and future workouts for active scheduled programs", async () => {
     vi.useFakeTimers();
     vi.setSystemTime(new Date("2026-06-01T12:00:00-07:00"));
@@ -271,7 +285,7 @@ describe("CalendarPage", () => {
     const text = collectRenderedText(rendered);
 
     expect(text).toContain("No workouts scheduled for this  week .");
-    expect(text).not.toContain("Scheduled");
+    expect(collectAriaLabels(rendered).filter((label) => label.startsWith("Scheduled:"))).toEqual([]);
   });
 
   it("does not render scheduled workouts before a run start date", async () => {

@@ -17,6 +17,15 @@ test("Today workout fits above navigation without old workouts or nested scrolli
   await page.goto("/today");
   await expect(page.getByRole("button", { name: "Start Workout", exact: true })).toHaveCount(1);
   await expect(page.getByRole("region", { name: "Missed workouts", exact: true })).toHaveCount(0);
+  await expect(page.getByRole("heading", { name: "Full body", exact: true })).toBeVisible();
+  await expect(page.getByRole("button", { name: "Pause run", exact: true })).toBeHidden();
+  const idleCard = page.locator("section[data-workout-focus]");
+  await idleCard.getByText("More", { exact: true }).click();
+  await idleCard.getByRole("button", { name: "Pause run", exact: true }).click();
+  const pause = page.getByRole("dialog", { name: "Today scroll training", exact: true });
+  await expect(pause).toBeVisible();
+  await pause.getByRole("button", { name: "Close", exact: true }).click();
+  await idleCard.getByText("More", { exact: true }).click();
   await page.screenshot({ path: info.outputPath("today-focused-idle.png"), fullPage: true, animations: "disabled" });
   await page.screenshot({ path: info.outputPath("today-focused-idle-viewport.png"), animations: "disabled" });
   const startResponse = page.waitForResponse(response => /\/api\/programs\/\d+\/sessions$/.test(response.url()) && response.request().method() === "POST");

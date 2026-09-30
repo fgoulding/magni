@@ -1,5 +1,6 @@
 import { expect, test, type Page, type TestInfo } from "@playwright/test";
 import { registerViaApi } from "./helpers";
+import { selectEditorWeek } from "./editor-navigation";
 import { writeFile } from "node:fs/promises";
 
 async function author(page: Page, label: string) {
@@ -15,7 +16,7 @@ async function author(page: Page, label: string) {
     await page.getByRole("button", { name: "Copy week", exact: true }).click();
     await page.getByLabel("Week name", { exact: true }).fill(name);
   }
-  await page.getByRole("combobox", { name: "Week", exact: true }).selectOption("0");
+  await selectEditorWeek(page, 0);
   await page.getByRole("button", { name: "Review & activate", exact: true }).click();
   for (const weekday of ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"]) {
     const control = page.getByRole("button", { name: weekday, exact: true });

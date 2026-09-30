@@ -77,7 +77,7 @@ export function WorkoutCard({
   nextLifts?: { name: string; detail: string }[];
   scheduleLabel?: string;
   statusLine?: string;
-  /** Pause-run control, rendered in the idle header. */
+  /** Pause-run control, rendered under More in the focused idle card. */
   holdSlot?: ReactNode;
   /** Small label above the program name (e.g. "Scheduled today"). */
   eyebrow?: string;
@@ -514,7 +514,7 @@ export function WorkoutCard({
 
   const isLive = Boolean(session) && !finished && !skipped;
   const idle = !session && !finished && !skipped;
-  const showPreview = idle && (Boolean(nextLifts?.length) || Boolean(scheduleLabel) || Boolean(statusLine));
+  const showPreview = idle && (focusMode || Boolean(nextLifts?.length) || Boolean(scheduleLabel) || Boolean(statusLine));
 
   const addExerciseControl = session ? (<AddSessionExerciseForm
     sessionId={session.id}
@@ -547,19 +547,19 @@ export function WorkoutCard({
     <section data-workout-focus={focusMode || undefined} className={`card overflow-hidden ${isLive ? "border-brand-line" : ""} ${focusMode ? styles.focus : ""}`}>
       {showPreview ? (
         <>
-          <div className="h-1 bg-brand" aria-hidden="true" />
+          {!focusMode && <div className="h-1 bg-brand" aria-hidden="true" />}
           <div className="p-4">
             <div className="flex items-start justify-between gap-3">
               <div className="min-w-0">
-                {eyebrow ? (
+                {eyebrow && (!focusMode || eyebrow === "Unscheduled run") ? (
                   <p className="eyebrow text-[11px] text-brand-strong">{eyebrow}</p>
                 ) : null}
-                <p className="display mt-1 truncate text-2xl leading-tight">{programName}</p>
+                {focusMode ? <h2 className="display break-words text-3xl leading-tight">{dayName}</h2> : <p className="display mt-1 truncate text-2xl leading-tight">{programName}</p>}
                 <p className="mt-1 text-sm text-muted">
-                  Week {currentWeek} · Day {currentDay} · {dayName}
+                  {focusMode ? `${programName} · Week ${currentWeek}` : `Week ${currentWeek} · Day ${currentDay} · ${dayName}`}
                 </p>
               </div>
-              {scheduleLabel ? (
+              {scheduleLabel && !focusMode ? (
                 <span className="shrink-0 rounded-full bg-surface-muted px-2.5 py-1 text-xs font-semibold text-muted">
                   {scheduleLabel}
                 </span>
@@ -567,26 +567,26 @@ export function WorkoutCard({
             </div>
 
             {nextLifts && nextLifts.length > 0 ? (
-              <div className="mt-4 rounded-xl bg-surface-muted p-3.5">
-                <div className="eyebrow mb-2.5 flex items-center gap-1.5 text-[11px] text-brand-strong">
+              <div className={focusMode ? "mt-4 border-t border-line pt-3" : "mt-4 rounded-xl bg-surface-muted p-3.5"}>
+                {!focusMode && <div className="eyebrow mb-2.5 flex items-center gap-1.5 text-[11px] text-brand-strong">
                   <Dumbbell aria-hidden="true" size={13} />
                   {liftsLabel}
-                </div>
+                </div>}
                 <div className="flex flex-col gap-2.5">
                   {nextLifts.map((lift, index) => (
                     <div key={`${lift.name}-${index}`} className="flex items-center justify-between gap-3 text-sm">
                       <span className="font-semibold">{lift.name}</span>
-                      <span className="font-display text-base tracking-tight text-muted">{lift.detail}</span>
+                      <span className="text-right font-display text-base tracking-tight text-muted">{lift.detail}</span>
                     </div>
                   ))}
                 </div>
               </div>
             ) : null}
 
-            {statusLine || holdSlot ? (
+            {statusLine || (!focusMode && holdSlot) ? (
               <div className="mt-3.5 flex items-center justify-between text-xs text-faint">
                 <span>{statusLine}</span>
-                {holdSlot}
+                {!focusMode && holdSlot}
               </div>
             ) : null}
           </div>
@@ -595,9 +595,9 @@ export function WorkoutCard({
         <div data-workout-header className="flex items-center gap-3 px-4 py-3.5">
           <span aria-hidden="true" className={`h-9 w-1 rounded-full ${isLive ? "bg-brand" : "bg-line"}`} />
           <div className="min-w-0">
-            <p className="display truncate text-lg leading-tight">{programName}</p>
-            <p className="eyebrow mt-0.5 text-[10px] text-faint">
-              Day {currentDay} · Week {currentWeek} · {dayName}
+            {focusMode ? <h2 className="display break-words text-xl leading-tight">{dayName}</h2> : <p className="display truncate text-lg leading-tight">{programName}</p>}
+            <p className={focusMode ? "mt-0.5 text-xs text-muted" : "eyebrow mt-0.5 text-[10px] text-faint"}>
+              {focusMode ? `${programName} · Week ${currentWeek}` : `Day ${currentDay} · Week ${currentWeek} · ${dayName}`}
             </p>
           </div>
         </div>
@@ -687,7 +687,13 @@ export function WorkoutCard({
             >
               {submitting ? "Loading…" : startLabel}
             </button>
-            {showSkip ? (
+            {focusMode && (showSkip || holdSlot) ? <details className={styles.options}>
+              <summary className="touch-target flex cursor-pointer items-center justify-center rounded-xl px-4 text-sm font-semibold text-muted hover:bg-surface-muted">More</summary>
+              <div className="flex flex-wrap items-center gap-2 border-t border-line pt-2">
+                {holdSlot}
+                {showSkip && <button type="button" disabled={skipping} onClick={skipWorkout} className="touch-target rounded-xl px-3 text-sm font-semibold text-muted hover:bg-surface-muted disabled:opacity-50">{skipping ? "Skipping…" : "Skip workout"}</button>}
+              </div>
+            </details> : showSkip ? (
               <button
                 type="button"
                 disabled={skipping}

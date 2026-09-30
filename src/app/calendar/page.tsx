@@ -16,6 +16,7 @@ import { db } from "@/lib/db";
 import { CalendarNavigation } from "@/components/CalendarNavigation";
 import { withCalendarReturn } from "@/features/calendar/navigation";
 import { CalendarAgenda } from "@/components/CalendarAgenda";
+import { CalendarStatus } from "@/components/CalendarStatus";
 
 type CalendarPageProps = {
   searchParams?: Promise<{ month?: string | string[]; date?: string | string[]; train?: string | string[]; workout?: string | string[]; view?: string | string[]; compact?: string | string[] }>;
@@ -159,10 +160,10 @@ function getHistoryEvents(userId: number, monthStart: Date, monthEnd: Date): Cal
 
 function getScheduledEvents(userId: number, monthStart: Date, monthEnd: Date): CalendarEvent[] {
   return getOccurrences(userId, toLocalDateKey(monthStart), toLocalDateKey(monthEnd)).map(row => {
-    const kind = row.status === "completed" || row.status === "skipped" ? row.status : "scheduled";
+    const kind = row.status;
     return {
       key: `occurrence-${row.id}`, occurrenceId: row.id, date: kind === "completed" ? (row.performed_date ?? row.scheduled_date) : row.scheduled_date, kind,
-      title: `${kind === "completed" ? "Completed" : kind === "skipped" ? "Skipped" : "Scheduled"}: ${row.program_name} - ${row.day_name}`,
+      title: `${kind === "completed" ? "Completed" : kind === "skipped" ? "Skipped" : kind === "in_progress" ? "In progress" : "Scheduled"}: ${row.program_name} - ${row.day_name}`,
       href: `/calendar?month=${(kind === "completed" ? (row.performed_date ?? row.scheduled_date) : row.scheduled_date).slice(0,7)}&workout=occurrence-${row.id}`, sessionId: row.session_id ?? undefined,
       programId: row.program_id, dayId: row.legacy_day_id ?? row.definition_day_id,
       definitionDayId: row.definition_day_id, programName: row.program_name, dayName: row.day_name,
@@ -171,12 +172,6 @@ function getScheduledEvents(userId: number, monthStart: Date, monthEnd: Date): C
       summary: occurrenceLiftPreview(row).slice(0, 3).map(lift => `${lift.name} ${formatLiftDetail(lift)}`).join(" · "),
     };
   });
-}
-
-function eventDotClasses(kind: CalendarEvent["kind"]): string {
-  if (kind === "scheduled" || kind === "in_progress") return "bg-brand";
-  if (kind === "skipped") return "bg-muted";
-  return "bg-success";
 }
 
 function eventKindLabel(kind: CalendarEvent["kind"]): string {
@@ -291,7 +286,7 @@ export default async function CalendarPage({ searchParams }: CalendarPageProps) 
       </section>
 
       <section aria-label="Month calendar" hidden={view !== "month"} className="overflow-hidden rounded-xl border border-line bg-surface shadow-sm">
-        <p className="border-b border-line px-3 py-2 text-sm text-muted">Open a workout dot, or tap a date to see its week.</p>
+        <p className="border-b border-line px-3 py-2 text-sm text-muted">Open a workout, or tap a date to see its week.</p>
         <div className="grid grid-cols-7 border-b border-line bg-surface-muted">
           {WEEKDAY_LABELS.map((label) => (
             <div key={label} className="px-2 py-2 text-center text-xs font-semibold text-muted">
@@ -334,7 +329,7 @@ export default async function CalendarPage({ searchParams }: CalendarPageProps) 
                       aria-label={`${event.title} on ${event.date}`}
                       className="touch-target inline-flex items-center justify-center rounded-full border border-transparent hover:border-line focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-brand"
                     >
-                      <span className={`h-2.5 w-2.5 shrink-0 rounded-full ${eventDotClasses(event.kind)}`} />
+                      <CalendarStatus status={event.kind} />
                     </Link>
                   ))}
                   {dayEvents.length === 0 ? null : (
@@ -347,14 +342,15 @@ export default async function CalendarPage({ searchParams }: CalendarPageProps) 
         </div>
       </section>
 
-      <div className="flex items-center gap-4 px-1">
+      <div className="flex flex-wrap items-center gap-x-4 gap-y-2 px-1">
         {[
-          { label: "Done", cls: "bg-success" },
-          { label: "Due", cls: "bg-brand" },
-          { label: "Skipped", cls: "bg-muted" },
+          { label: "Done", status: "completed" },
+          { label: "Scheduled", status: "scheduled" },
+          { label: "In progress", status: "in_progress" },
+          { label: "Skipped", status: "skipped" },
         ].map((item) => (
           <span key={item.label} className="inline-flex items-center gap-1.5 text-xs font-medium text-muted">
-            <span className={`h-2.5 w-2.5 rounded-full ${item.cls}`} aria-hidden="true" />
+            <CalendarStatus status={item.status} />
             {item.label}
           </span>
         ))}

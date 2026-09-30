@@ -15,3 +15,13 @@ brand colors, semantic tokens, typography, and component patterns. Use the
 semantic Tailwind tokens (`bg-brand`, `text-muted`, `border-line`, `.card`,
 `.display`, `.eyebrow`) — never raw `zinc-*`/`amber-*`/hex. Verify visual changes
 by screenshotting the running app at the iPhone viewport, not by eyeballing code.
+
+# Magni engineering team
+
+For substantive Magni work, use the reusable team and dependency workflow in
+`docs/engineering/team.md`. Project agent definitions are in `.codex/agents/`:
+coordinator, researching designer, frontend, backend and independent verification.
+The primary agent may coordinate; delegate bounded independent work with explicit
+file ownership and respect the runtime concurrency limit. Keep decisions and
+evidence in the task plan so work can resume across sessions. Fetch and compare
+the remote before editing; preserve unrelated local work.

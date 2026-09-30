@@ -29,14 +29,13 @@ function finishedMessage(status: TodayWorkoutSummary["today_session_status"]): s
   return "Workout complete today";
 }
 
-function statusLineFor(row: TodayWorkoutSummary): string {
-  if (row.started_date) return `Started ${row.started_date}`;
-  if (row.scheduled_date) return `Originally scheduled ${row.scheduled_date}`;
-  if (row.last_session_date) return `Last logged ${row.last_session_date}`;
-  return "No sessions logged yet";
+function statusLineFor(row: TodayWorkoutSummary, today: string): string | undefined {
+  if (row.started_date && row.started_date !== today) return `Started ${row.started_date}`;
+  if (row.scheduled_date && row.scheduled_date !== today) return `Scheduled ${row.scheduled_date}`;
+  return undefined;
 }
 
-function renderWorkout(row: TodayWorkoutSummary, label: string, rounding: number, userId: number) {
+function renderWorkout(row: TodayWorkoutSummary, label: string, rounding: number, userId: number, today: string) {
   const key = row.occurrence_id ? `occurrence-${row.occurrence_id}` : row.today_session_id ? `session-${row.today_session_id}` : `${row.program_id}-${row.definition_day_id}-${row.scheduled_date ?? label}`;
 
   if (row.today_session_status) {
@@ -78,9 +77,10 @@ function renderWorkout(row: TodayWorkoutSummary, label: string, rounding: number
       currentWeek={row.current_week}
       currentDay={row.day_number}
       eyebrow={label}
+      startLabel={label === "Resume workout" ? "Resume workout" : "Start Workout"}
       rounding={rounding}
       scheduleLabel={row.schedule_label}
-      statusLine={statusLineFor(row)}
+      statusLine={statusLineFor(row, today)}
       nextLifts={row.next_lifts.map((lift) => ({ name: lift.name, detail: formatLift(lift) }))}
       holdSlot={
         <ProgramHoldDialog
@@ -88,7 +88,7 @@ function renderWorkout(row: TodayWorkoutSummary, label: string, rounding: number
           programName={row.program_name}
           activeHold={null}
           triggerLabel="Pause run"
-          triggerClassName="inline-flex items-center font-semibold text-brand-strong"
+          triggerClassName="touch-target inline-flex items-center rounded-xl px-3 text-sm font-semibold text-muted hover:bg-surface-muted"
         />
       }
     />
@@ -152,15 +152,15 @@ export default async function TodayPage({ searchParams }: { searchParams?: Promi
     <div className="safe-x flex flex-1 flex-col gap-3 py-3">
       <header className="flex items-center justify-between gap-3">
         <div className="min-w-0">
-          <h1 className="display text-4xl">Today</h1>
+          <h1 className="display text-3xl">Today</h1>
           <p className="mt-0.5 text-sm text-muted">{new Intl.DateTimeFormat("en-US", { weekday: "short", month: "short", day: "numeric", timeZone: "UTC" }).format(new Date(`${todayKey}T12:00:00Z`))}</p>
         </div>
         <div className="flex shrink-0 items-center gap-2">
-        <Link href="/workouts" className="touch-target inline-flex items-center px-2 text-sm font-semibold text-brand-strong">Workout history</Link>
+        <Link href="/workouts" className="touch-target inline-flex items-center rounded-xl px-2 text-sm font-semibold text-muted hover:bg-surface-muted">Workout history</Link>
         <Link
           href="/calendar"
           aria-label="Open calendar"
-          className="touch-target inline-flex items-center justify-center rounded-xl border border-line bg-surface px-3 text-muted transition-colors active:bg-surface-muted"
+          className="touch-target inline-flex items-center justify-center rounded-xl px-3 text-muted transition-colors hover:bg-surface-muted active:bg-surface-muted"
         >
           <CalendarDays aria-hidden="true" size={20} />
         </Link>
@@ -168,8 +168,8 @@ export default async function TodayPage({ searchParams }: { searchParams?: Promi
       </header>
 
       <div className="flex flex-col gap-3">
-        {quickWorkout ? <QuickWorkout initialSession={quickWorkout} todayOnly /> : primary ? renderWorkout(primary, dashboard.activeWorkouts.includes(primary) ? "Resume workout" : scheduled.includes(primary) ? "Scheduled today" : "Unscheduled run", rounding, user.id) : null}
-        {completed.map(row => renderWorkout(row, "Completed today", rounding, user.id))}
+        {quickWorkout ? <QuickWorkout initialSession={quickWorkout} todayOnly /> : primary ? renderWorkout(primary, dashboard.activeWorkouts.includes(primary) ? "Resume workout" : scheduled.includes(primary) ? "Scheduled today" : "Unscheduled run", rounding, user.id, todayKey) : null}
+        {completed.map(row => renderWorkout(row, "Completed today", rounding, user.id, todayKey))}
         {!hasWorkouts ? (
         <>
           {heldRuns.length > 0 ? (

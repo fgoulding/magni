@@ -39,7 +39,9 @@ test("skips a scheduled workout and records it on the calendar", async ({ page }
 
   await buildScheduledLinearProgram(page, programName, "Skip Lower");
   await goToTab(page, "Today");
-  await page.getByRole("button", { name: "Skip" }).click();
+  await expect(page.getByRole("button", { name: "Skip workout", exact: true })).toBeHidden();
+  await page.locator("section[data-workout-focus]").getByText("More", { exact: true }).click();
+  await page.getByRole("button", { name: "Skip workout", exact: true }).click();
   await expect(page.getByText("Workout skipped")).toBeVisible();
 
   // Skipped workouts are recorded on the calendar but do not contribute to stats.

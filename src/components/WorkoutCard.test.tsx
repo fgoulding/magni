@@ -62,6 +62,23 @@ function makeCardProps(overrides?: Partial<Parameters<typeof WorkoutCard>[0]>) {
 }
 
 describe("WorkoutCard", () => {
+  it("keeps Today secondary actions behind More and skips the same occurrence", async () => {
+    const user = userEvent.setup();
+    const calls = vi.fn().mockResolvedValue(jsonResponse({ success: true }));
+    stubFetch(calls);
+    render(<WorkoutCard {...makeCardProps({ focusMode: true, occurrenceId: 77, holdSlot: <button>Pause run</button> })} />);
+    expect(screen.getByRole("heading", { name: "Workout A" })).toBeVisible();
+    expect(screen.getByRole("button", { name: "Start Workout" })).toBeVisible();
+    expect(screen.getByRole("button", { name: "Skip workout" })).not.toBeVisible();
+    expect(screen.getByRole("button", { name: "Pause run" })).not.toBeVisible();
+    await user.click(screen.getByText("More", { exact: true }));
+    expect(screen.getByRole("button", { name: "Pause run" })).toBeVisible();
+    await user.click(screen.getByRole("button", { name: "Skip workout" }));
+    expect(await screen.findByText("Workout skipped")).toBeVisible();
+    expect(calls).toHaveBeenCalledWith("/api/programs/1/skip-workout", expect.objectContaining({ method: "POST" }));
+    expect(JSON.parse(calls.mock.calls[0][1].body)).toEqual({ dayId: 2, occurrenceId: 77 });
+  });
+
   it("keeps exercise selection stable until Log and Next finishes saving", async () => {
     const user = userEvent.setup();
     let acknowledge!: (response: Response) => void;

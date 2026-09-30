@@ -1,6 +1,7 @@
 import { expect, test } from "@playwright/test";
 import { readFile } from "node:fs/promises";
 import { registerViaApi } from "./helpers";
+import { selectEditorWeek } from "./editor-navigation";
 
 const presets = ["linear", "double", "percentage", "top-backoff", "reset", "manual-ab"];
 
@@ -14,10 +15,10 @@ test("copy a block, fill selected weeks, bulk edit and undo without re-entry", a
   await page.getByText("Block tools", { exact: true }).click();
   await page.getByRole("button", { name: "Copy block", exact: true }).click();
   await expect(page.getByLabel("Block name", { exact: true })).toHaveValue("Build copy");
-  await expect(page.getByRole("combobox", { name: "Week", exact: true }).locator("option")).toHaveCount(7);
+  await expect(page.getByRole("combobox", { name: "Week", exact: true, includeHidden: true }).locator("option")).toHaveCount(7);
   await page.getByRole("button", { name: "Undo last edit", exact: true }).click();
-  await expect(page.getByRole("combobox", { name: "Week", exact: true }).locator("option")).toHaveCount(4);
-  await page.getByRole("combobox", { name: "Week", exact: true }).selectOption("0");
+  await expect(page.getByRole("combobox", { name: "Week", exact: true, includeHidden: true }).locator("option")).toHaveCount(4);
+  await selectEditorWeek(page, 0);
   await page.getByRole("button", { name: "Copy block", exact: true }).click();
   await page.screenshot({ path: info.outputPath("editor-block-copy.png"), fullPage: true });
   await page.getByRole("button", { name: "Prescriptions", exact: true }).click();
@@ -26,7 +27,7 @@ test("copy a block, fill selected weeks, bulk edit and undo without re-entry", a
   await page.getByLabel("Select Week 2", { exact: true }).check();
   await expect(page.getByRole("list", { name: "Fill preview" })).toContainText("Week 2 · Day A · Squat");
   await page.getByRole("button", { name: "Fill selected weeks from this exercise", exact: true }).click();
-  await page.getByRole("combobox", { name: "Week", exact: true }).selectOption("1");
+  await selectEditorWeek(page, 1);
   await expect(page.getByLabel("Set 1 minimum reps", { exact: true })).toHaveValue("4");
   await page.getByRole("button", { name: "Undo last edit", exact: true }).click();
   await expect(page.getByLabel("Set 1 minimum reps", { exact: true })).toHaveValue("7");
@@ -46,12 +47,12 @@ test("copy a block, fill selected weeks, bulk edit and undo without re-entry", a
   await page.getByRole("button", { name: "Save now", exact: true }).click();
   await expect(page.getByText("Draft saved", { exact: true })).toBeVisible();
   await page.reload();
-  await expect(page.getByRole("combobox", { name: "Week", exact: true }).locator("option")).toHaveCount(7);
-  await page.getByRole("combobox", { name: "Week", exact: true }).selectOption("2");
+  await expect(page.getByRole("combobox", { name: "Week", exact: true, includeHidden: true }).locator("option")).toHaveCount(7);
+  await selectEditorWeek(page, 2);
   await page.getByRole("button", { name: "Prescriptions", exact: true }).click();
   await expect(page.getByLabel("Set 1 minimum reps", { exact: true })).toHaveValue("6");
   await expect(page.getByLabel("Set 1 maximum reps", { exact: true })).toHaveValue("10");
-  await page.getByRole("combobox", { name: "Week", exact: true }).selectOption("3");
+  await selectEditorWeek(page, 3);
   await expect(page.getByLabel("Set 1 minimum reps", { exact: true })).toHaveValue("4");
 });
 
@@ -159,7 +160,7 @@ for (const preset of presets) test(`customize, copy, reload and activate ${prese
   await expect(page.getByText("Draft saved", { exact: true })).toBeVisible();
   await page.reload();
   await expect(page.getByLabel("Program name", { exact: true })).toHaveValue(`My ${preset}`);
-  await page.getByRole("combobox", { name: "Week", exact: true }).selectOption({ label: "Override week" });
+  await selectEditorWeek(page, 1);
   await page.getByRole("button", { name: "Prescriptions", exact: true }).click();
   await expect(page.getByLabel("Set 1 minimum reps", { exact: true })).toHaveValue("4");
   if (preset === "top-backoff") await page.screenshot({ path: info.outputPath("editor-top-backoff.png"), fullPage: true });
