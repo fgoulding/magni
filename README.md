@@ -20,6 +20,10 @@ The responsive browser workflows are verified with iPhone WebKit, including enla
 
 Open **Programs → Custom program** to start blank, customize one of six presets or resume a draft. Structure, Prescriptions, Progression & preview, and Review & activate are separate sections; advanced settings are collapsed. Activation freezes a version for training. Later draft changes do not silently change active or historical prescriptions.
 
+The editor is designed for desktop, with a week/day outline and a contained phone fallback. In **Progression & preview**, configure the condition, change, frequency and missed-workout policies beside a hypothetical sequence of up to eight workouts. The sequence repeats the selected prescription with carried state; it never saves training results or forecasts the other weeks' prescriptions.
+
+Use **Start from a rule preset** for one lift, **Copy rule to other lifts** to preview and apply a rule to complete progression groups, or **Reuse an exercise** to add its sets, notes and rule to another day. Rule copying preserves each target's starting values and independent progression. Exercise reuse creates an independent copy. One **Undo** restores either action.
+
 Program files are optional: import/export a versioned JSON file from **Presets and program files**. See [the format and examples](docs/program-files.md). Complete programs can also be authored directly in the UI.
 
 ## Tech Stack

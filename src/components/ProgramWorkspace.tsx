@@ -11,6 +11,9 @@ import { ActiveProgramChanges } from "@/components/ActiveProgramChanges";
 import { BulkPrescriptionTools } from "@/components/BulkPrescriptionTools";
 import { prescriptionColumns, SetPrescriptionEditor } from "@/components/SetPrescriptionEditor";
 import { ProgressionRuleEditor } from "@/components/ProgressionRuleEditor";
+import { ProgressionRuleCopy } from "@/components/ProgressionRuleCopy";
+import { ReuseProgramExercise } from "@/components/ReuseProgramExercise";
+import { listProgressionGroups } from "@/features/program-editor/progression-authoring";
 import type { EditorDraft } from "@/features/program-editor/repository";
 
 const control = "touch-target w-full rounded-xl border border-line bg-surface px-3 py-2 text-foreground outline-none focus:border-brand";
@@ -89,6 +92,9 @@ function HydratedWorkspace({ userId, draftId, initialDocument, initialRevision, 
   const block = getBlockRange(document.weeks, wi);
   const firstAppearance = exercise ? document.weeks.flatMap(week => week.days.flatMap(day => day.exercises))
     .find(item => item.progressionKey === exercise.progressionKey) : undefined;
+  const progressionInitialReps = (firstAppearance?.sets.find(set => set.role !== "warmup") ?? firstAppearance?.sets[0])?.repMin ?? 0;
+
+  const progressionGroup = exercise ? listProgressionGroups(document).find(group => group.progressionKey === exercise.progressionKey) : undefined;
 
   function persistPending(value: ProgramDocumentV1) {
     try { localStorage.setItem(storageKey, JSON.stringify({ document: value, revision: revision.current })); }
@@ -237,7 +243,7 @@ function HydratedWorkspace({ userId, draftId, initialDocument, initialRevision, 
         {document.weeks.map((item, w) => <div key={item.id} className="min-w-0">
           {item.block && (w === 0 || document.weeks[w - 1].block !== item.block) ? <p className="mb-2 break-words text-xs font-semibold text-muted">{item.block}</p> : null}
           <button type="button" disabled={deleting} aria-label={`Select week ${w + 1}: ${item.name}`} aria-pressed={wi === w} className={`touch-target w-full rounded-xl px-3 py-2 text-left text-sm font-semibold active:bg-surface-muted ${wi === w ? "bg-brand-soft text-brand-strong" : "text-foreground"}`} onClick={() => { setWeekIndex(w); setDayIndex(0); setExerciseIndex(0); if (tab === "preview") setTab("structure"); }}>{item.name || `Week ${w + 1}`}{item.deload ? " · Deload" : ""}</button>
-          <div className="ml-3 mt-1 flex flex-col border-l border-line pl-2">{item.days.map((itemDay, d) => <button key={itemDay.id} type="button" disabled={deleting} aria-label={`Select week ${w + 1}, day ${d + 1}: ${itemDay.name}`} aria-pressed={wi === w && di === d} className={`touch-target min-w-0 rounded-xl px-3 py-2 text-left text-sm ${wi === w && di === d ? "bg-surface-muted font-semibold text-foreground" : "text-muted"}`} onClick={() => { setWeekIndex(w); setDayIndex(d); setExerciseIndex(0); setTab("sets"); }}><span className="block break-words">{itemDay.name || `Day ${d + 1}`}</span><span className="text-xs text-muted">{itemDay.exercises.length} exercises</span></button>)}</div>
+          <div className="ml-3 mt-1 flex flex-col border-l border-line pl-2">{item.days.map((itemDay, d) => <button key={itemDay.id} type="button" disabled={deleting} aria-label={`Select week ${w + 1}, day ${d + 1}: ${itemDay.name}`} aria-pressed={wi === w && di === d} className={`touch-target min-w-0 rounded-xl px-3 py-2 text-left text-sm ${wi === w && di === d ? "bg-surface-muted font-semibold text-foreground" : "text-muted"}`} onClick={() => { setWeekIndex(w); setDayIndex(d); setExerciseIndex(0); setTab(current => current === "progression" ? "progression" : "sets"); }}><span className="block break-words">{itemDay.name || `Day ${d + 1}`}</span><span className="text-xs text-muted">{itemDay.exercises.length} exercises</span></button>)}</div>
         </div>)}
       </aside>
       <fieldset disabled={deleting} className="flex min-w-0 flex-col gap-4">
@@ -252,10 +258,11 @@ function HydratedWorkspace({ userId, draftId, initialDocument, initialRevision, 
     </div> : null}
 
     {(tab === "sets" || tab === "progression") && day ? <div className="flex min-w-0 flex-col gap-4"><nav aria-label="Exercises" className="flex min-w-0 flex-wrap items-center gap-2"><h2 className="display w-full break-words text-2xl">{day.name}</h2>{day.exercises.map((item, index) => <button key={item.id} aria-pressed={ei === index} className={`${button} min-w-0 justify-start whitespace-normal break-words text-left ${ei === index ? "border-brand-line bg-brand-soft text-brand-strong" : ""}`} onClick={() => setExerciseIndex(index)}>{item.name || `Exercise ${index + 1}`}</button>)}<button className={button} onClick={() => { change(value => value.weeks[wi].days[di].exercises.push(createExercise())); setExerciseIndex(day.exercises.length); }}><Plus size={16} />Add exercise</button></nav>
-      {exercise ? <section className="card flex min-w-0 flex-col gap-4 p-4">{<EditorField label={"Exercise name"} value={exercise.name} onChange={name => editExercise(value => { value.name = name; })} />}<div className="grid grid-cols-2 gap-2">{<EditorNumber label={`Working load (${document.unit})`} value={exercise.baseLoad} onChange={load => editShared(value => { value.baseLoad = load; })} />}{<EditorNumber label={`Explicit training max (${document.unit})`} value={exercise.trainingMax} onChange={max => editShared(value => { value.trainingMax = max; })} />}</div><p className="text-sm text-muted">Editing {week.name} · {day.name}. {firstAppearance && firstAppearance.id !== exercise.id ? prescriptionMatches(firstAppearance, exercise)
+      <ReuseProgramExercise key={day.id} document={document} disabled={day.exercises.length >= 40} onReuse={source => { change(value => { value.weeks[wi].days[di].exercises.push(copyExercise(source, false)); }); setExerciseIndex(day.exercises.length); }} />
+      {exercise ? <section className="card flex min-w-0 flex-col gap-4 p-4"><div className="grid min-w-0 gap-3 sm:grid-cols-2 xl:grid-cols-[minmax(0,2fr)_minmax(0,1fr)_minmax(0,1fr)]">{<EditorField label={"Exercise name"} value={exercise.name} onChange={name => editExercise(value => { value.name = name; })} />}{<EditorNumber label={`Working load (${document.unit})`} value={exercise.baseLoad} onChange={load => editShared(value => { value.baseLoad = load; })} />}{<EditorNumber label={`Explicit training max (${document.unit})`} value={exercise.trainingMax} onChange={max => editShared(value => { value.trainingMax = max; })} />}</div><p className="text-sm text-muted">Editing {week.name} · {day.name}.{tab === "sets" ? <> {firstAppearance && firstAppearance.id !== exercise.id ? prescriptionMatches(firstAppearance, exercise)
         ? "Set prescriptions match the first appearance of this lift. Each appearance stays separately editable."
         : "Local set override: these prescriptions differ from the first appearance of this lift."
-        : "Set prescriptions below belong to this appearance. Copies remain separately editable."}</p>
+        : "Set prescriptions below belong to this appearance. Copies remain separately editable."}</> : null}</p>
       {tab === "sets" ? <>
         <div className="flex flex-wrap gap-2">{<EditorIcon label={"Move exercise earlier"} onClick={() => { change(value => reorder(value.weeks[wi].days[di].exercises, ei, -1)); setExerciseIndex(ei - 1); }} disabled={ei === 0}><ArrowUp size={16} /></EditorIcon>}{<EditorIcon label={"Move exercise later"} onClick={() => { change(value => reorder(value.weeks[wi].days[di].exercises, ei, 1)); setExerciseIndex(ei + 1); }} disabled={ei >= day.exercises.length - 1}><ArrowDown size={16} /></EditorIcon>}<button className={button} onClick={() => { change(value => value.weeks[wi].days[di].exercises.splice(ei + 1, 0, copyExercise(exercise, false))); setExerciseIndex(ei + 1); }}>Copy exercise</button>{<EditorIcon label={"Remove exercise"} onClick={() => { change(value => value.weeks[wi].days[di].exercises.splice(ei, 1)); setExerciseIndex(0); }} disabled={false}><Trash2 size={16} /></EditorIcon>}</div>
         {<EditorField label={"Superset group (same name links exercises)"} value={exercise.supersetGroup} onChange={group => editExercise(value => { value.supersetGroup = group; })} />}
@@ -263,13 +270,19 @@ function HydratedWorkspace({ userId, draftId, initialDocument, initialRevision, 
         <BulkPrescriptionTools document={document} weekIndex={wi} dayIndex={di} exerciseIndex={ei} onChange={change} />
         <button className={button} onClick={() => editExercise(value => value.sets.push(createSet()))}><Plus size={16} />Add set</button>{<EditorField label={"Exercise notes"} value={exercise.notes} onChange={notes => editExercise(value => { value.notes = notes; })} />}<button className={button} onClick={() => setTab("progression")}>Configure progression</button>
       </> : <>
+        <div className="grid min-w-0 gap-3 xl:grid-cols-2">
+        <details className="min-w-0 rounded-xl border border-line p-3"><summary className="touch-target cursor-pointer text-sm font-semibold">Progression scope · {progressionGroup?.appearances.length ?? 1} {(progressionGroup?.appearances.length ?? 1) === 1 ? "appearance" : "appearances"}</summary>
+        <div className="mt-3 flex flex-col gap-3"><p className="text-sm text-muted">Rule, starting load and training max edits apply to these appearances. Set prescriptions remain local.</p>
+        <ul aria-label="Shared progression appearances" className="space-y-1 text-sm text-muted">{progressionGroup?.appearances.map(appearance => <li key={appearance.exerciseId}>{appearance.weekName} · {appearance.dayName} · {appearance.exerciseName}</li>)}</ul>
         <label className="text-sm font-semibold">Progression sharing<select className={control} value={exercise.progressionKey} onChange={event => change(value => {
           const selected = value.weeks.flatMap(week => week.days.flatMap(day => day.exercises)).find(item => item.progressionKey === event.target.value);
           const target = value.weeks[wi].days[di].exercises[ei]; target.progressionKey = event.target.value;
           if (selected) applySharedConfiguration(value, selected);
-        })}>{Array.from(new Map(document.weeks.flatMap(week => week.days.flatMap(day => day.exercises.map(item => [item.progressionKey, `${item.name || "Unnamed lift"} · ${week.name}`] as const)))).entries()).map(([key,label]) => <option key={key} value={key}>{label}</option>)}</select></label><button className={button} onClick={() => editExercise(value => { value.progressionKey = crypto.randomUUID(); })}>Progress this appearance independently</button>
-        <p className="text-sm text-muted">Load, max and rule changes apply to every appearance sharing this progression. Separate this appearance first to configure it differently.</p>
-        <ProgressionRuleEditor key={exercise.id} rule={exercise.rule} onChange={rule => editShared(value => { value.rule = rule; })} sets={exercise.sets.map(set => ({ id: set.id, role: set.role, repMin: set.repMin, repMax: set.repMax, actualReps: null }))} state={{ load: exercise.baseLoad, trainingMax: exercise.trainingMax, reps: exercise.sets.find(set => set.role !== "warmup")?.repMin ?? 0, consecutiveFailures: 0, lastEvaluatedWeek: null }} unit={document.unit} week={wi + 1} isDeload={week.deload} />
+        })}>{Array.from(new Map(document.weeks.flatMap(week => week.days.flatMap(day => day.exercises.map(item => [item.progressionKey, `${item.name || "Unnamed lift"} · ${week.name}`] as const)))).entries()).map(([key,label]) => <option key={key} value={key}>{label}</option>)}</select></label><button type="button" className={button} disabled={(progressionGroup?.appearances.length ?? 1) < 2} onClick={() => editExercise(value => { value.progressionKey = crypto.randomUUID(); })}>Progress this appearance independently</button>
+        <p className="text-sm text-muted">Choosing another group replaces this appearance’s starting load, training max and rule with that group’s settings. Separate this appearance first to configure it differently.</p></div></details>
+        <ProgressionRuleCopy key={`${exercise.id}:${exercise.progressionKey}`} document={document} source={exercise} onChange={change} />
+        </div>
+        <ProgressionRuleEditor key={exercise.id} rule={exercise.rule} onChange={rule => editShared(value => { value.rule = rule; })} sets={exercise.sets} initialReps={progressionInitialReps} state={{ load: exercise.baseLoad, trainingMax: exercise.trainingMax, reps: progressionInitialReps, consecutiveFailures: 0, lastEvaluatedWeek: null }} unit={document.unit} week={wi + 1} isDeload={week.deload} />
       </>}
       {issues.filter(issue => issue.path.startsWith(`weeks.${wi}.days.${di}.exercises.${ei}`)).map(issue => <p className="text-sm text-danger-ink" key={issue.path + issue.message}>{issue.message}</p>)}
       </section> : <p className="card self-start p-5 text-sm text-muted">Add your first exercise. Start with its sets, then configure progression.</p>}

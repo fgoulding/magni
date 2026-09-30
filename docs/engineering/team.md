@@ -44,6 +44,7 @@ Use only the roles needed for a task. Assign disjoint files to concurrent worker
 
 ## Active work
 
+- [2026-09-30 desktop progression workspace](../plans/2026-09-30-desktop-progression-workspace.md): progression setup and faster program building; baseline `be9824d` matches fetched `origin/main`.
 - [2026-09-30 design refinement](../plans/2026-09-30-design-refinement.md): five approved improvements; baseline `ed9051f` matches fetched `origin/main`.
 
 ## Configuration reference

@@ -1,6 +1,7 @@
 import { db } from "@/lib/db";
 import { EditorRepositoryError, type EditorPrescriptionSet, type EditorSetMetadata } from "./repository";
 import { evaluateProgression, validateProgressionRule, type ProgressionInput, type ProgressionResult, type ProgressionState } from "./progression";
+import { resolveEditorSetPrescription } from "./prescription";
 
 export type EditorCompletionDecision = {
   version: 1;
@@ -62,25 +63,10 @@ function readMetadata(json: string): EditorSetMetadata {
 export function resolveEditorPrescription(set: EditorPrescriptionSet, runId: number): EditorPrescriptionSet {
   const metadata = readMetadata(JSON.stringify(set.editor));
   const { state } = readState(runId, metadata);
-  let weight: number;
-  switch (metadata.set.loadMode) {
-    case "working": weight = state.load; break;
-    case "percent": weight = state.trainingMax * metadata.set.load / 100; break;
-    case "bodyweight": weight = 0; break;
-    case "fixed": case "added": weight = metadata.set.load; break;
-    default: executionError("The frozen prescription has an unsupported load mode.");
-  }
-  if (!Number.isFinite(weight) || weight < 0) executionError("The resolved working weight must be nonnegative and finite.");
-  // Preserve a decimal percentage without introducing binary floating-point noise.
-  weight = Number(weight.toPrecision(15));
-  let repMin = metadata.set.repMin;
-  let repMax = metadata.set.repMax;
-  if (metadata.rule?.action.variable === "reps" && metadata.set.role !== "warmup") {
-    if (!Number.isSafeInteger(metadata.initialReps) || metadata.initialReps! < 1) executionError("Rep progression requires the exercise's original minimum rep target.");
-    const delta = state.reps - metadata.initialReps!;
-    repMin = Math.max(1, repMin + delta);
-    repMax = Math.max(repMin, repMax + delta);
-  }
+  let resolved: ReturnType<typeof resolveEditorSetPrescription>;
+  try { resolved = resolveEditorSetPrescription({ ...metadata, state }); }
+  catch (error) { executionError(error instanceof Error ? error.message : "The frozen prescription could not be resolved."); }
+  const { weight, repMin, repMax } = resolved;
   evaluateProgression({ rule: null, state, status: "completed", week: set.week_number,
     sets: [{ ...metadata.set, repMin, repMax, actualReps: null }] });
   return {

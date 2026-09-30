@@ -174,6 +174,14 @@ Use aligned columns from `xl`; stack the rows below it even when the `lg`
 sidebar is visible. Numeric fields need room for their digits, padding and native
 spinner, including enlarged text, in addition to a 44px outer target.
 
+Progression groups related controls under When, Change, Frequency and Missed
+workouts. At `xl`, put the hypothetical sequence beside the rule controls; stack
+it below them at smaller widths. Label every simulated workout and keep its
+results separate from saved training. Start with one trial and disclose extra
+scenarios. Rule presets replace only the rule. Rule copying lists all affected
+appearances before Apply and preserves each target's starting values and
+independent progression. Exercise reuse creates a complete, independent copy.
+
 **Chips / badges:** `rounded-full px-2.5 py-1 text-xs font-semibold`. Neutral =
 `bg-surface-muted text-muted`. Status = soft+ink pair (e.g. Active =
 `bg-success-soft text-success-ink` with a `bg-success` dot).
