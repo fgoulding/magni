@@ -21,19 +21,38 @@ test("Today and Calendar share a partial-week occurrence and resume the same ses
   const session = await (await startResponse).json();
   expect(session.scheduled_date).toBe(date);
   expect(session.day_name).toBe("Lower");
+  expect(session.occurrence_id).toBeGreaterThan(0);
+  const savedSet = { setId: session.sets[0].id, actualReps: 7, actualWeight: 42.5 };
+  expect((await page.request.put(`/api/sessions/${session.id}/sets`, { data: savedSet })).ok()).toBe(true);
+  const waitForExactResume = () => page.waitForResponse(response =>
+    response.request().method() === "GET" &&
+    new URL(response.url()).pathname === `/api/programs/${program.id}/sessions/current` &&
+    new URL(response.url()).searchParams.get("occurrenceId") === String(session.occurrence_id),
+  ).then(async response => {
+    expect(response.ok()).toBe(true);
+    const resumed = await response.json();
+    expect(resumed).toMatchObject({ id: session.id, occurrence_id: session.occurrence_id, status: "in_progress" });
+    expect(resumed.sets.map((set: { id: number }) => set.id)).toEqual(session.sets.map((set: { id: number }) => set.id));
+    expect(resumed.sets[0]).toMatchObject({ id: savedSet.setId, actual_reps: savedSet.actualReps, actual_weight: savedSet.actualWeight });
+  });
   await page.getByRole("navigation").getByRole("link", { name: "Calendar", exact: true }).click();
-  const occurrence = page.getByRole("link", { name: `Scheduled: Shared occurrence - Lower on ${date}`, exact: true });
+  const occurrence = page.getByRole("link", { name: `In progress: Shared occurrence - Lower on ${date}`, exact: true });
   await expect(occurrence).toBeVisible();
+  expect(new URL((await occurrence.getAttribute("href"))!, page.url()).searchParams.get("workout")).toBe(`occurrence-${session.occurrence_id}`);
   const box = await occurrence.boundingBox();
   expect(box!.width).toBeGreaterThanOrEqual(44);
   expect(box!.height).toBeGreaterThanOrEqual(44);
+  const resumed = waitForExactResume();
   await occurrence.click();
+  await resumed;
   await expect(page.getByRole("dialog").getByRole("heading", { name: "Squat", exact: true })).toBeVisible();
   await page.screenshot({ path: info.outputPath("calendar-resume.png"), fullPage: true });
+  const reloaded = waitForExactResume();
   await page.reload();
+  await reloaded;
   await expect(page.getByRole("dialog").getByRole("heading", { name: "Squat", exact: true })).toBeVisible();
   const sessions = await (await page.request.get("/api/sessions")).json();
-  expect(sessions.filter((s: { program_id: number }) => s.program_id === program.id)).toHaveLength(1);
+  expect(sessions.filter((s: { program_id: number }) => s.program_id === program.id).map((s: { id: number }) => s.id)).toEqual([session.id]);
   await page.evaluate(() => { document.documentElement.dataset.theme = "dark"; });
   await page.screenshot({ path: info.outputPath("calendar-resume-dark.png"), fullPage: true });
 });

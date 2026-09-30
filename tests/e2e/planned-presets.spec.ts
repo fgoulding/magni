@@ -90,11 +90,24 @@ async function perform(page: Page, actualReps?: number[]): Promise<Completion> {
     await saves.nth(visibleIndex).click();
     await expect(saves.nth(visibleIndex)).toHaveAttribute("aria-pressed", "true");
   }
+  const fromCalendar = new URL(page.url()).pathname === "/calendar";
   const response = page.waitForResponse(item => item.url().endsWith("/complete-and-advance") && item.request().method() === "POST");
   await page.getByRole("button", { name: "Finish Workout", exact: true }).click();
   const finished = await response;
   expect(finished.ok()).toBe(true);
-  return finished.json();
+  const completed: Completion = await finished.json();
+  // The API response precedes the refreshed page. A future month's workout
+  // completed today can leave that month's selection and close its dialog.
+  // Wait for the rendered result before openNext decides whether Close exists.
+  if (fromCalendar) {
+    await expect.poll(async () => {
+      const dialog = page.getByRole("dialog");
+      return await dialog.count() === 0 || await dialog.getByText("Completed workout", { exact: true }).isVisible();
+    }, { message: "Calendar commits the completed workout before navigating onward" }).toBe(true);
+  } else {
+    await expect(page.getByText("Workout complete today", { exact: true })).toBeVisible();
+  }
+  return completed;
 }
 
 async function openNext(page: Page) {

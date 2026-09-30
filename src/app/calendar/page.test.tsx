@@ -1,10 +1,11 @@
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { isValidElement, type ReactNode } from "react";
+import { isValidElement, type ComponentProps, type ReactNode } from "react";
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { createUnexpiredAuthSession } from "@/__tests__/auth-fixture";
 import { WorkoutReuse } from "@/components/WorkoutReuse";
+import { WorkoutCard } from "@/components/WorkoutCard";
 
 const cookieMock = vi.hoisted(() => {
   const store = new Map<string, string>();
@@ -63,6 +64,12 @@ function collectWorkoutStartLabels(node: ReactNode): string[] {
     return [...labels, ...collectWorkoutStartLabels(node.props.children)];
   }
   return [];
+}
+
+function collectWorkoutCards(node: ReactNode): ComponentProps<typeof WorkoutCard>[] {
+  if (Array.isArray(node)) return node.flatMap(collectWorkoutCards);
+  if (!isValidElement<ComponentProps<typeof WorkoutCard> & { children?: ReactNode }>(node)) return [];
+  return [...(node.type === WorkoutCard ? [node.props] : []), ...collectWorkoutCards(node.props.children)];
 }
 
 function collectRepeats(node: ReactNode): {sessionId?:number;name:string;today:string}[] {
@@ -206,18 +213,40 @@ beforeEach(() => {
 });
 
 describe("CalendarPage", () => {
-  it("keeps an active planned workout in progress in the month and its details", async () => {
+  it.each(["week", "month"])("resumes an active planned occurrence in %s details without changing its scheduled date", async (view) => {
     vi.useFakeTimers();
-    vi.setSystemTime(new Date("2026-06-01T12:00:00-07:00"));
+    vi.setSystemTime(new Date("2026-05-31T12:00:00-07:00"));
     const userId = createUser("calendar-active-status@example.com");
     authenticate(userId);
     const program = createScheduledProgram(userId);
     const occurrence = occurrenceAt(userId, program.programId, "2026-06-01");
-    dbModule.db.prepare("UPDATE workout_occurrences SET status='in_progress' WHERE id=?").run(occurrence.id);
-    const rendered = await calendarPage.default({ searchParams: Promise.resolve({ month: "2026-06", view: "month", workout: `occurrence-${occurrence.id}` }) });
+    const { POST: start } = await import("@/app/api/programs/[id]/sessions/route");
+    const response = await start(new Request(`http://localhost/api/programs/${program.programId}/sessions`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ occurrenceId: occurrence.id }),
+    }), { params: Promise.resolve({ id: String(program.programId) }) });
+    expect(response.status).toBe(201);
+    const session = await response.json();
+    expect(session).toMatchObject({ occurrence_id: occurrence.id, status: "in_progress", date: "2026-05-31", scheduled_date: "2026-06-01" });
+    expect(session.sets.length).toBeGreaterThan(0);
+
+    const rendered = await calendarPage.default({ searchParams: Promise.resolve({ month: "2026-06", view, workout: `occurrence-${occurrence.id}` }) });
     expect(collectAriaLabels(rendered)).toContain("In progress: Shared Strength - Lower on 2026-06-01");
     expect(collectAriaLabels(rendered)).not.toContain("Scheduled: Shared Strength - Lower on 2026-06-01");
     expect(collectRenderedText(rendered)).toContain("Workout in progress");
+    expect(collectRenderedText(rendered)).toContain("Originally scheduled 2026-06-01");
+    expect(collectRenderedText(rendered)).not.toContain("Started on 2026-06-01");
+    expect(collectWorkoutCards(rendered)).toEqual([expect.objectContaining({
+      occurrenceId: occurrence.id,
+      programId: program.programId,
+      dayId: program.lowerDayId,
+      currentWeek: occurrence.week_number,
+      currentDay: occurrence.day_number,
+      scheduledDate: "2026-06-01",
+    })]);
+    expect(collectRepeats(rendered)).toEqual([]);
+    expect(collectLinks(rendered).some(href => href.startsWith(`/workouts/${session.id}`))).toBe(false);
   });
 
   it("renders completed session history and future workouts for active scheduled programs", async () => {
@@ -459,6 +488,8 @@ describe("CalendarPage", () => {
     const rendered=await calendarPage.default({searchParams:Promise.resolve({month:"2026-07",date:"2026-07-03",workout:`history-${sessionId}`})});
     expect(collectAriaLabels(rendered)).toContain("In progress:  - Independent row on 2026-07-03");
     expect(collectLinks(rendered)).toContain(`/workouts/${sessionId}?returnTo=%2Fcalendar%3Fmonth%3D2026-07%26date%3D2026-07-03`);
+    expect(collectRenderedText(rendered)).toContain("Started on 2026-07-03");
+    expect(collectWorkoutCards(rendered)).toEqual([]);
   });
 
   it("shows a do-workout modal for a selected scheduled calendar workout", async () => {

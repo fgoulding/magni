@@ -32,6 +32,8 @@ async function screenshot(page: Page, info: TestInfo, name: string) {
 }
 async function assertUnchanged(page: Page, programId: number, session: { id: number; sets: { id: number }[] }) {
   const restored = await (await page.request.get(`/api/sessions/${session.id}`)).json();
+  expect(restored.id).toBe(session.id);
+  expect(restored.sets.map((set: { id: number }) => set.id)).toEqual(session.sets.map(set => set.id));
   expect(restored.sets[0]).toMatchObject({ id: session.sets[0].id, actual_reps: 7, actual_weight: 42.5 });
   const sessions = await (await page.request.get(`/api/programs/${programId}/sessions`)).json();
   expect(sessions.map((row: { id: number }) => row.id)).toEqual([session.id]);
@@ -47,17 +49,31 @@ test("History resumes a future occurrence with its saved set identity instead of
   await expect(link).toBeVisible();
   const occurrenceId = Number((await link.getAttribute("href"))!.match(/workout=occurrence-(\d+)/)![1]);
   const session = await savedSession(page, program.id, { occurrenceId });
+  expect(session.occurrence_id).toBe(occurrenceId);
   expect(session.week_number).toBe(2);
   const programState = await (await page.request.get(`/api/programs/${program.id}`)).json();
   expect(programState).toMatchObject({ current_week: 1, current_day: 1 });
   await page.goto(`/workouts/${session.id}`);
-  const resumed = page.waitForResponse((response) => response.url().includes(`/api/programs/${program.id}/sessions/current?`) && new URL(response.url()).searchParams.get("occurrenceId") === String(occurrenceId));
+  const waitForExactResume = () => page.waitForResponse(response =>
+    response.request().method() === "GET" &&
+    new URL(response.url()).pathname === `/api/programs/${program.id}/sessions/current` &&
+    new URL(response.url()).searchParams.get("occurrenceId") === String(occurrenceId),
+  ).then(async response => {
+    expect(response.ok()).toBe(true);
+    const resumedSession = await response.json();
+    expect(resumedSession).toMatchObject({ id: session.id, occurrence_id: occurrenceId, status: "in_progress" });
+    expect(resumedSession.sets.map((set: { id: number }) => set.id)).toEqual(session.sets.map((set: { id: number }) => set.id));
+    expect(resumedSession.sets[0]).toMatchObject({ id: session.sets[0].id, actual_reps: 7, actual_weight: 42.5 });
+  });
+  const resumed = waitForExactResume();
   await page.getByRole("link", { name: "Resume planned workout", exact: true }).click();
-  expect((await (await resumed).json()).id).toBe(session.id);
+  await resumed;
   await expect(page).toHaveURL(`/calendar?month=2026-09&date=2026-09-08&workout=occurrence-${occurrenceId}`);
   await expect(page.getByRole("dialog").getByRole("heading", { name: "Dumbbell Row", exact: true })).toBeVisible();
   await expect(page.getByRole("dialog").getByRole("heading", { name: "Squat", exact: true })).toHaveCount(0);
+  const reloaded = waitForExactResume();
   await page.reload();
+  await reloaded;
   await expect(page.getByRole("dialog").getByRole("heading", { name: "Dumbbell Row", exact: true })).toBeVisible();
   await assertUnchanged(page, program.id, session);
   await screenshot(page, info, "future-resume");

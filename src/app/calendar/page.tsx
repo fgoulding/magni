@@ -42,7 +42,7 @@ type CalendarEvent = {
   kind: "completed" | "skipped" | "scheduled" | "in_progress";
   title: string;
   href: string;
-  /** The logged session, for completed/skipped events (drives the recap). */
+  /** The saved session, for in-progress workouts or completed/skipped recaps. */
   sessionId?: number;
   occurrenceId?: number;
   programId?: number | null;
@@ -202,8 +202,8 @@ function modalEyebrow(kind: CalendarEvent["kind"]): string {
 }
 
 function modalDateLine(event: CalendarEvent): string {
+  if (event.kind === "scheduled" || (event.kind === "in_progress" && event.occurrenceId)) return `Originally scheduled ${event.scheduledDate} · ${event.dayName}`;
   if (event.kind === "in_progress") return `Started on ${event.date} · ${event.dayName}`;
-  if (event.kind === "scheduled") return `Originally scheduled ${event.scheduledDate} · ${event.dayName}`;
   if (event.kind === "completed") return `Completed on ${event.date} · ${event.dayName}`;
   return `Skipped on ${event.date} · ${event.dayName}`;
 }
@@ -379,7 +379,7 @@ export default async function CalendarPage({ searchParams }: CalendarPageProps) 
                 <SessionRecapView recap={sessionRecap} />
               </div>
             ) : null}
-            {selectedEvent.sessionId && selectedEvent.kind === "in_progress" ? <Link prefetch={false} href={withCalendarReturn(`/workouts/${selectedEvent.sessionId}`, returnTo)} className="touch-target m-4 inline-flex items-center justify-center rounded-xl bg-brand px-4 py-3 font-semibold text-white">Resume workout</Link> : selectedEvent.sessionId && selectedEvent.kind !== "scheduled" ? (
+            {selectedEvent.sessionId && selectedEvent.kind === "in_progress" && !selectedEvent.occurrenceId ? <Link prefetch={false} href={withCalendarReturn(`/workouts/${selectedEvent.sessionId}`, returnTo)} className="touch-target m-4 inline-flex items-center justify-center rounded-xl bg-brand px-4 py-3 font-semibold text-white">Resume workout</Link> : selectedEvent.sessionId && (selectedEvent.kind === "completed" || selectedEvent.kind === "skipped") ? (
               <section className="px-4 pb-4">
                 <h3 className="display text-xl">Use this workout again</h3>
                 <p className="my-3 text-sm text-muted">Repeat the saved sets as a separate workout. The original program and its progression stay unchanged.</p>
@@ -388,7 +388,7 @@ export default async function CalendarPage({ searchParams }: CalendarPageProps) 
               </section>
             ) : selectedEvent.programId && selectedEvent.dayId && selectedEvent.currentWeek && selectedEvent.currentDay ? (
               <WorkoutCard
-                occurrenceId={selectedEvent.kind === "scheduled" ? selectedEvent.occurrenceId : undefined}
+                occurrenceId={selectedEvent.kind === "scheduled" || selectedEvent.kind === "in_progress" ? selectedEvent.occurrenceId : undefined}
                 programId={selectedEvent.programId}
                 dayId={selectedEvent.dayId}
                 definitionDayId={selectedEvent.definitionDayId ?? undefined}
@@ -396,7 +396,7 @@ export default async function CalendarPage({ searchParams }: CalendarPageProps) 
                 dayName={selectedEvent.dayName ?? "Workout"}
                 currentWeek={selectedEvent.currentWeek}
                 currentDay={selectedEvent.currentDay}
-                scheduledDate={selectedEvent.kind === "scheduled" ? selectedEvent.scheduledDate : undefined}
+                scheduledDate={selectedEvent.kind === "scheduled" || selectedEvent.kind === "in_progress" ? selectedEvent.scheduledDate : undefined}
                 startLabel={actionLabel(selectedEvent.kind)}
                 showSkip={selectedEvent.kind !== "completed"}
                 rounding={rounding}
