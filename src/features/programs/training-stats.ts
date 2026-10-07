@@ -1,7 +1,11 @@
-import { parseDateKey, toLocalDateKey } from "@/lib/date-key";
+import { mondayWeekStartKey, parseDateKey, toLocalDateKey } from "@/lib/date-key";
 import { db } from "@/lib/db";
+import { userDateKey } from "@/lib/user-date";
+import { PROGRESS_SET_JOINS, resolveSetExerciseIdentities } from "@/features/progress/identity";
 
 export type StatSetRow = Readonly<{
+  exerciseId?: string;
+  sessionId?: number;
   date: string;
   exercise: string;
   category: string;
@@ -12,6 +16,7 @@ export type StatSetRow = Readonly<{
 }>;
 
 export type LiftStat = Readonly<{
+  exerciseId?: string;
   name: string;
   maxWeight: number;
   bestE1rm: number;
@@ -63,12 +68,8 @@ function requireDate(key: string): Date {
   return parseDateKey(key) ?? new Date(Number.NaN);
 }
 
-/** Sunday-start week key (YYYY-MM-DD) for the week containing `dateKey`. */
-export function weekStartKey(dateKey: string): string {
-  const date = requireDate(dateKey);
-  date.setDate(date.getDate() - date.getDay());
-  return toLocalDateKey(date);
-}
+/** Monday-start week key shared with Calendar. */
+export const weekStartKey = mondayWeekStartKey;
 
 function shiftWeeks(weekStart: string, deltaWeeks: number): string {
   const date = requireDate(weekStart);
@@ -76,7 +77,7 @@ function shiftWeeks(weekStart: string, deltaWeeks: number): string {
   return toLocalDateKey(date);
 }
 
-/** N consecutive Sunday week keys ending at (and including) `currentWeekStart`. */
+/** N consecutive Monday week keys ending at (and including) `currentWeekStart`. */
 export function recentWeekKeys(currentWeekStart: string, count: number): string[] {
   const keys: string[] = [];
   for (let i = count - 1; i >= 0; i -= 1) keys.push(shiftWeeks(currentWeekStart, -i));
@@ -106,26 +107,28 @@ export function selectFeaturedLifts(perLift: ReadonlyMap<string, LiftStat>, volu
   for (const { match } of BIG_THREE) {
     let best: LiftStat | null = null;
     let bestVolume = -1;
+    let bestKey: string | null = null;
     for (const [name, stat] of perLift) {
       // Only a MAIN-category lift fills a big-three slot, so an aux/accessory
       // name match (e.g. "Bench Variation") never masquerades as a main lift —
       // the slot stays empty until a real main lift (e.g. "Bench Press") is logged.
-      if (used.has(name) || stat.category !== "main" || !match(name.toLowerCase())) continue;
+      if (used.has(name) || stat.category !== "main" || !match(stat.name.toLowerCase())) continue;
       const volume = volumeByLift.get(name) ?? 0;
       if (volume > bestVolume) {
         best = stat;
+        bestKey = name;
         bestVolume = volume;
       }
     }
     if (best) {
       featured.push(best);
-      used.add(best.name);
+      used.add(bestKey!);
     }
   }
 
   if (featured.length === 0) {
     return [...perLift.values()]
-      .sort((a, b) => (volumeByLift.get(b.name) ?? 0) - (volumeByLift.get(a.name) ?? 0))
+      .sort((a, b) => (volumeByLift.get(b.exerciseId ?? b.name) ?? 0) - (volumeByLift.get(a.exerciseId ?? a.name) ?? 0))
       .slice(0, 3);
   }
 
@@ -157,15 +160,17 @@ export function buildTrainingStats(
   for (const row of setRows) {
     if (row.weight <= 0 || row.reps <= 0) continue;
     const name = row.exercise.trim();
-    if (!name) continue;
+    if (!name || !row.exerciseId) continue;
+    const exerciseId = row.exerciseId;
     const e1rm = epleyE1rm(row.weight, row.reps); // per-set metric — never × sets
     const rowVolume = row.reps * row.weight * (row.sets ?? 1);
 
-    volumeByLift.set(name, (volumeByLift.get(name) ?? 0) + rowVolume);
+    volumeByLift.set(exerciseId, (volumeByLift.get(exerciseId) ?? 0) + rowVolume);
 
-    const existing = perLift.get(name);
+    const existing = perLift.get(exerciseId);
     if (!existing || e1rm > existing.bestE1rm) {
-      perLift.set(name, {
+      perLift.set(exerciseId, {
+        exerciseId,
         name,
         category: row.category,
         maxWeight: Math.max(existing?.maxWeight ?? 0, row.weight),
@@ -176,12 +181,12 @@ export function buildTrainingStats(
         lastDate: existing?.lastDate ?? null,
       });
     } else {
-      perLift.set(name, { ...existing, maxWeight: Math.max(existing.maxWeight, row.weight) });
+      perLift.set(exerciseId, { ...existing, maxWeight: Math.max(existing.maxWeight, row.weight) });
     }
 
-    const dates = trendByLift.get(name) ?? new Map<string, number>();
+    const dates = trendByLift.get(exerciseId) ?? new Map<string, number>();
     dates.set(row.date, Math.max(dates.get(row.date) ?? 0, e1rm));
-    trendByLift.set(name, dates);
+    trendByLift.set(exerciseId, dates);
   }
 
   // Attach trend series + lastDate
@@ -257,16 +262,17 @@ export function buildTrainingStats(
 // --- Per-lift detail ---
 
 export type LiftSession = Readonly<{
+  sessionId: number;
   date: string;
-  topWeight: number;
-  bestE1rm: number;
+  topWeight: number | null;
+  bestE1rm: number | null;
   bestReps: number;
-  bestWeight: number;
+  bestWeight: number | null;
   sets: number;
   volume: number;
 }>;
 
-export type LiftPr = Readonly<{ date: string; e1rm: number; weight: number; reps: number }>;
+export type LiftPr = Readonly<{ sessionId: number; date: string; e1rm: number; weight: number; reps: number }>;
 
 export type LiftDetail = Readonly<{
   name: string;
@@ -282,88 +288,50 @@ export type LiftDetail = Readonly<{
   prTimeline: LiftPr[];
 }>;
 
-/** Build a single lift's detail (full trend, per-session top sets, PR timeline). */
-export function buildLiftDetail(rows: readonly StatSetRow[], name: string): LiftDetail {
-  const target = name.trim().toLowerCase();
-  const byDate = new Map<string, { topWeight: number; bestE1rm: number; bestReps: number; bestWeight: number; sets: number; volume: number }>();
-
+/** Build one identity's recorded attempts. Historical labels are display data. */
+export function buildLiftDetail(rows: readonly (Omit<StatSetRow, "weight"> & { exerciseId: string; sessionId: number; weight: number | null })[], exerciseId: string, name: string): LiftDetail {
+  const bySession = new Map<string, LiftSession>();
   for (const row of rows) {
-    if (row.weight <= 0 || row.reps <= 0) continue;
-    if (row.exercise.trim().toLowerCase() !== target) continue;
-    const e1rm = epleyE1rm(row.weight, row.reps); // per-set metric — never × sets
-    const setCount = row.sets ?? 1; // a flat row stands in for `sets` sets
-    const existing = byDate.get(row.date);
-    if (!existing) {
-      byDate.set(row.date, {
-        topWeight: row.weight,
-        bestE1rm: e1rm,
-        bestReps: row.reps,
-        bestWeight: row.weight,
-        sets: setCount,
-        volume: row.reps * row.weight * setCount,
-      });
-    } else {
-      existing.topWeight = Math.max(existing.topWeight, row.weight);
-      existing.sets += setCount;
-      existing.volume += row.reps * row.weight * setCount;
-      if (e1rm > existing.bestE1rm) {
-        existing.bestE1rm = e1rm;
-        existing.bestReps = row.reps;
-        existing.bestWeight = row.weight;
-      }
-    }
+    if (row.exerciseId !== exerciseId) continue;
+    const key = String(row.sessionId);
+    const existing = bySession.get(key);
+    const e1rm = row.weight !== null && row.weight > 0 && row.reps > 0 ? epleyE1rm(row.weight, row.reps) : null;
+    const better = !existing || (e1rm ?? -1) > (existing.bestE1rm ?? -1) || (e1rm === null && existing.bestE1rm === null && row.reps > existing.bestReps);
+    const setCount = row.sets ?? 1;
+    bySession.set(key, {
+      sessionId: row.sessionId,
+      date: row.date,
+      topWeight: row.weight === null ? existing?.topWeight ?? null : Math.max(existing?.topWeight ?? 0, row.weight),
+      bestE1rm: better ? e1rm : existing!.bestE1rm,
+      bestReps: better ? row.reps : existing!.bestReps,
+      bestWeight: better ? row.weight : existing!.bestWeight,
+      sets: (existing?.sets ?? 0) + setCount,
+      volume: (existing?.volume ?? 0) + row.reps * (row.weight ?? 0) * setCount,
+    });
   }
-
-  const ascDates = [...byDate.keys()].sort();
-  const sessionsAsc: LiftSession[] = ascDates.map((date) => {
-    const agg = byDate.get(date)!;
-    return {
-      date,
-      topWeight: round(agg.topWeight),
-      bestE1rm: round(agg.bestE1rm),
-      bestReps: agg.bestReps,
-      bestWeight: round(agg.bestWeight),
-      sets: agg.sets,
-      volume: round(agg.volume),
-    };
-  });
-
+  const sessionsAsc = [...bySession.values()].sort((a, b) => a.date.localeCompare(b.date) || a.sessionId - b.sessionId);
   const prTimeline: LiftPr[] = [];
-  let runningMax = 0;
-  for (const session of sessionsAsc) {
-    if (session.bestE1rm > runningMax) {
-      runningMax = session.bestE1rm;
-      prTimeline.push({
-        date: session.date,
-        e1rm: session.bestE1rm,
-        weight: session.bestWeight,
-        reps: session.bestReps,
-      });
-    }
-  }
-
-  let maxWeight = 0;
-  let bestE1rm = 0;
+  let runningMax: number | null = null;
   let bestE1rmDate: string | null = null;
-  let totalVolume = 0;
   for (const session of sessionsAsc) {
-    maxWeight = Math.max(maxWeight, session.topWeight);
-    totalVolume += session.volume;
-    if (session.bestE1rm > bestE1rm) {
-      bestE1rm = session.bestE1rm;
+    if (session.bestE1rm === null) continue;
+    if (runningMax !== null && session.bestE1rm > runningMax + 0.001) {
+      prTimeline.push({ sessionId: session.sessionId, date: session.date, e1rm: round(session.bestE1rm), weight: session.bestWeight!, reps: session.bestReps });
+    }
+    if (runningMax === null || session.bestE1rm > runningMax) {
+      runningMax = session.bestE1rm;
       bestE1rmDate = session.date;
     }
   }
-
   return {
     name,
     hasData: sessionsAsc.length > 0,
-    maxWeight,
-    bestE1rm,
+    maxWeight: Math.max(0, ...sessionsAsc.map(session => session.topWeight ?? 0)),
+    bestE1rm: round(runningMax ?? 0),
     bestE1rmDate,
-    totalVolume,
+    totalVolume: round(sessionsAsc.reduce((sum, session) => sum + session.volume, 0)),
     sessionCount: sessionsAsc.length,
-    trend: sessionsAsc.map((s) => s.bestE1rm),
+    trend: sessionsAsc.flatMap(session => session.bestE1rm === null ? [] : [round(session.bestE1rm)]),
     sessions: [...sessionsAsc].reverse(),
     prTimeline: [...prTimeline].reverse(),
   };
@@ -371,33 +339,11 @@ export function buildLiftDetail(rows: readonly StatSetRow[], name: string): Lift
 
 // --- DB entry points ---
 
-// A prescription is not a performed set. All set-derived history below requires
-// recorded actual_reps; missing actual_weight contributes no external-load volume,
-// matching the recap. Keep sets=N support for legacy flat rows logged as a group.
-
-export function getUserLiftDetail(userId: number, name: string): LiftDetail {
-  const rows = db
-    .prepare(
-      `
-        SELECT
-          s.date AS date,
-          ss.exercise_name AS exercise,
-          ss.category AS category,
-          ss.actual_reps AS reps,
-          (COALESCE(ss.actual_weight, 0) * CASE WHEN s.unit = 'kg' THEN 2.2046226218487757 ELSE 1 END) AS weight,
-          MAX(COALESCE(ss.sets, 1), 1) AS sets
-        FROM session_sets ss
-        JOIN sessions s ON s.id = ss.session_id
-        WHERE s.user_id = ? AND s.status = 'completed' AND ss.actual_reps IS NOT NULL AND ss.exercise_name = ? COLLATE NOCASE
-      `,
-    )
-    .all(userId, name) as StatSetRow[];
-
-  return buildLiftDetail(rows, name);
-}
+// Actual reps distinguish recorded attempts (including zero) from prescriptions.
+// Exercise-specific reads use durable catalog identities; names are labels only.
 
 export type SessionPr = Readonly<{ exercise: string; e1rm: number; weight: number; reps: number }>;
-export type SetRepWeight = Readonly<{ exercise: string; reps: number; weight: number }>;
+export type SetRepWeight = Readonly<{ exerciseId: string; exercise: string; reps: number; weight: number }>;
 
 /**
  * Pure PR detection: an exercise is a PR when its best e1RM in `sessionSets`
@@ -407,59 +353,56 @@ export type SetRepWeight = Readonly<{ exercise: string; reps: number; weight: nu
 export function computeSessionPrs(
   sessionSets: readonly SetRepWeight[],
   priorSets: readonly SetRepWeight[],
+  displayUnitFactor = 1,
 ): SessionPr[] {
-  const best = new Map<string, { e1rm: number; weight: number; reps: number }>();
+  const best = new Map<string, { exercise: string; e1rm: number; weight: number; reps: number }>();
   for (const row of sessionSets) {
     if (row.weight <= 0 || row.reps <= 0) continue;
     const e1rm = epleyE1rm(row.weight, row.reps);
-    const current = best.get(row.exercise);
-    if (!current || e1rm > current.e1rm) best.set(row.exercise, { e1rm, weight: row.weight, reps: row.reps });
+    const key = row.exerciseId;
+    const current = best.get(key);
+    if (!current || e1rm > current.e1rm) best.set(key, { exercise: row.exercise, e1rm, weight: row.weight, reps: row.reps });
   }
   if (best.size === 0) return [];
 
   const priorBest = new Map<string, number>();
   for (const row of priorSets) {
     if (row.weight <= 0 || row.reps <= 0) continue;
-    priorBest.set(row.exercise, Math.max(priorBest.get(row.exercise) ?? 0, epleyE1rm(row.weight, row.reps)));
+    const key = row.exerciseId;
+    priorBest.set(key, Math.max(priorBest.get(key) ?? 0, epleyE1rm(row.weight, row.reps)));
   }
 
   const prs: SessionPr[] = [];
-  for (const [exercise, b] of best) {
-    const prior = priorBest.get(exercise) ?? 0;
+  for (const [key, b] of best) {
+    const prior = priorBest.get(key) ?? 0;
     if (prior > 0 && b.e1rm > prior + 0.001) {
-      prs.push({ exercise, e1rm: round(b.e1rm), weight: b.weight, reps: b.reps });
+      prs.push({ exercise: b.exercise, e1rm: round(b.e1rm / displayUnitFactor), weight: Number((b.weight / displayUnitFactor).toFixed(4)), reps: b.reps });
     }
   }
   return prs.sort((a, b) => b.e1rm - a.e1rm);
 }
 
-/**
- * Personal records set in one session — its best e1RM per exercise vs the user's
- * best across all their OTHER completed sessions.
- */
+/** Records earned at the time: earlier date, then session ID for same-day
+ * ordering. Later workouts never erase a historical record. */
 export function getSessionPrs(userId: number, sessionId: number): SessionPr[] {
+  const session = db.prepare("SELECT date, unit FROM sessions WHERE id = ? AND user_id = ?").get(sessionId, userId) as { date: string; unit: string } | undefined;
+  if (!session) return [];
+  const exerciseIds = [...new Set([...resolveSetExerciseIdentities(userId, sessionId).values()].map(identity => identity.exerciseId))];
+  if (exerciseIds.length === 0) return [];
   const setQuery = `
-    SELECT ss.exercise_name AS exercise,
+    SELECT pc.id AS exerciseId, ss.exercise_name AS exercise,
       ss.actual_reps AS reps,
-      (COALESCE(ss.actual_weight, 0) * CASE WHEN s.unit = 'kg' THEN 2.2046226218487757 ELSE 1 END) AS weight
-    FROM session_sets ss
-    JOIN sessions s ON s.id = ss.session_id
+      ss.actual_weight * CASE WHEN s.unit = 'kg' THEN 2.2046226218487757 ELSE 1 END AS weight
+    FROM session_sets ss JOIN sessions s ON s.id = ss.session_id
+    ${PROGRESS_SET_JOINS}
   `;
-  const sessionSets = db
-    .prepare(`${setQuery} WHERE s.id = ? AND s.user_id = ? AND ss.actual_reps IS NOT NULL`)
-    .all(sessionId, userId) as SetRepWeight[];
-  // A PR is only computed for exercises in THIS session, so prior sets for other
-  // lifts are loaded then discarded. Scope to this session's exercises (uses
-  // idx_session_sets_exercise_name) instead of pulling the user's whole history.
-  const priorSets = db
-    .prepare(
-      `${setQuery} WHERE s.user_id = ? AND s.status = 'completed' AND ss.actual_reps IS NOT NULL AND s.id != ?
-         AND ss.exercise_name IN (SELECT DISTINCT exercise_name FROM session_sets WHERE session_id = ?)`,
-    )
-    .all(userId, sessionId, sessionId) as SetRepWeight[];
-  const currentUnit = (db.prepare("SELECT unit FROM sessions WHERE id=? AND user_id=?").get(sessionId, userId) as { unit: string } | undefined)?.unit;
-  const factor = currentUnit === "kg" ? 2.2046226218487757 : 1;
-  return computeSessionPrs(sessionSets, priorSets).map((pr) => ({ ...pr, weight: Number((pr.weight / factor).toFixed(4)), e1rm: Math.round(pr.e1rm / factor) }));
+  const sessionSets = db.prepare(`${setQuery} WHERE s.id = ? AND s.user_id = ? AND pc.id IS NOT NULL AND ss.actual_reps IS NOT NULL AND ss.actual_weight IS NOT NULL`).all(sessionId, userId) as SetRepWeight[];
+  const priorSets = db.prepare(`${setQuery}
+    WHERE s.user_id = ? AND s.status = 'completed' AND ss.actual_reps IS NOT NULL AND ss.actual_weight IS NOT NULL
+      AND (s.date < ? OR (s.date = ? AND s.id < ?))
+      AND pc.id IN (${exerciseIds.map(() => "?").join(",")})
+  `).all(userId, session.date, session.date, sessionId, ...exerciseIds) as SetRepWeight[];
+  return computeSessionPrs(sessionSets, priorSets, session.unit === "kg" ? 2.2046226218487757 : 1);
 }
 
 // How far back we load individual SET rows for the windowed charts (weekly
@@ -469,6 +412,7 @@ export function getSessionPrs(userId: number, sessionId: number): SessionPr[] {
 const STATS_WINDOW_WEEKS = 30;
 
 type PerLiftAgg = Readonly<{
+  exerciseId: string;
   name: string;
   category: string;
   maxWeight: number;
@@ -486,7 +430,8 @@ function buildBigThree(perLiftRows: readonly PerLiftAgg[], recentRows: readonly 
   for (const row of perLiftRows) {
     const name = row.name.trim();
     if (!name) continue;
-    perLift.set(name, {
+    perLift.set(row.exerciseId, {
+      exerciseId: row.exerciseId,
       name,
       category: row.category,
       maxWeight: round(row.maxWeight),
@@ -496,7 +441,7 @@ function buildBigThree(perLiftRows: readonly PerLiftAgg[], recentRows: readonly 
       trend: [],
       lastDate: row.lastDate,
     });
-    volumeByLift.set(name, row.volume);
+    volumeByLift.set(row.exerciseId, row.volume);
   }
 
   const trendByLift = new Map<string, Map<string, number>>();
@@ -504,20 +449,22 @@ function buildBigThree(perLiftRows: readonly PerLiftAgg[], recentRows: readonly 
     if (row.weight <= 0 || row.reps <= 0) continue;
     const name = row.exercise.trim();
     if (!name) continue;
-    const dates = trendByLift.get(name) ?? new Map<string, number>();
+    const key = row.exerciseId ?? name;
+    const dates = trendByLift.get(key) ?? new Map<string, number>();
     dates.set(row.date, Math.max(dates.get(row.date) ?? 0, epleyE1rm(row.weight, row.reps)));
-    trendByLift.set(name, dates);
+    trendByLift.set(key, dates);
   }
 
   return selectFeaturedLifts(perLift, volumeByLift).map((lift) => {
-    const dateMap = trendByLift.get(lift.name) ?? new Map<string, number>();
+    const dateMap = trendByLift.get(lift.exerciseId ?? lift.name) ?? new Map<string, number>();
     const trend = [...dateMap.keys()].sort().slice(-10).map((d) => round(dateMap.get(d) ?? 0));
     return { ...lift, trend };
   });
 }
 
 export function getUserTrainingStats(userId: number, now: Date = new Date()): TrainingStats {
-  const currentWeekStart = weekStartKey(toLocalDateKey(now));
+  const civilNow = requireDate(userDateKey(userId, now));
+  const currentWeekStart = weekStartKey(toLocalDateKey(civilNow));
   const windowStart = recentWeekKeys(currentWeekStart, STATS_WINDOW_WEEKS)[0];
 
   // Recent SET rows only — bounds the per-row JS work to the visible window.
@@ -525,6 +472,8 @@ export function getUserTrainingStats(userId: number, now: Date = new Date()): Tr
     .prepare(
       `
         SELECT
+          s.id AS sessionId,
+          pc.id AS exerciseId,
           s.date AS date,
           ss.exercise_name AS exercise,
           ss.category AS category,
@@ -533,6 +482,7 @@ export function getUserTrainingStats(userId: number, now: Date = new Date()): Tr
           MAX(COALESCE(ss.sets, 1), 1) AS sets
         FROM session_sets ss
         JOIN sessions s ON s.id = ss.session_id
+        ${PROGRESS_SET_JOINS}
         WHERE s.user_id = ? AND s.status = 'completed' AND ss.actual_reps IS NOT NULL AND s.date >= ?
       `,
     )
@@ -547,7 +497,7 @@ export function getUserTrainingStats(userId: number, now: Date = new Date()): Tr
 
   // Windowed charts (weekly volume) + all-time-from-dates frequency come from the
   // pure builder fed bounded set rows + full session dates.
-  const windowed = buildTrainingStats(recentRows, sessionDates, now);
+  const windowed = buildTrainingStats(recentRows, sessionDates, civilNow);
 
   // All-time set-derived scalars via SQL aggregates — full history, no row load.
   const totalsRow = db
@@ -584,6 +534,7 @@ export function getUserTrainingStats(userId: number, now: Date = new Date()): Tr
       `
         WITH base AS (
           SELECT
+            pc.id AS exerciseId,
             ss.exercise_name AS name,
             ss.category AS category,
             s.date AS date,
@@ -596,19 +547,20 @@ export function getUserTrainingStats(userId: number, now: Date = new Date()): Tr
             END AS e1rm
           FROM session_sets ss
           JOIN sessions s ON s.id = ss.session_id
-          WHERE s.user_id = ? AND s.status = 'completed' AND ss.actual_reps IS NOT NULL
+          ${PROGRESS_SET_JOINS}
+          WHERE s.user_id = ? AND pc.id IS NOT NULL AND s.status = 'completed' AND ss.actual_reps IS NOT NULL
             AND (COALESCE(ss.actual_weight, 0) * CASE WHEN s.unit = 'kg' THEN 2.2046226218487757 ELSE 1 END) > 0
             AND ss.actual_reps > 0
         ),
         ranked AS (
-          SELECT name, category, reps, weight, e1rm,
-                 MAX(weight) OVER (PARTITION BY name) AS maxWeight,
-                 SUM(vol) OVER (PARTITION BY name) AS volume,
-                 MAX(date) OVER (PARTITION BY name) AS lastDate,
-                 ROW_NUMBER() OVER (PARTITION BY name ORDER BY e1rm DESC, weight DESC) AS rn
+          SELECT exerciseId, name, category, reps, weight, e1rm,
+                 MAX(weight) OVER (PARTITION BY exerciseId) AS maxWeight,
+                 SUM(vol) OVER (PARTITION BY exerciseId) AS volume,
+                 MAX(date) OVER (PARTITION BY exerciseId) AS lastDate,
+                 ROW_NUMBER() OVER (PARTITION BY exerciseId ORDER BY e1rm DESC, weight DESC) AS rn
           FROM base
         )
-        SELECT name, category, maxWeight, volume, lastDate, e1rm AS bestE1rm, reps AS bestReps, weight AS bestWeight
+        SELECT exerciseId, name, category, maxWeight, volume, lastDate, e1rm AS bestE1rm, reps AS bestReps, weight AS bestWeight
         FROM ranked WHERE rn = 1
       `,
     )
@@ -754,60 +706,59 @@ export function getSessionRecap(userId: number, sessionId: number): SessionRecap
 // --- "Last time" reference: the most recent prior completed performance per lift ---
 
 export type LastPerformance = Readonly<{
+  sessionId: number;
+  exerciseId: string;
   unit: "lb" | "kg";
   date: string;
   reps: number[];
-  topWeight: number;
+  topWeight: number | null;
+  hasMissingWeight: boolean;
   bodyweight: boolean;
 }>;
 
-/** For every exercise in a session, the logged sets from the most recent OTHER
- *  completed session containing that exercise — so the workout can show what you
- *  did last time. Flat rows (sets > 1) expand to one rep entry per set. */
+/** Previous comparable performance, keyed by the CURRENT set ID. Historical
+ * labels may change or collide; neither changes an exercise's identity. */
 export function getLastPerformanceByExercise(userId: number, sessionId: number): Record<string, LastPerformance> {
-  const rows = db
-    .prepare(
-      `
-        WITH ranked AS (
-          SELECT
-            ss.exercise_name AS name,
-            ss.set_number AS setNumber,
-            ss.actual_reps AS reps,
-            COALESCE(ss.actual_weight, 0) AS weight,
-            ss.sets AS setCount,
-            CASE WHEN json_valid(ss.editor_json) AND json_extract(ss.editor_json,'$.set.loadMode') IN ('bodyweight','added') THEN 'bodyweight' ELSE ss.progression_type END AS progressionType,
-            s.unit AS unit,
-            s.date AS date,
-            DENSE_RANK() OVER (PARTITION BY ss.exercise_name ORDER BY s.date DESC, s.id DESC) AS sessionRank
-          FROM session_sets ss
-          JOIN sessions s ON s.id = ss.session_id
-          WHERE s.user_id = ? AND s.status = 'completed' AND ss.actual_reps IS NOT NULL AND s.id <> ?
-            AND ss.exercise_name IN (SELECT DISTINCT exercise_name FROM session_sets WHERE session_id = ?)
-        )
-        SELECT name, setNumber, reps, weight, setCount, progressionType, unit, date
-        FROM ranked WHERE sessionRank = 1
-        ORDER BY name, setNumber
-      `,
+  const session = db.prepare("SELECT date FROM sessions WHERE id = ? AND user_id = ?").get(sessionId, userId) as { date: string } | undefined;
+  if (!session) return {};
+  const identities = resolveSetExerciseIdentities(userId, sessionId);
+  const exerciseIds = [...new Set([...identities.values()].map(identity => identity.exerciseId))];
+  if (exerciseIds.length === 0) return {};
+  const rows = db.prepare(`
+    WITH ranked AS (
+      SELECT pc.id AS exerciseId, s.id AS sessionId, ss.id AS setId,
+        ss.set_number AS setNumber, ss.actual_reps AS reps,
+        ss.actual_weight AS weight, ss.sets AS setCount,
+        CASE WHEN json_valid(ss.editor_json) AND json_extract(ss.editor_json,'$.set.loadMode') IN ('bodyweight','added') THEN 'bodyweight' ELSE ss.progression_type END AS progressionType,
+        s.unit AS unit, s.date AS date,
+        DENSE_RANK() OVER (PARTITION BY pc.id ORDER BY s.date DESC, s.id DESC) AS sessionRank
+      FROM session_sets ss JOIN sessions s ON s.id = ss.session_id
+      ${PROGRESS_SET_JOINS}
+      WHERE s.user_id = ? AND s.status = 'completed' AND ss.actual_reps IS NOT NULL
+        AND (s.date < ? OR (s.date = ? AND s.id < ?))
+        AND pc.id IN (${exerciseIds.map(() => "?").join(",")})
     )
-    .all(userId, sessionId, sessionId) as {
-    name: string;
-    reps: number;
-    weight: number;
-    setCount: number;
-    progressionType: string;
-    unit: "lb" | "kg";
-    date: string;
+    SELECT * FROM ranked WHERE sessionRank = 1 ORDER BY exerciseId, setNumber, setId
+  `).all(userId, session.date, session.date, sessionId, ...exerciseIds) as {
+    exerciseId: string; sessionId: number; reps: number; weight: number | null;
+    setCount: number; progressionType: string; unit: "lb" | "kg"; date: string;
   }[];
-
-  const result: Record<string, { date: string; unit: "lb" | "kg"; reps: number[]; topWeight: number; bodyweight: boolean }> = {};
+  const byIdentity = new Map<string, { sessionId: number; exerciseId: string; date: string; unit: "lb" | "kg"; reps: number[]; topWeight: number | null; hasMissingWeight: boolean; bodyweight: boolean }>();
   for (const row of rows) {
-    const name = row.name.trim();
-    if (!name) continue;
-    const entry =
-      result[name] ?? (result[name] = { date: row.date, unit: row.unit, reps: [], topWeight: 0, bodyweight: row.progressionType === "bodyweight" });
+    let entry = byIdentity.get(row.exerciseId);
+    if (!entry) {
+      entry = { sessionId: row.sessionId, exerciseId: row.exerciseId, date: row.date, unit: row.unit, reps: [], topWeight: null, hasMissingWeight: false, bodyweight: row.progressionType === "bodyweight" };
+      byIdentity.set(row.exerciseId, entry);
+    }
     const count = row.setCount > 0 ? row.setCount : 1;
     for (let i = 0; i < count; i += 1) entry.reps.push(row.reps);
-    entry.topWeight = Math.max(entry.topWeight, row.weight);
+    if (row.weight !== null) entry.topWeight = Math.max(entry.topWeight ?? 0, row.weight);
+    else entry.hasMissingWeight = true;
+  }
+  const result: Record<string, LastPerformance> = {};
+  for (const [setId, identity] of identities) {
+    const performance = byIdentity.get(identity.exerciseId);
+    if (performance) result[String(setId)] = performance;
   }
   return result;
 }

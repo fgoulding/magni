@@ -1,0 +1,19 @@
+/** Client-safe contracts. Catalog identity is distinct from a recorded label or progression key. */
+export type ProgressFilters = { search?: string; from?: string; to?: string; period?: "4w" | "12w" | "all"; programId?: number; cursor?: string; limit?: number; sort?: "recent" | "name"; initial?: string };
+export type ProgressPage<T> = { items: T[]; nextCursor: string | null; previousCursor?: string | null };
+export type ProgressSet = { setId: number; name: string; reps: number; weight: number | null; unit: "lb" | "kg"; count: number; role: string | null; loadMode: string | null };
+export type ProgressPerformance = { sessionId: number; date: string; weight: number | null; reps: number; unit: "lb" | "kg"; setId: number };
+export type ExerciseSummary = { id: string; name: string; origin: "lineage" | "unlinked" | "confirmed"; sessionCount: number; recordedSets: number; lastDate: string; latest: ProgressPerformance | null; pinned: boolean };
+export type ExerciseFinderItem = { key: string; kind: "exercise" | "unlinked"; name: string; exercise: ExerciseSummary | null; historyCount: number; lastDate: string; latest: ProgressPerformance | null; context: string };
+export type ProgressHome = { pinned: ExerciseSummary[]; recent: ExerciseFinderItem[]; pinLimit: 4; recentLimit: 3; activity: { from: string | null; to: string; sessions: number; emptySessions: number; recordedSets: number; volumeLb: number; missingWeightSets: number; usesKilograms: boolean } };
+export type ProgressProgram = { id: number; name: string; sessionCount: number; lastDate: string };
+export type ProgressWorkout = { sessionId: number; name: string; date: string; unit: "lb" | "kg"; status: "in_progress" | "completed" | "skipped"; programId: number | null; programName: string; loggedSets: number; totalSets: number; volume: number; missingWeightSets: number };
+export type ExerciseObservation = { sessionId: number; date: string; unit: "lb" | "kg"; workoutName: string; programName: string; programId: number | null; recordedNames: string[]; sets: ProgressSet[]; recordedSets: number; totalReps: number; volume: number; missingWeightSets: number; bestE1rm: number | null; topWeight: number | null };
+export type ExerciseChartPoint = { sessionId: number; date: string; unit: "lb" | "kg"; bestE1rm: number | null; bestE1rmLb: number | null; topWeight?: number | null; totalReps: number; recordedSets: number };
+export type ExerciseDetail = { exercise: ExerciseSummary; from: string | null; to: string | null; totals: { sessions: number; recordedSets: number; reps: number; volumeLb: number; missingWeightSets: number }; observations: ProgressPage<ExerciseObservation>; chart: { points: ExerciseChartPoint[]; truncated: boolean; totalObservations: number } };
+export type ExerciseSourceSummary = { sourceKey: string; exerciseId: string; name: string; kind: "editor" | "legacy" | "quick" | "unlinked"; revision: number; sessionCount: number; firstDate: string | null; lastDate: string | null; programName: string | null };
+export type CandidateObservation = { id: number; sessionId: number; date: string; recordedName: string; workoutName: string; programName: string; exerciseId: string; exerciseName: string; revision: number; latest: ProgressPerformance | null; recordedSets: number };
+export type IdentityChangeInput = { observationIds: number[]; targetExerciseId?: string; name?: string; mode?: "link" | "detach" };
+export type IdentityChangePreview = { token: string; targetExerciseId: string | null; targetName: string; observations: CandidateObservation[]; observationCount: number; sessionCount: number; explanation: string };
+export type IdentityChangeResult = { changeId: number; targetExerciseId: string | null; observationCount: number; undone: boolean };
+export type ProgressRoutine = { id: number; name: string; exerciseCount: number; setCount: number };

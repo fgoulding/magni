@@ -5,15 +5,15 @@ import { getWorkout } from "@/features/workouts/history-service";
 import { numberParam } from "@/lib/api";
 import { getSettingNumber, requireUser } from "@/lib/auth";
 import { db } from "@/lib/db";
-import { calendarReturnHref, withCalendarReturn } from "@/features/calendar/navigation";
+import { workoutReturnHref, withWorkoutReturn } from "@/features/workouts/navigation";
 
-/** Exact-ID fallback for imported/manual sessions without a scheduled occurrence. */
+/** Exact-ID resume preserves filtered History and handles imported/manual sessions. */
 export default async function ResumeWorkoutPage({ params, searchParams }: { params: Promise<{ sessionId: string }>; searchParams?: Promise<{ returnTo?: string }> }) {
   const user = await requireUser().catch(() => redirect("/login"));
   const session = getWorkout(user.id, numberParam((await params).sessionId));
   if (!session) notFound();
-  const returnTo = calendarReturnHref((await searchParams)?.returnTo);
-  const detailHref = withCalendarReturn(`/workouts/${session.id}`, returnTo);
+  const returnTo = workoutReturnHref((await searchParams)?.returnTo);
+  const detailHref = withWorkoutReturn(`/workouts/${session.id}`, returnTo);
   if (session.status !== "in_progress" || session.program_id === null) redirect(detailHref);
   const context = db.prepare(`SELECT s.day_id,s.program_definition_day_id,s.week_number,
     COALESCE(pdd.day_number,d.day_number,1) AS day_number

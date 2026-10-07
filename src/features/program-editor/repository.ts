@@ -14,6 +14,7 @@ export type EditorDraft = {
 };
 export type EditorActivation = { programId: number; runId: number; versionId: number; draftId: string };
 export type EditorSetMetadata = {
+  historyKey?: string;
   exerciseId: string; progressionKey: string; baseLoad: number; trainingMax: number;
   rule: ProgramExerciseV1["rule"]; set: ProgramSetV1; unit: ProgramDocumentV1["unit"]; deload: boolean; versionId: number;
   initialReps?: number; prescribedState?: ProgressionState;
@@ -166,7 +167,7 @@ function materializeProgram(userId: number, draftId: string, versionId: number, 
               exercise_name: exercise.name.trim(), category: "main", progression_type: progressionType, superset_group: supersetGroup,
               week_number: logicalWeek, set_number: setIndex + 1, intensity_pct: 0, reps: set.repMin, sets: 1, rep_out_target: set.repMax,
               weight: load, training_max: compatibilityMax, calculated_weight: load,
-              editor: { exerciseId: exercise.id, progressionKey: exercise.progressionKey, baseLoad: exercise.baseLoad, trainingMax: exercise.trainingMax,
+              editor: { exerciseId: exercise.id, historyKey: exercise.historyKey ?? exercise.id, progressionKey: exercise.progressionKey, baseLoad: exercise.baseLoad, trainingMax: exercise.trainingMax,
                 rule: exercise.rule, set, unit: doc.unit, deload: week.deload, versionId, initialReps } });
           }
         }

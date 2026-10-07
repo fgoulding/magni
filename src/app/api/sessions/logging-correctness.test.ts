@@ -42,11 +42,11 @@ afterAll(() => {
   vi.unstubAllEnvs();
 });
 
-async function makeWorkout() {
+async function makeWorkout(catalogExerciseId?: string) {
   const start = await sessions.POST(request("POST"));
   expect(start.status).toBe(201);
   const { id } = await start.json() as { id: number };
-  const add = await sets.POST(request("POST", { name: "Dumbbell Row", sets: 3, reps: 10, weight: 40 }), context(id));
+  const add = await sets.POST(request("POST", { name: "Dumbbell Row", sets: 3, reps: 10, weight: 40, catalogExerciseId }), context(id));
   expect(add.status).toBe(201);
   const body = await add.json() as { sets: { id: number }[] };
   const log = await sets.PUT(request("PUT", { setId: body.sets[0].id, actualReps: 10, actualWeight: 40 }), context(id));
@@ -55,7 +55,7 @@ async function makeWorkout() {
 }
 
 describe("performed training and safe completion", () => {
-  it("counts one performed 10 × 40 set in recap, totals, weekly volume, lift detail, and categories", async () => {
+  it("counts one performed 10 × 40 set in recap, totals, weekly volume, and categories", async () => {
     const { id } = await makeWorkout();
     const finish = await session.PATCH(request("PATCH"), context(id));
     expect(finish.status).toBe(200);
@@ -66,7 +66,6 @@ describe("performed training and safe completion", () => {
     expect(actual.totals).toEqual({ sessions: 1, sets: 1, reps: 10, volume: 400 });
     expect(actual.weeklyVolume.at(-1)?.value).toBe(400);
     expect(actual.categorySplit).toEqual([{ category: "accessory", volume: 400, pct: 100 }]);
-    expect(stats.getUserLiftDetail(userId, "Dumbbell Row").totalVolume).toBe(400);
   });
 
   it("returns the same successful recap after a lost finish response without rewriting completion time", async () => {
@@ -95,7 +94,9 @@ describe("performed training and safe completion", () => {
     const prior = await makeWorkout();
     database.db.prepare("UPDATE session_sets SET calculated_weight = 400 WHERE id = ?").run(prior.setIds[1]);
     await session.PATCH(request("PATCH"), context(prior.id));
-    const current = await makeWorkout();
+    const { resolveSetExerciseIdentities } = await import("@/features/progress/identity");
+    const catalogExerciseId = resolveSetExerciseIdentities(userId, prior.id).get(prior.setIds[0])!.exerciseId;
+    const current = await makeWorkout(catalogExerciseId);
     await sets.PUT(request("PUT", { setId: current.setIds[0], actualReps: 10, actualWeight: 50 }), context(current.id));
     await session.PATCH(request("PATCH"), context(current.id));
     expect(stats.getSessionPrs(userId, current.id)).toEqual([{ exercise: "Dumbbell Row", reps: 10, weight: 50, e1rm: 67 }]);

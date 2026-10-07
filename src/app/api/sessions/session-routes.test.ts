@@ -261,6 +261,25 @@ describe("session APIs", () => {
     expect(existing.sets).toHaveLength(1);
   });
 
+  it("includes previous performance when resuming an active planned workout by exact ID", async () => {
+    const seeded = seedProgram("exact-resume-last@example.com");
+    authenticate(seeded.userId);
+    const programContext = params({ id: String(seeded.programId) });
+    const previous = await (await sessionsRoute.POST(jsonRequest({ dayId: seeded.dayId, weekNumber: 1 }), programContext)).json();
+    expect((await setRoute.PUT(jsonRequest({ setId: previous.sets[0].id, actualReps: 7, actualWeight: 42.5 }), params({ sessionId: String(previous.id) }))).status).toBe(200);
+    expect((await completeRoute.POST(jsonRequest({ sessionId: previous.id }), programContext)).status).toBe(200);
+    const active = await (await sessionsRoute.POST(jsonRequest({ dayId: seeded.dayId, weekNumber: 2 }), programContext)).json();
+    const response = await sessionRoute.GET(new Request("http://localhost/api"), params({ sessionId: String(active.id) }));
+    expect(response.status).toBe(200);
+    const resumed = await response.json();
+    expect(resumed.lastPerformance[String(active.sets[0].id)]).toMatchObject({ sessionId: previous.id, topWeight: 42.5, unit: "lb" });
+    expect(resumed.sets).toEqual(active.sets);
+    const completed = await (await sessionRoute.GET(new Request("http://localhost/api"), params({ sessionId: String(previous.id) }))).json();
+    expect(completed.lastPerformance).toBeUndefined();
+    authenticate(createUser("other-exact-resume@example.com"));
+    expect((await sessionRoute.GET(new Request("http://localhost/api"), params({ sessionId: String(active.id) }))).status).toBe(404);
+  });
+
   it("hot-adds an ad-hoc accessory exercise to an active session", async () => {
     const seeded = seedProgram("hot-add@example.com");
     authenticate(seeded.userId);
@@ -567,35 +586,23 @@ describe("session APIs", () => {
     expect(response.status).toBe(400);
   });
 
-  it("detects session PRs without being affected by unrelated prior lifts", () => {
+  it("detects session PRs without being affected by unrelated prior lifts", async () => {
     const userId = createUser("session-prs@example.com");
-    const insertSession = (status: string) =>
-      Number(
-        dbModule.db
-          .prepare(
-            `INSERT INTO sessions (user_id, program_name, day_name, week_number, status, completed, date)
-             VALUES (?, 'P', 'D', 1, ?, ?, '2026-06-01')`,
-          )
-          .run(userId, status, status === "completed" ? 1 : 0).lastInsertRowid,
-      );
-    const insertSet = (sessionId: number, name: string, reps: number, weight: number) =>
-      dbModule.db
-        .prepare(
-          `INSERT INTO session_sets (session_id, exercise_name, category, progression_type, week_number, set_number, reps, sets, rep_out_target, actual_reps, actual_weight)
-           VALUES (?, ?, 'accessory', 'custom', 1, 1, ?, 1, 0, ?, ?)`,
-        )
-        .run(sessionId, name, reps, reps, weight);
-
-    // Prior completed session: Bench 5x90, plus a huge UNRELATED Deadlift single.
-    const prior = insertSession("completed");
-    insertSet(prior, "Bench", 5, 90);
-    insertSet(prior, "Deadlift", 1, 500);
-
-    // Current session: Bench 5x100 (higher e1RM → a PR). No Deadlift here.
-    const current = insertSession("completed");
-    insertSet(current, "Bench", 5, 100);
-
-    const prs = trainingStats.getSessionPrs(userId, current);
+    const workouts = await import("@/features/workouts/history-service");
+    const { resolveSetExerciseIdentities } = await import("@/features/progress/identity");
+    const prior = workouts.createQuickSession({ userId, newWorkout: true, date: "2026-06-01" }).session;
+    const bench = workouts.addQuickExercise({ userId, sessionId: prior.id, name: "Bench", sets: [{ reps: 5, weight: 90 }] });
+    workouts.saveActualSet({ userId, sessionId: prior.id, setId: bench.sets[0].id, actualReps: 5, actualWeight: 90 });
+    const withDeadlift = workouts.addQuickExercise({ userId, sessionId: prior.id, name: "Deadlift", sets: [{ reps: 1, weight: 500 }] });
+    const deadlift = withDeadlift.sets.find(set => set.exercise_name === "Deadlift")!;
+    workouts.saveActualSet({ userId, sessionId: prior.id, setId: deadlift.id, actualReps: 1, actualWeight: 500 });
+    workouts.finishQuickSession(userId, prior.id);
+    const current = workouts.createQuickSession({ userId, newWorkout: true, date: "2026-06-01" }).session;
+    const catalogExerciseId = resolveSetExerciseIdentities(userId, prior.id).get(bench.sets[0].id)!.exerciseId;
+    const added = workouts.addQuickExercise({ userId, sessionId: current.id, name: "Bench", catalogExerciseId, sets: [{ reps: 5, weight: 100 }] });
+    workouts.saveActualSet({ userId, sessionId: current.id, setId: added.sets[0].id, actualReps: 5, actualWeight: 100 });
+    workouts.finishQuickSession(userId, current.id);
+    const prs = trainingStats.getSessionPrs(userId, current.id);
     expect(prs.map((p) => p.exercise)).toEqual(["Bench"]);
     expect(prs[0]).toMatchObject({ weight: 100, reps: 5 });
   });

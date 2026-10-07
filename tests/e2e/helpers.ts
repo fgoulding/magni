@@ -190,14 +190,14 @@ export async function completeVisibleWorkout(page: Page, startButtonName = "Star
   await expect(page.getByText("3,000 lb total")).toBeVisible();
 }
 
-export async function goToTab(page: Page, name: "Today" | "Programs" | "Calendar" | "Stats" | "Settings"): Promise<void> {
+export async function goToTab(page: Page, name: "Today" | "Programs" | "Calendar" | "Progress" | "Settings"): Promise<void> {
   await page.getByRole("navigation", { name: "Main navigation", exact: true }).getByRole("link", { name, exact: true }).click();
   if (name === "Calendar") {
     await expect(page.getByRole("region", { name: "Week calendar", exact: true })).toBeVisible();
     return;
   }
-  if (name === "Stats") {
-    await expect(page.getByRole("heading", { name: "Statistics" })).toBeVisible();
+  if (name === "Progress") {
+    await expect(page.getByRole("heading", { name: "Progress", exact: true })).toBeVisible();
     return;
   }
   await expect(page.getByRole("heading", { name, exact: true })).toBeVisible();

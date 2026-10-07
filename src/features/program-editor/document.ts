@@ -15,6 +15,8 @@ export type ProgramSetV1 = {
 };
 export type ProgramExerciseV1 = {
   id: string;
+  /** Copy lineage for historical tracking; independent of shared progression. */
+  historyKey?: string;
   name: string;
   progressionKey: string;
   baseLoad: number;
@@ -42,7 +44,8 @@ export function createSet(): ProgramSetV1 {
   return { id: crypto.randomUUID(), role: "work", repMin: 8, repMax: 12, loadMode: "working", load: 0, effortKind: "none", effort: 0, restSeconds: 120, tempo: "", notes: "" };
 }
 export function createExercise(name = ""): ProgramExerciseV1 {
-  return { id: crypto.randomUUID(), name, progressionKey: crypto.randomUUID(), baseLoad: 40, trainingMax: 100, supersetGroup: "", notes: "", rule: null, sets: [createSet(), createSet(), createSet()] };
+  const id = crypto.randomUUID();
+  return { id, historyKey: id, name, progressionKey: crypto.randomUUID(), baseLoad: 40, trainingMax: 100, supersetGroup: "", notes: "", rule: null, sets: [createSet(), createSet(), createSet()] };
 }
 export function createDay(name = "Day A"): ProgramDayV1 {
   return { id: crypto.randomUUID(), name, exercises: [] };
@@ -97,6 +100,7 @@ export function validateDraftStructure(value: unknown): DocumentIssue[] {
       for (const [ei, exercise] of rows(day, "exercises", dp, 40).entries()) {
         const ep = `${dp}exercises.${ei}.`;
         text(exercise, "id", ep, 100); text(exercise, "name", ep); text(exercise, "progressionKey", ep, 120);
+        if (exercise.historyKey !== undefined && (typeof exercise.historyKey !== "string" || !exercise.historyKey.trim() || exercise.historyKey.length > 100)) issue(`${ep}historyKey`, "Use a nonempty tracking key no longer than 100 characters.");
         text(exercise, "supersetGroup", ep, 100); text(exercise, "notes", ep, 4000);
         number(exercise, "baseLoad", ep); number(exercise, "trainingMax", ep);
         if (exercise.rule !== null && !isRecord(exercise.rule)) issue(`${ep}rule`, "Rule must be an object or null.");

@@ -123,9 +123,12 @@ describe("unplanned workout and history lifecycle", () => {
 it("normalizes mixed units for Stats and PR comparison while preserving original recap and recent values", async () => {
   const stats = await import("@/features/programs/training-stats");
   const owner = Number(database.db.prepare("INSERT INTO users(email,password_hash) VALUES ('mixed@example.com','hash')").run().lastInsertRowid);
+  const identity = await import("@/features/progress/identity");
+  let catalogExerciseId: string | undefined;
   function performed(unit: "kg" | "lb", date: string, weight = 40) {
     const session = service.createQuickSession({ userId: owner, newWorkout: true, unit, date }).session;
-    const added = service.addQuickExercise({ userId: owner, sessionId: session.id, name: "Unit Row", sets: [{ reps: 10, weight }] });
+    const added = service.addQuickExercise({ userId: owner, sessionId: session.id, name: "Unit Row", catalogExerciseId, sets: [{ reps: 10, weight }] });
+    catalogExerciseId ??= identity.resolveSetExerciseIdentities(owner, session.id).get(added.sets[0].id)!.exerciseId;
     service.saveActualSet({ userId: owner, sessionId: session.id, setId: added.sets[0].id, actualReps: 10, actualWeight: weight });
     service.finishQuickSession(owner, session.id); return session.id;
   }
@@ -135,9 +138,10 @@ it("normalizes mixed units for Stats and PR comparison while preserving original
   expect(totals.usesKilograms).toBe(true);
   expect(stats.getSessionRecap(owner, kg)).toMatchObject({ volume: 400, unit: "kg" });
   expect(stats.getSessionPrs(owner, lb)).toEqual([]);
-  expect(stats.getSessionPrs(owner, kg)[0].weight).toBe(40);
+  expect(stats.getSessionPrs(owner, kg)).toEqual([]);
   const decimal = performed("kg", "2026-09-03", 42.5);
-  expect(stats.getLastPerformanceByExercise(owner, lb)["Unit Row"]).toMatchObject({ topWeight: 42.5, unit: "kg" });
+  expect(stats.getSessionPrs(owner, decimal)[0].weight).toBe(42.5);
+  expect(stats.getLastPerformanceByExercise(owner, lb)[service.getWorkout(owner, lb)!.sets[0].id]).toMatchObject({ topWeight: 40, unit: "kg", sessionId: kg });
   expect(service.recentExercises(owner, "Unit Row", "kg")[0].sets[0].weight).toBe(42.5);
   expect(service.recentExercises(owner, "Unit Row", "lb")[0].sets[0].weight).toBeCloseTo(42.5 * 2.2046226218487757, 2);
   expect(stats.getSessionRecap(owner, decimal)?.exercises[0].topWeight).toBe(42.5);

@@ -128,7 +128,7 @@ function prepare(input: ActiveEditorChangeInput) {
           exercise_name: exercise.name, category: "main", progression_type: set.loadMode === "bodyweight" || set.loadMode === "added" ? "bodyweight" : "custom",
           superset_group: exercise.supersetGroup || null, week_number: row.week_number, set_number: index + 1,
           intensity_pct: 0, reps, sets: 1, rep_out_target: maximum, weight: load, training_max: afterState.trainingMax, calculated_weight: load,
-          editor: { exerciseId: exercise.id, progressionKey, definitionProgressionKey: exercise.progressionKey, baseLoad: exercise.baseLoad, trainingMax: exercise.trainingMax,
+          editor: { exerciseId: exercise.id, historyKey: exercise.historyKey ?? exercise.id, progressionKey, definitionProgressionKey: exercise.progressionKey, baseLoad: exercise.baseLoad, trainingMax: exercise.trainingMax,
             rule: exercise.rule, set, unit: draft.document.unit, deload: week.deload, versionId: ctx.version.id, revisionId: nextRevision,
             initialReps: input.progressionState === "use_draft" ? initialState(exercise).reps : metadata?.initialReps ?? initialState(exercise).reps, prescribedState: afterState },
         } satisfies EditorPrescriptionSet;

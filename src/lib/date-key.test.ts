@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { dateKeyInZone, isTimeZone, parseDateKey, todayLocalDateKey, toLocalDateKey } from "./date-key";
+import { dateKeyInZone, mondayWeekStartKey, isTimeZone, parseDateKey, todayLocalDateKey, toLocalDateKey } from "./date-key";
 
 describe("date-key", () => {
   afterEach(() => {
@@ -30,4 +30,12 @@ describe("date-key", () => {
     expect(isTimeZone("America/Los_Angeles")).toBe(true);
     expect(isTimeZone("invalid/zone")).toBe(false);
   });
+});
+
+
+it("uses Monday civil weeks across Sunday, year and DST boundaries", () => {
+  expect(mondayWeekStartKey("2026-09-06")).toBe("2026-08-31");
+  expect(mondayWeekStartKey("2026-09-07")).toBe("2026-09-07");
+  expect(mondayWeekStartKey("2027-01-01")).toBe("2026-12-28");
+  expect(mondayWeekStartKey("2026-03-08")).toBe("2026-03-02");
 });

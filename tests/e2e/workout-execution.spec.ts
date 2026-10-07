@@ -18,8 +18,9 @@ test("starts, logs, completes, and records a scheduled workout", async ({ page }
   await goToTab(page, "Today");
   await completeVisibleWorkout(page);
 
-  await goToTab(page, "Stats");
-  await expect(page.getByRole("heading", { name: "Squat" })).toBeVisible();
+  await goToTab(page, "Progress");
+  await expect(page.getByRole("button", { name: "Choose exercise", exact: true })).toContainText("Squat");
+  await expect(page.getByRole("region", { name: "Exercise chart", exact: true })).toBeVisible();
 
   await goToTab(page, "Calendar");
   await expect(page.getByRole("link", { name: new RegExp(`Completed: ${programName} - Today Lower on`) })).toBeVisible();
@@ -45,8 +46,11 @@ test("skips a scheduled workout and records it on the calendar", async ({ page }
   await expect(page.getByText("Workout skipped")).toBeVisible();
 
   // Skipped workouts are recorded on the calendar but do not contribute to stats.
-  await goToTab(page, "Stats");
-  await expect(page.getByText("No stats yet")).toBeVisible();
+  await goToTab(page, "Progress");
+  await page.getByText("Recorded activity", { exact: true }).click();
+  await expect(page.getByRole("group", { name: "0 recorded workouts", exact: true })).toBeVisible();
+  await expect(page.getByRole("group", { name: "0 recorded sets", exact: true })).toBeVisible();
+  await expect(page.getByTestId("progress-exercise-row")).toHaveCount(0);
 
   await goToTab(page, "Calendar");
   await expect(page.getByRole("link", { name: new RegExp(`Skipped: ${programName} - Skip Lower on`) })).toBeVisible();
@@ -100,8 +104,9 @@ test("trains a missed calendar workout today and records it on the day it is don
   await page.getByRole("link", { name: "Close workout" }).click();
   await expect(page.getByRole("dialog")).toHaveCount(0);
 
-  await goToTab(page, "Stats");
-  await expect(page.getByRole("heading", { name: "Squat" })).toBeVisible();
+  await goToTab(page, "Progress");
+  await expect(page.getByRole("button", { name: "Choose exercise", exact: true })).toContainText("Squat");
+  await expect(page.getByRole("region", { name: "Exercise chart", exact: true })).toBeVisible();
 
   await goToTab(page, "Calendar");
   await expect(page.getByRole("link", { name: `Completed: ${programName} - Late Lower on ${dates.today}`, exact: true })).toBeVisible();

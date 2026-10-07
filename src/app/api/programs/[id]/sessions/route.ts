@@ -12,6 +12,7 @@ import {
 import { getSettingNumber, requireUser } from "@/lib/auth";
 import { calculateWeight } from "@/lib/calculator";
 import { userDateKey } from "@/lib/user-date";
+import { attachSessionExerciseSources } from "@/features/progress/identity";
 import { db } from "@/lib/db";
 import { getLastPerformanceByExercise } from "@/features/programs/training-stats";
 import { EditorRepositoryError, type EditorSetMetadata } from "@/features/program-editor/repository";
@@ -408,6 +409,7 @@ export async function POST(request: Request, context: RouteContext) {
         );
       }
 
+      attachSessionExerciseSources(db, user.id, sessionId);
       return getSessionWithSets(sessionId);
     });
 

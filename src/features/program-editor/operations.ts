@@ -13,6 +13,7 @@ export type PresetId = typeof PRESETS[number]["id"];
 
 export function cloneExercise(source: ProgramExerciseV1, share = true): ProgramExerciseV1 {
   const copied = structuredClone(source);
+  copied.historyKey = source.historyKey ?? source.id;
   copied.id = crypto.randomUUID();
   if (!share) copied.progressionKey = crypto.randomUUID();
   const ids = new Map(copied.sets.map(set => [set.id, crypto.randomUUID()]));

@@ -96,3 +96,38 @@ test("History resumes an unlinked manual session by exact ID with a stable reloa
   await assertUnchanged(page, program.id, session);
   await screenshot(page, info, "legacy-resume");
 });
+
+test("filtered History and previous workout links preserve the active workout and return context", async ({ page }) => {
+  test.setTimeout(60_000); // Includes cold compilation of history, resume and exercise detail.
+  await registerViaApi(page, "history-return-context");
+  const program = await programWithDays(page, "Return context training");
+  const previous = await savedSession(page, program.id, { dayId: program.days[0], weekNumber: 1 });
+  expect((await page.request.post(`/api/programs/${program.id}/complete-and-advance`, { data: { sessionId: previous.id } })).ok()).toBe(true);
+  const active = await savedSession(page, program.id, { dayId: program.days[0], weekNumber: 2 });
+  const history = "/workouts?q=Return+context&status=in_progress";
+  await page.goto(history);
+  await page.locator(`a[href^="/workouts/${active.id}?"]`).click();
+  await expect(page).toHaveURL(new RegExp(`/workouts/${active.id}\\?`));
+  const detail = page.url();
+  await page.getByRole("link", { name: "Resume planned workout", exact: true }).click();
+  await expect(page).toHaveURL(new RegExp(`/workouts/${active.id}/resume\\?`));
+  const resume = page.url();
+  expect(new URL(resume).searchParams.get("returnTo")).toBe(history);
+  await page.getByRole("link", { name: /^Previous Squat workout,/ }).click();
+  await expect(page.getByRole("heading", { name: "Training log", exact: true })).toBeVisible();
+  await page.getByRole("link", { name: "View progress for Squat", exact: true }).click();
+  await expect(page.getByRole("heading", { name: "Squat", exact: true })).toBeVisible();
+  await page.getByRole("link", { name: "Back to workout", exact: true }).click();
+  await page.getByRole("link", { name: "← Back to workout", exact: true }).click();
+  await expect(page).toHaveURL(resume);
+  await expect(page.getByRole("heading", { name: "Squat", exact: true })).toBeVisible();
+  const resumedActuals = await (await page.request.get(`/api/sessions/${active.id}`)).json();
+  expect(resumedActuals.sets[0]).toMatchObject({ id: active.sets[0].id, actual_reps: 7, actual_weight: 42.5 });
+  await page.getByRole("link", { name: "← Workout details", exact: true }).click();
+  await expect(page).toHaveURL(detail);
+  await page.getByRole("link", { name: "← Workout history", exact: true }).click();
+  await expect(page).toHaveURL(history);
+  await expect(page.getByRole("searchbox", { name: "Search workouts", exact: true })).toHaveValue("Return context");
+  const unchanged = await (await page.request.get(`/api/sessions/${active.id}`)).json();
+  expect(unchanged.sets[0]).toMatchObject({ id: active.sets[0].id, actual_reps: 7, actual_weight: 42.5 });
+});

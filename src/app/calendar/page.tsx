@@ -11,7 +11,7 @@ import {
 } from "@/features/programs/program-service";
 import { getSessionRecap } from "@/features/programs/training-stats";
 import { getSettingNumber, requireUser } from "@/lib/auth";
-import { parseDateKey, toLocalDateKey } from "@/lib/date-key";
+import { mondayWeekStartKey, parseDateKey, toLocalDateKey } from "@/lib/date-key";
 import { db } from "@/lib/db";
 import { CalendarNavigation } from "@/components/CalendarNavigation";
 import { withCalendarReturn } from "@/features/calendar/navigation";
@@ -272,8 +272,7 @@ export default async function CalendarPage({ searchParams }: CalendarPageProps) 
   const selectedDate = queryDate ?? (selectedDateKey ? parseDateKey(selectedDateKey)! : (today.getMonth() === monthStart.getMonth() && today.getFullYear() === monthStart.getFullYear() ? today : monthStart));
   const selectedHref = `${monthHref(monthStart)}&date=${toLocalDateKey(selectedDate)}`;
   const returnTo = `${selectedHref}${viewSuffix}`;
-  const weekStart = new Date(selectedDate);
-  weekStart.setDate(weekStart.getDate() - ((weekStart.getDay() + 6) % 7));
+  const weekStart = parseDateKey(mondayWeekStartKey(toLocalDateKey(selectedDate)))!;
   const weekEnd = new Date(weekStart);
   weekEnd.setDate(weekEnd.getDate() + 6);
   const weekScheduled = getScheduledEvents(user.id, weekStart, weekEnd);

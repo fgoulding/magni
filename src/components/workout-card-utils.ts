@@ -52,10 +52,13 @@ export type WorkoutGroup = {
 };
 
 export type LastPerformance = {
+  sessionId: number;
+  exerciseId: string;
+  hasMissingWeight?: boolean;
   date: string;
   unit?: "lb" | "kg";
   reps: number[];
-  topWeight: number;
+  topWeight: number | null;
   bodyweight: boolean;
 };
 
@@ -63,7 +66,7 @@ export type SessionResponse = {
   id: number;
   unit?: "lb" | "kg";
   sets: WorkoutSet[];
-  /** Most recent prior completed performance, keyed by exercise name. */
+  /** Most recent prior completed performance, keyed by the current session set ID. */
   lastPerformance?: Record<string, LastPerformance>;
 };
 

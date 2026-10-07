@@ -102,7 +102,7 @@ test("create, log, finish, find, correct and repeat a past workout with a reusab
   await expect(page.getByText(/400 kg total/)).toBeVisible();
   await page.goto("/workouts");
   await expect(page.getByRole("heading", { name: "Workout history", exact: true })).toBeVisible();
-  await page.locator(`a[href="/workouts/${id}"]`).click();
+  await page.locator(`a[href^="/workouts/${id}?"]`).click();
   await expect(page.getByText(/1 of 2 sets logged · 400 kg volume/)).toBeVisible();
   await page.getByRole("button", { name: "Correct workout", exact: true }).click();
   await page.getByLabel("Correct reps for set 1", { exact: true }).fill("8");
@@ -131,11 +131,13 @@ test("create, log, finish, find, correct and repeat a past workout with a reusab
   await expect(page.getByText("Not logged", { exact: true })).toHaveCount(2);
   await page.goto("/workouts");
   await expect(page.getByRole("heading", { name: "Workout history", exact: true })).toBeVisible();
+  await page.getByRole("link", { name: "Saved routines", exact: true }).click();
   await expect(page.getByText("Pull routine · 1 exercise")).toBeVisible();
+  await page.goto("/workouts");
   expect(hydrationErrors).toEqual([]);
 });
 
-test("history and Stats preserve kg values and readable light and dark themes", async ({ page }, testInfo) => {
+test("history and Progress preserve kg values and readable light and dark themes", async ({ page }, testInfo) => {
   const hydrationErrors = watchHydration(page);
   const shot = historyScreenshots(page, testInfo);
   await registerViaApi(page, "history-themes");
@@ -152,15 +154,21 @@ test("history and Stats preserve kg values and readable light and dark themes", 
   expect((await page.request.post("/api/workout-routines", { data: { sessionId: session.id, name: "Pull routine", requestKey: randomUUID() } })).status()).toBe(201);
   await page.goto("/workouts");
   await expect(page.getByRole("heading", { name: "Workout history", exact: true })).toBeVisible();
+  await page.getByRole("link", { name: "Saved routines", exact: true }).click();
   await expect(page.getByText("Pull routine · 1 exercise")).toBeVisible();
+  await page.goto("/workouts");
   await expect(page.getByText("1/2 sets · 320 kg volume", { exact: true })).toBeVisible();
   await shot("list");
   await page.getByRole("navigation").getByRole("link", { name: "Settings", exact: true }).click();
   await page.getByRole("button", { name: "Dark", exact: true }).click();
   await page.goto("/workouts");
   await shot("list-dark");
-  await page.getByRole("navigation").getByRole("link", { name: "Stats", exact: true }).click();
-  await expect(page.getByText(/Combined volume, loads and estimated maxes use lb equivalent/)).toBeVisible();
+  await page.getByRole("navigation").getByRole("link", { name: "Progress", exact: true }).click();
+  await page.getByRole("combobox", { name: "Period", exact: true }).selectOption("all");
+  await expect(page).toHaveURL(/period=all/);
+  await page.getByText("Recorded activity", { exact: true }).click();
+  await expect(page.getByRole("group", { name: "705 lb equivalent recorded volume", exact: true })).toBeVisible();
+  await expect(page.getByText("Combined external-load volume uses lb equivalent. Workout details keep original units.", { exact: true })).toBeVisible();
   await shot("stats");
   expect(hydrationErrors).toEqual([]);
 });

@@ -29,3 +29,11 @@ export function dateKeyInZone(date: Date, timeZone: string): string {
   const value = (type: string) => parts.find(part => part.type === type)?.value;
   return `${value("year")}-${value("month")}-${value("day")}`;
 }
+
+/** Monday-start civil week, shared by Calendar and Progress. */
+export function mondayWeekStartKey(dateKey: string): string {
+  const date = parseDateKey(dateKey);
+  if (!date) throw new Error("Invalid calendar date");
+  date.setDate(date.getDate() - ((date.getDay() + 6) % 7));
+  return toLocalDateKey(date);
+}

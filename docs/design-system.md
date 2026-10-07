@@ -203,9 +203,19 @@ decorative. Never emoji.
 `src/components/Charts.tsx` — `Sparkline`, `MiniBars`, `SplitBar`, `DotGrid`.
 They're pure/server-safe inline SVG+CSS and take their hue from `currentColor`,
 so set the color with a `text-*` token class (e.g. `className="text-brand"`).
-Stat aggregation lives in `src/features/programs/training-stats.ts` (pure,
-unit-tested helpers + a DB entry point). The Stats page (`/history`,
-`app/history/page.tsx`) composes these into cards.
+Progress (`/history`) starts with one selected exercise chart, a searchable
+exercise chooser and at most three favorite shortcuts. Show two recent workout
+records beneath it, with full history available on demand. The home screen must
+not grow with the exercise library. Search and deliberate browsing replace a
+bounded page of results; never append an infinite exercise list.
+
+Chart original recorded units separately, keep workout dates on the horizontal
+axis and label estimates as estimates. Missing loads and unsuccessful attempts
+must not become estimated maxes. Provide dated values and source workout links.
+Matching exercise names alone are not proof that records belong in one graph;
+historical linking requires an explicit review. Activity totals are secondary.
+Progress queries and identity live in `src/features/progress`; prior-performance
+and training summaries also use `src/features/programs/training-stats.ts`.
 
 ---
 

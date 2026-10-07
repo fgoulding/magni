@@ -9,7 +9,7 @@ const tabs = [
   { href: "/today", label: "Today", Icon: Trophy },
   { href: "/programs", label: "Programs", Icon: Dumbbell },
   { href: "/calendar", label: "Calendar", Icon: CalendarDays },
-  { href: "/history", label: "Stats", Icon: LineChart },
+  { href: "/history", label: "Progress", Icon: LineChart },
   { href: "/settings", label: "Settings", Icon: Settings },
 ];
 
@@ -33,7 +33,7 @@ export function BottomNav() {
           const active =
             pathname === tab.href ||
             (tab.href === "/programs" && pathname.startsWith("/programs")) ||
-            (tab.href === "/history" && pathname.startsWith("/history"));
+            (tab.href === "/history" && (pathname.startsWith("/history") || pathname === "/workouts" || pathname.startsWith("/workouts/")));
           const Icon = tab.Icon;
 
           return (

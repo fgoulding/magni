@@ -2,11 +2,13 @@
 
 import { Check, Circle, Dumbbell, SkipForward, Trophy } from "lucide-react";
 import { useRouter } from "next/navigation";
+import Link from "next/link";
 import { type ReactNode, useEffect, useMemo, useState, useSyncExternalStore, useTransition } from "react";
 import { AddSessionExerciseForm } from "@/components/AddSessionExerciseForm";
 import { ErrorBanner } from "@/components/ErrorBanner";
 import { WorkoutTmEditor, type TmUpdatedSet } from "@/components/WorkoutTmEditor";
 import { calculateWeight } from "@/lib/calculator";
+import { currentTrainingHref, subscribeTrainingLocation, withWorkoutReturn } from "@/features/workouts/navigation";
 import {
   buildGroups,
   buildSummaryRows,
@@ -32,8 +34,10 @@ import styles from "./WorkoutCard.module.css";
 /** Compact "last time" line, e.g. "5/5/8 @ 225 lb" or "12/12/12 BW +25". */
 function formatLastPerformance(last: LastPerformance): string {
   const scheme = last.reps.join("/");
-  if (last.bodyweight) return `${scheme} BW${last.topWeight > 0 ? ` +${last.topWeight} ${last.unit ?? "lb"}` : ""}`;
-  return `${scheme} @ ${last.topWeight} ${last.unit ?? "lb"}`;
+  if (last.topWeight === null) return `${scheme} reps · load not recorded`;
+  const missing = last.hasMissingWeight ? " · some load not recorded" : "";
+  if (last.bodyweight) return `${scheme} BW${last.topWeight > 0 ? ` +${last.topWeight} ${last.unit ?? "lb"}` : ""}${missing}`;
+  return `${scheme} @ ${last.topWeight} ${last.unit ?? "lb"}${missing}`;
 }
 
 export function WorkoutCard({
@@ -121,6 +125,7 @@ export function WorkoutCard({
   const [finished, setFinished] = useState(false);
   const [skipped, setSkipped] = useState(false);
   const router = useRouter();
+  const trainingHref = useSyncExternalStore(subscribeTrainingLocation, currentTrainingHref, () => "/today");
   const [prs, setPrs] = useState<{ exercise: string; e1rm: number; weight: number; reps: number }[]>([]);
 
   const groups = buildGroups(session?.sets ?? []);
@@ -808,13 +813,13 @@ export function WorkoutCard({
                     <h3 className="display text-3xl leading-tight">
                       {groupExerciseNames(currentGroup).join(" + ")}
                     </h3>
-                    {groupExerciseNames(currentGroup).map((name) => {
-                      const last = session.lastPerformance?.[name];
-                      if (!last || last.reps.length === 0) return null;
+                    {currentGroup.sets.map((set, index, groupSets) => {
+                      const last = session.lastPerformance?.[String(set.id)];
+                      if (!last || last.reps.length === 0 || groupSets.slice(0, index).some(previous => session.lastPerformance?.[String(previous.id)]?.exerciseId === last.exerciseId)) return null;
                       return (
-                        <p key={name} className="mt-1 text-xs text-muted">
-                          Last{currentGroup.supersetGroup ? ` · ${name}` : ""}: {formatLastPerformance(last)}
-                        </p>
+                        <Link key={set.id} href={withWorkoutReturn(`/workouts/${last.sessionId}`, trainingHref)} className="touch-target mt-1 flex items-center text-xs text-muted underline underline-offset-2" aria-label={`Previous ${set.exercise_name} workout, ${last.date}: ${formatLastPerformance(last)}`}>
+                          Last{currentGroup.supersetGroup ? ` · ${set.exercise_name}` : ""}: {formatLastPerformance(last)}
+                        </Link>
                       );
                     })}
                   </div>

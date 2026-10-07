@@ -5,12 +5,13 @@ import { getSessionRecap } from "@/features/programs/training-stats";
 import { evaluateProgression } from "@/features/program-editor/progression";
 import type { EditorCompletionDecision } from "@/features/program-editor/execution";
 import type { ActualChange, CorrectionPreview, ExerciseSuggestion, HistorySet, WorkoutHistoryItem, WorkoutRoutine, WorkoutSession } from "./types";
+import { attachSessionExerciseSources, resolveSetExerciseIdentities } from "@/features/progress/identity";
 
 export class WorkoutError extends Error {
   constructor(public status: number, message: string) { super(message); this.name = "WorkoutError"; }
 }
 const itemSelect = `SELECT s.*,
-  CASE WHEN s.program_id IS NULL THEN COALESCE(NULLIF(s.day_name,''),'Quick Workout') ELSE s.program_name || ' · ' || s.day_name END AS name,
+  CASE WHEN s.program_name='' OR (s.program_id IS NULL AND s.program_run_id IS NULL AND s.program_name='Quick Workout') THEN COALESCE(NULLIF(s.day_name,''),'Quick Workout') ELSE s.program_name || ' · ' || s.day_name END AS name,
   COALESCE(SUM(CASE WHEN ss.actual_reps IS NOT NULL THEN ss.actual_reps * COALESCE(ss.actual_weight,0) * MAX(ss.sets,1) ELSE 0 END),0) AS volume,
   COALESCE(SUM(CASE WHEN ss.actual_reps IS NOT NULL THEN MAX(ss.sets,1) ELSE 0 END),0) AS loggedSets,
   COALESCE(SUM(CASE WHEN ss.id IS NOT NULL THEN MAX(ss.sets,1) ELSE 0 END),0) AS totalSets
@@ -68,12 +69,13 @@ export function listWorkouts(userId: number, before?: string): WorkoutHistoryIte
   return db.prepare(`${itemSelect} WHERE s.user_id=? AND (? IS NULL OR s.date<? OR (s.date=? AND s.id<?)) GROUP BY s.id ORDER BY s.date DESC,s.id DESC LIMIT 100`).all(userId, date ?? null, date ?? null, id ? date : null, id ? Number(id) : 0) as WorkoutHistoryItem[];
 }
 
-type SavedExercise = { name: string; sets: { reps: number; weight: number }[] };
-function repeatPrescription(session: WorkoutSession): SavedExercise[] {
+type SavedExercise = { name: string; catalogExerciseId?: string; sets: { reps: number; weight: number }[] };
+function repeatPrescription(session: WorkoutSession, userId: number): SavedExercise[] {
   const groups = new Map<string, SavedExercise>();
+  const identities = resolveSetExerciseIdentities(userId, session.id);
   for (const set of session.sets) {
     const key = set.exercise_key ?? `${set.exercise_name}:${"program_definition_exercise_id" in set ? set.program_definition_exercise_id : ""}`;
-    const exercise = groups.get(key) ?? { name: set.exercise_name, sets: [] };
+    const exercise = groups.get(key) ?? { name: set.exercise_name, catalogExerciseId: identities.get(set.id)?.exerciseId, sets: [] };
     for (let count = 0; count < Math.max(set.sets, 1); count++) exercise.sets.push({ reps: Math.max(1, set.actual_reps ?? set.reps), weight: set.actual_reps !== null ? set.actual_weight ?? 0 : set.calculated_weight ?? 0 });
     groups.set(key, exercise);
   }
@@ -81,6 +83,8 @@ function repeatPrescription(session: WorkoutSession): SavedExercise[] {
 }
 function insertExercise(sessionId: number, exercise: SavedExercise, exerciseKey: string = randomUUID()): number[] {
   nameText(exercise.name);
+  const owner = (db.prepare("SELECT user_id FROM sessions WHERE id=?").get(sessionId) as { user_id: number }).user_id;
+  if (exercise.catalogExerciseId !== undefined && (typeof exercise.catalogExerciseId !== "string" || !db.prepare("SELECT id FROM exercise_catalog WHERE id=? AND user_id=?").get(exercise.catalogExerciseId, owner))) throw new WorkoutError(404, "Exercise not found.");
   if (!Array.isArray(exercise.sets) || exercise.sets.length < 1 || exercise.sets.length > 50) throw new WorkoutError(400, "Add between 1 and 50 sets.");
   const position = (db.prepare("SELECT COALESCE(MAX(sort_order),0) AS value FROM session_sets WHERE session_id=?").get(sessionId) as { value: number }).value;
   const ids: number[] = [];
@@ -89,6 +93,13 @@ function insertExercise(sessionId: number, exercise: SavedExercise, exerciseKey:
     ids.push(Number(db.prepare(`INSERT INTO session_sets(session_id,exercise_name,exercise_key,category,progression_type,set_number,reps,sets,rep_out_target,calculated_weight,sort_order)
       VALUES (?,?,?,'accessory','custom',?,?,1,?,?,?)`).run(sessionId, exercise.name.trim(), exerciseKey, index + 1, set.reps, set.reps, set.weight, position + index + 1).lastInsertRowid));
   });
+  attachSessionExerciseSources(db, owner, sessionId);
+  if (exercise.catalogExerciseId) {
+    const source = db.prepare("SELECT source_key FROM exercise_set_sources WHERE session_set_id=? AND user_id=?").get(ids[0], owner) as { source_key: string };
+    db.prepare("UPDATE exercise_sources SET exercise_id=?,revision=revision+1 WHERE user_id=? AND source_key=?").run(exercise.catalogExerciseId, owner, source.source_key);
+    for (const id of ids) db.prepare("UPDATE exercise_set_sources SET exercise_id=? WHERE session_set_id=? AND user_id=?").run(exercise.catalogExerciseId, id, owner);
+    db.prepare("UPDATE exercise_catalog SET origin=CASE WHEN origin='unlinked' THEN 'lineage' ELSE origin END,revision=revision+1 WHERE id=? AND user_id=?").run(exercise.catalogExerciseId, owner);
+  }
   return ids;
 }
 
@@ -101,7 +112,7 @@ export function createQuickSession(input: { userId: number; requestKey?: string;
     let exercises: SavedExercise[] = [];
     if (input.sourceSessionId !== undefined) {
       const source = requireWorkout(input.userId, input.sourceSessionId);
-      exercises = repeatPrescription(source);
+      exercises = repeatPrescription(source, input.userId);
       name = nameText(input.name, source.name);
       unit = source.unit;
     } else if (input.routineId !== undefined) {
@@ -120,7 +131,7 @@ export function createQuickSession(input: { userId: number; requestKey?: string;
   });
 }
 
-export function addQuickExercise(input: { userId: number; sessionId: number; requestKey?: string; name: string; sets: { reps: number; weight: number }[]; appendToSetId?: number }): WorkoutSession & { addedSetIds: number[] } {
+export function addQuickExercise(input: { userId: number; sessionId: number; requestKey?: string; name: string; catalogExerciseId?: string; sets: { reps: number; weight: number }[]; appendToSetId?: number }): WorkoutSession & { addedSetIds: number[] } {
   return mutation(input.userId, input.requestKey, { action: "add_exercise", ...input }, () => {
     const session = requireWorkout(input.userId, input.sessionId, true);
     if (!Array.isArray(input.sets)) throw new WorkoutError(400, "Enter a set prescription.");
@@ -132,7 +143,8 @@ export function addQuickExercise(input: { userId: number; sessionId: number; req
       exerciseKey = existing.exercise_key ?? randomUUID();
       if (!existing.exercise_key) db.prepare("UPDATE session_sets SET exercise_key=? WHERE session_id=? AND exercise_name=? AND exercise_key IS NULL").run(exerciseKey, session.id, existing.exercise_name);
     }
-    const addedSetIds = insertExercise(session.id, input, exerciseKey);
+    const catalogExerciseId = input.appendToSetId !== undefined ? resolveSetExerciseIdentities(input.userId, session.id).get(input.appendToSetId)?.exerciseId : input.catalogExerciseId;
+    const addedSetIds = insertExercise(session.id, { ...input, catalogExerciseId }, exerciseKey);
     if (input.appendToSetId !== undefined) {
       const reference = session.sets.find((set) => set.id === input.appendToSetId)!;
       const last = session.sets.findLastIndex((set) => reference.exercise_key ? set.exercise_key === reference.exercise_key : set.exercise_name === reference.exercise_name);
@@ -166,6 +178,13 @@ export function updateQuickStructure(input: { userId: number; sessionId: number;
       input.renameExercise.setIds.forEach((id) => db.prepare("UPDATE session_sets SET exercise_name=? WHERE id=? AND session_id=?").run(name, id, session.id));
     }
     for (const id of removed) db.prepare("DELETE FROM session_sets WHERE id=? AND session_id=?").run(id, session.id);
+    // A renamed quick slot is a new variant until the user explicitly follows its histories together.
+    // Keep the completed source workout and its catalog mapping unchanged.
+    for (const set of remaining) {
+      const current = db.prepare("SELECT exercise_name FROM session_sets WHERE id=? AND session_id=?").get(set.id, session.id) as { exercise_name: string };
+      if (current.exercise_name !== set.exercise_name) db.prepare("DELETE FROM exercise_set_sources WHERE session_set_id=? AND user_id=?").run(set.id, input.userId);
+    }
+    attachSessionExerciseSources(db, input.userId, session.id);
     (input.order ?? remaining.map((set) => set.id)).forEach((id, index) => db.prepare("UPDATE session_sets SET sort_order=? WHERE id=? AND session_id=?").run(index + 1, id, session.id));
     db.prepare("UPDATE sessions SET day_name=?,date=?,revision=revision+1 WHERE id=?").run(input.name === undefined ? session.day_name : nameText(input.name), input.date === undefined ? session.date : validDate(input.date), session.id);
     return requireWorkout(input.userId, session.id);
@@ -206,17 +225,18 @@ export function finishQuickSession(userId: number, sessionId: number) {
 }
 
 export function recentExercises(userId: number, search = "", targetUnit: "lb" | "kg" = "lb"): ExerciseSuggestion[] {
-  const rows = db.prepare(`SELECT ss.exercise_name,s.date,s.unit,ss.actual_reps AS reps,COALESCE(ss.actual_weight,0) AS weight,ss.sets,
-    DENSE_RANK() OVER (PARTITION BY ss.exercise_name ORDER BY s.date DESC,s.id DESC) AS rank
-    FROM session_sets ss JOIN sessions s ON s.id=ss.session_id WHERE s.user_id=? AND s.status='completed' AND ss.actual_reps IS NOT NULL
-    AND instr(lower(ss.exercise_name),lower(?))>0 ORDER BY s.date DESC,s.id DESC,ss.sort_order,ss.id`).all(userId, search.trim().slice(0, 140)) as { exercise_name: string; date: string; unit: "lb" | "kg"; reps: number; weight: number; sets: number; rank: number }[];
+  const rows = db.prepare(`WITH ranked AS (SELECT ss.exercise_name,s.id AS sessionId,x.exercise_id AS catalogExerciseId,s.date,s.unit,ss.actual_reps AS reps,COALESCE(ss.actual_weight,0) AS weight,ss.sets,ss.sort_order,ss.id,
+    DENSE_RANK() OVER (PARTITION BY x.exercise_id ORDER BY s.date DESC,s.id DESC) AS rank
+    FROM session_sets ss JOIN sessions s ON s.id=ss.session_id JOIN exercise_set_sources x ON x.session_set_id=ss.id AND x.user_id=s.user_id
+    WHERE s.user_id=? AND s.status='completed' AND ss.actual_reps IS NOT NULL
+    AND instr(lower(ss.exercise_name),lower(?))>0), latest AS (SELECT catalogExerciseId,MAX(date) AS date,MAX(sessionId) AS sessionId FROM ranked WHERE rank=1 GROUP BY catalogExerciseId ORDER BY date DESC,sessionId DESC LIMIT 30)
+    SELECT ranked.* FROM ranked JOIN latest USING(catalogExerciseId) WHERE ranked.rank=1 ORDER BY ranked.date DESC,ranked.sessionId DESC,ranked.sort_order,ranked.id`).all(userId, search.trim().slice(0, 140)) as { exercise_name: string; catalogExerciseId: string; sessionId: number; date: string; unit: "lb" | "kg"; reps: number; weight: number; sets: number; rank: number }[];
   const grouped = new Map<string, ExerciseSuggestion>();
   for (const row of rows) {
     if (row.rank !== 1 || row.reps < 1) continue;
-    if (!grouped.has(row.exercise_name) && grouped.size >= 30) continue;
-    const item = grouped.get(row.exercise_name) ?? { name: row.exercise_name, date: row.date, sets: [] };
+    const item = grouped.get(row.catalogExerciseId) ?? { name: row.exercise_name, date: row.date, catalogExerciseId: row.catalogExerciseId, sessionId: row.sessionId, sets: [] };
     for (let count = 0; count < Math.max(1, row.sets) && item.sets.length < 50; count++) item.sets.push({ reps: row.reps, weight: Number((row.weight * (row.unit === targetUnit ? 1 : row.unit === "kg" ? 2.2046226218487757 : 1 / 2.2046226218487757)).toFixed(4)) });
-    grouped.set(row.exercise_name, item);
+    grouped.set(row.catalogExerciseId, item);
   }
   return [...grouped.values()];
 }
@@ -229,7 +249,7 @@ export function listRoutines(userId: number): WorkoutRoutine[] {
 export function saveRoutine(input: { userId: number; sessionId: number; requestKey?: string; name: string }): WorkoutRoutine {
   return mutation(input.userId, input.requestKey, { action: "routine", ...input }, () => {
     const session = requireWorkout(input.userId, input.sessionId);
-    const exercises = repeatPrescription(session);
+    const exercises = repeatPrescription(session, input.userId);
     if (!exercises.length) throw new WorkoutError(400, "Add exercises before saving a routine.");
     const name = nameText(input.name);
     const id = Number(db.prepare("INSERT INTO workout_routines(user_id,name,unit,prescription_json) VALUES (?,?,?,?)").run(input.userId, name, session.unit, JSON.stringify(exercises)).lastInsertRowid);

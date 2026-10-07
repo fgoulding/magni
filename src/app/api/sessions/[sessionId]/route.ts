@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { db } from "@/lib/db";
+import { getLastPerformanceByExercise } from "@/features/programs/training-stats";
 import { numberParam } from "@/lib/api";
 import { readWorkoutBody, workoutApi } from "@/features/workouts/api";
 import { finishQuickSession, getWorkout, updateQuickStructure, WorkoutError } from "@/features/workouts/history-service";
@@ -8,7 +9,9 @@ export async function GET(request: Request, context: Context) {
   return workoutApi(request, false, async (userId) => {
     const session = getWorkout(userId, numberParam((await context.params).sessionId));
     if (!session) throw new WorkoutError(404, "Workout not found.");
-    return NextResponse.json(session);
+    return NextResponse.json(session.status === "in_progress" && session.program_id !== null
+      ? { ...session, lastPerformance: getLastPerformanceByExercise(userId, session.id) }
+      : session);
   });
 }
 export async function PUT(request: Request, context: Context) {
