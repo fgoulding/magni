@@ -155,8 +155,10 @@ check, scheduled circle, in-progress play and skipped dash. Drag, More and Add
 are borderless controls with visible focus/press feedback and 44px hit areas.
 Full prescriptions are available when opening a workout. Keep one header with
 the week’s month/day date range at left and the Week/Month switch at right.
-Put Today and the week arrows together on the next row; arrows cross month
-boundaries. Omit global selection and undo controls from this compact toolbar. Keep Month as a separate grid. Icon controls stay at least 44px without taking
+Put Today and the arrows together on the next row. Week arrows move one week
+and cross month boundaries; Month arrows move one month and stay in Month mode.
+Today returns to the account's current date while keeping the selected view.
+Omit global selection and undo controls from this compact toolbar. Keep Month as a separate grid. Icon controls stay at least 44px without taking
 space away from names when text is enlarged.
 
 **Program creation:** `/programs/editor` is a dedicated workspace designed for a

@@ -247,6 +247,60 @@ test("Week uses one compact header and opens workout details, with a separate Mo
   await expect(page.getByRole("heading",{name:"Week",exact:true})).toHaveCount(0);
 });
 
+test("Month arrows cross year boundaries and Today keeps Month mode", async ({ page }, info) => {
+  await registerViaApi(page, "calendar-month-navigation");
+  await page.goto("/calendar?month=2090-12&date=2090-12-31&view=month");
+  const navigation = page.getByRole("navigation", { name: "Month navigation", exact: true });
+  const switcher = page.getByRole("navigation", { name: "Calendar view" });
+  const month = page.getByRole("region", { name: "Month calendar", exact: true });
+  await expect(page.getByRole("heading", { name: "December 2090", exact: true })).toBeVisible();
+  await expect(navigation).toBeVisible();
+  await expect(page.getByRole("navigation", { name: "Week navigation", exact: true })).toHaveCount(0);
+  await expect(month.getByRole("link", { name: "See week containing 2090-12-31", exact: true })).toBeVisible();
+
+  for (const enlarged of [false, true]) {
+    await page.evaluate(enlarged => {
+      document.documentElement.dataset.theme = enlarged ? "dark" : "light";
+      document.documentElement.style.fontSize = enlarged ? "20px" : "16px";
+    }, enlarged);
+    const todayBox = (await navigation.getByRole("link", { name: "Today", exact: true }).boundingBox())!;
+    for (const name of ["Previous month", "Next month"]) {
+      const box = (await navigation.getByRole("link", { name, exact: true }).boundingBox())!;
+      expect(box.width).toBeGreaterThanOrEqual(44);
+      expect(box.height).toBeGreaterThanOrEqual(44);
+      expect(Math.abs(box.y - todayBox.y)).toBeLessThan(2);
+    }
+    expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
+    await page.screenshot({ path: info.outputPath(`calendar-month-navigation-${enlarged ? "dark-large" : "light"}.png`), animations: "disabled" });
+  }
+
+  await navigation.getByRole("link", { name: "Next month", exact: true }).click();
+  await expect(page).toHaveURL("/calendar?month=2091-01&date=2091-01-01&view=month");
+  await expect(page.getByRole("heading", { name: "January 2091", exact: true })).toBeVisible();
+  await expect(switcher.getByRole("link", { name: "Month", exact: true })).toHaveAttribute("aria-current", "page");
+  await navigation.getByRole("link", { name: "Next month", exact: true }).click();
+  await expect(page).toHaveURL("/calendar?month=2091-02&date=2091-02-01&view=month");
+  await expect(month.getByRole("link", { name: "See week containing 2091-02-28", exact: true })).toBeVisible();
+  await expect(month.getByRole("link", { name: "See week containing 2091-02-29", exact: true })).toHaveCount(0);
+  await navigation.getByRole("link", { name: "Previous month", exact: true }).click();
+  await expect(page.getByRole("heading", { name: "January 2091", exact: true })).toBeVisible();
+  await page.reload();
+  await expect(navigation).toBeVisible();
+  await page.goBack();
+  await expect(page.getByRole("heading", { name: "February 2091", exact: true })).toBeVisible();
+
+  const today = navigation.getByRole("link", { name: "Today", exact: true });
+  const target = new URL((await today.getAttribute("href"))!, page.url());
+  await today.click();
+  await expect(page).toHaveURL(target.href);
+  await expect(month.getByRole("link", { name: `See week containing ${target.searchParams.get("date")}`, exact: true })).toBeVisible();
+  await expect(switcher.getByRole("link", { name: "Month", exact: true })).toHaveAttribute("aria-current", "page");
+  await switcher.getByRole("link", { name: "Week", exact: true }).click();
+  await expect(navigation).toHaveCount(0);
+  await expect(page.getByRole("navigation", { name: "Week navigation", exact: true })).toBeVisible();
+  await expect(page.locator(`[data-calendar-date="${target.searchParams.get("date")}"]`)).toBeVisible();
+});
+
 test("Calendar context survives resuming a manual planned session by its exact ID",async({page})=>{
   await registerViaApi(page,"calendar-manual-resume");
   const program=await(await page.request.post("/api/programs",{data:{name:"Manual strength",numWeeks:2}})).json();

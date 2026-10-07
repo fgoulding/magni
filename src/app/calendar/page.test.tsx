@@ -215,6 +215,40 @@ beforeEach(() => {
 });
 
 describe("CalendarPage", () => {
+  it.each([
+    { month: "2026-01", date: "2026-01-31", previous: "2025-12", next: "2026-02" },
+    { month: "2028-02", date: "2028-02-29", previous: "2028-01", next: "2028-03" },
+    { month: "2026-12", date: "2026-11-30", previous: "2026-11", next: "2027-01" },
+  ])("browses adjacent months from $month without carrying an overflowing or stale date", async ({ month, date, previous, next }) => {
+    authenticate(createUser("calendar-month-navigation@example.com"));
+    const rendered = await calendarPage.default({ searchParams: Promise.resolve({ month, date, view: "month", workout: "history-99999" }) });
+    expect(collectAriaLabels(rendered)).toContain("Month navigation");
+    expect(collectLinks(rendered, "Previous month")).toEqual([`/calendar?month=${previous}&date=${previous}-01&view=month`]);
+    expect(collectLinks(rendered, "Next month")).toEqual([`/calendar?month=${next}&date=${next}-01&view=month`]);
+  });
+
+  it("returns to the account's current month and date without leaving Month mode", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-07-01T01:00:00Z"));
+    const userId = createUser("calendar-month-today@example.com");
+    authenticate(userId);
+    dbModule.db.prepare("INSERT INTO user_settings(user_id,key,value) VALUES (?, 'timezone', 'America/Los_Angeles')").run(userId);
+    const rendered = await calendarPage.default({ searchParams: Promise.resolve({ month: "2090-12", view: "month" }) });
+    const navigation = collectComponentProps(rendered, "nav").find(nav => nav["aria-label"] === "Month navigation");
+    expect(navigation).toBeDefined();
+    expect(collectLinks(navigation?.children)).toContain("/calendar?month=2026-06&date=2026-06-30&view=month");
+    expect(collectRenderedText(navigation?.children)).toContain("Today");
+  });
+
+  it("keeps the default Week view free of month navigation", async () => {
+    authenticate(createUser("calendar-week-navigation@example.com"));
+    const rendered = await calendarPage.default({ searchParams: Promise.resolve({ month: "2026-06", date: "2026-06-05" }) });
+    expect(collectAriaLabels(rendered)).not.toContain("Month navigation");
+    expect(collectLinks(rendered, "Previous month")).toEqual([]);
+    expect(collectLinks(rendered, "Next month")).toEqual([]);
+    expect(collectComponentProps(rendered, CalendarAgenda)[0]).toMatchObject({ weekStart: "2026-06-01", compact: true });
+  });
+
   it.each(["week", "month"])("resumes an active planned occurrence in %s details without changing its scheduled date", async (view) => {
     vi.useFakeTimers();
     vi.setSystemTime(new Date("2026-05-31T12:00:00-07:00"));

@@ -1,5 +1,6 @@
 import { userDateKey } from "@/lib/user-date";
 import Link from "next/link";
+import { ChevronLeft, ChevronRight } from "lucide-react";
 import { getOccurrences, getOccurrence, occurrenceLiftPreview, type Occurrence } from "@/features/programs/occurrences";
 import { redirect } from "next/navigation";
 import { SessionRecapView } from "@/components/SessionRecapView";
@@ -67,6 +68,7 @@ type CalendarDayEventSummary = Readonly<{
 const WEEKDAY_LABELS = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
 const WEEK_DATE_FORMATTER = new Intl.DateTimeFormat("en-US", { month: "short", day: "numeric" });
 const MONTH_FORMATTER = new Intl.DateTimeFormat("en-US", { month: "long", year: "numeric" });
+const MONTH_NAV_LINK = "touch-target inline-flex items-center justify-center rounded-xl border border-line px-3 text-sm font-semibold focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-brand";
 
 function parseMonth(value: string | string[] | undefined, now: Date): Date {
   const raw = Array.isArray(value) ? value[0] : value;
@@ -278,7 +280,10 @@ export default async function CalendarPage({ searchParams }: CalendarPageProps) 
   const weekScheduled = getScheduledEvents(user.id, weekStart, weekEnd);
   const weekEvents = [...weekScheduled, ...getHistoryEvents(user.id, weekStart, weekEnd)].sort((a,b) => a.date.localeCompare(b.date));
   const visibleEvents = view === "week" ? weekEvents : events;
-
+  const adjacentMonthHref = (offset: number) => {
+    const date = new Date(monthStart.getFullYear(), monthStart.getMonth() + offset, 1);
+    return `${monthHref(date)}&date=${toLocalDateKey(date)}&view=month`;
+  };
 
   return (
     <div className="safe-x flex flex-col gap-4 py-5">
@@ -290,6 +295,15 @@ export default async function CalendarPage({ searchParams }: CalendarPageProps) 
           <Link prefetch={false} href={`${selectedHref}&view=month`} scroll={false} aria-current={view === "month" ? "page" : undefined} className={`touch-target inline-flex items-center justify-center rounded-lg px-4 text-sm font-semibold ${view === "month" ? "bg-brand-soft text-brand-strong" : "text-muted"}`}>Month</Link>
         </nav>
       </header>
+      {view === "month" ? (
+        <nav aria-label="Month navigation" className="flex items-center justify-between gap-2">
+          <Link prefetch={false} href={`${monthHref(today)}&date=${todayKey}&view=month`} scroll={false} className={MONTH_NAV_LINK}>Today</Link>
+          <div className="flex gap-2">
+            <Link prefetch={false} href={adjacentMonthHref(-1)} scroll={false} aria-label="Previous month" className={MONTH_NAV_LINK}><ChevronLeft aria-hidden="true" size={18} /></Link>
+            <Link prefetch={false} href={adjacentMonthHref(1)} scroll={false} aria-label="Next month" className={MONTH_NAV_LINK}><ChevronRight aria-hidden="true" size={18} /></Link>
+          </div>
+        </nav>
+      ) : null}
       <section aria-label="Week calendar" hidden={view !== "week"}>
         <CalendarAgenda compact returnTo={returnTo} key={toLocalDateKey(weekStart)} events={weekEvents} weekStart={toLocalDateKey(weekStart)} today={todayKey} />
       </section>
