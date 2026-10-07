@@ -254,6 +254,7 @@ test("Month arrows cross year boundaries and Today keeps Month mode", async ({ p
   const switcher = page.getByRole("navigation", { name: "Calendar view" });
   const month = page.getByRole("region", { name: "Month calendar", exact: true });
   await expect(page.getByRole("heading", { name: "December 2090", exact: true })).toBeVisible();
+  await expect(page.locator("next-route-announcer")).toHaveCount(1);
   await expect(navigation).toBeVisible();
   await expect(page.getByRole("navigation", { name: "Week navigation", exact: true })).toHaveCount(0);
   await expect(month.getByRole("link", { name: "See week containing 2090-12-31", exact: true })).toBeVisible();
@@ -263,9 +264,16 @@ test("Month arrows cross year boundaries and Today keeps Month mode", async ({ p
       document.documentElement.dataset.theme = enlarged ? "dark" : "light";
       document.documentElement.style.fontSize = enlarged ? "20px" : "16px";
     }, enlarged);
-    const todayBox = (await navigation.getByRole("link", { name: "Today", exact: true }).boundingBox())!;
+    // The install hint can shift the whole page between browser calls. Compare
+    // all three controls in one layout snapshot, not measurements from two frames.
+    const boxes = await navigation.getByRole("link").evaluateAll(links => links.map(link => {
+      const { y, width, height } = link.getBoundingClientRect();
+      return { name: link.getAttribute("aria-label") ?? link.textContent?.trim(), y, width, height };
+    }));
+    expect(boxes).toHaveLength(3);
+    const todayBox = boxes.find(box => box.name === "Today")!;
     for (const name of ["Previous month", "Next month"]) {
-      const box = (await navigation.getByRole("link", { name, exact: true }).boundingBox())!;
+      const box = boxes.find(box => box.name === name)!;
       expect(box.width).toBeGreaterThanOrEqual(44);
       expect(box.height).toBeGreaterThanOrEqual(44);
       expect(Math.abs(box.y - todayBox.y)).toBeLessThan(2);
@@ -283,10 +291,14 @@ test("Month arrows cross year boundaries and Today keeps Month mode", async ({ p
   await expect(month.getByRole("link", { name: "See week containing 2091-02-28", exact: true })).toBeVisible();
   await expect(month.getByRole("link", { name: "See week containing 2091-02-29", exact: true })).toHaveCount(0);
   await navigation.getByRole("link", { name: "Previous month", exact: true }).click();
+  await expect(page).toHaveURL("/calendar?month=2091-01&date=2091-01-01&view=month");
   await expect(page.getByRole("heading", { name: "January 2091", exact: true })).toBeVisible();
   await page.reload();
   await expect(navigation).toBeVisible();
+  // SSR links are visible before the fresh router has installed its Back handler.
+  await expect(page.locator("next-route-announcer")).toHaveCount(1);
   await page.goBack();
+  await expect(page).toHaveURL("/calendar?month=2091-02&date=2091-02-01&view=month");
   await expect(page.getByRole("heading", { name: "February 2091", exact: true })).toBeVisible();
 
   const today = navigation.getByRole("link", { name: "Today", exact: true });
