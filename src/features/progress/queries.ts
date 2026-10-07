@@ -68,17 +68,36 @@ function decodeGroup(key:string):string {
   if(typeof key!=="string"||!key.startsWith("u:")||key.length>800)invalid("Choose a valid recorded-name group.");
   const value=Buffer.from(key.slice(2),"base64url").toString("utf8");if(!value||value.length>140||`u:${Buffer.from(value).toString("base64url")}`!==key)invalid("Choose a valid recorded-name group.");return value;
 }
+/** Resolve existing identity only; equal names never establish a new link. */
+export function resolveUnlinkedExerciseId(userId:number,groupKey:string):string|null {
+  const name=decodeGroup(groupKey);const b=base(userId,{});const pins=getPinnedExerciseIds(userId);
+  const exclude=pins.length?`AND exerciseId NOT IN (${pins.map(()=>"?").join(",")})`:"";
+  const rows=db.prepare(`WITH b AS (${b.sql}) SELECT DISTINCT exerciseId FROM b
+    WHERE origin='unlinked' AND lower(trim(recordedName))=? ${exclude} LIMIT 2`).all(...b.args,name,...pins) as {exerciseId:string}[];
+  if(rows.length)return rows.length===1?rows[0].exerciseId:null;
+  // Old recorded-name URLs remain useful after pinning, reusing or explicitly linking
+  // their sole identity. Do not choose between multiple identities removed from a group.
+  const existing=db.prepare(`WITH b AS (${b.sql}) SELECT DISTINCT exerciseId FROM b
+    WHERE lower(trim(recordedName))=? LIMIT 2`).all(...b.args,name) as {exerciseId:string}[];
+  return existing.length===1?existing[0].exerciseId:null;
+}
 export function listProgressExercises(userId:number,filters:ProgressFilters={}):ProgressPage<ExerciseFinderItem> {
-  const b=base(userId,filters);const p=pagination(userId,"exercises",filters);const pins=getPinnedExerciseIds(userId);
+  const b=base(userId,filters);const all=base(userId,{});const p=pagination(userId,"exercises",filters);const pins=getPinnedExerciseIds(userId);
   const pinSql=pins.length?`AND exerciseId NOT IN (${pins.map(()=>"?").join(",")})`:"";
   const q=(filters.search??"").trim().toLowerCase();const initial=(filters.initial??"").toLowerCase();
-  const grouped=`WITH b AS (${b.sql}), keyed AS (SELECT *,CASE WHEN origin='unlinked' ${pinSql} THEN 'u:'||lower(trim(recordedName)) ELSE 'e:'||exerciseId END AS finderKey FROM b),
+  // Identity ambiguity belongs to the whole recorded history, not the current date/search page.
+  // Key before grouping/pagination so one existing identity with multiple labels stays one row.
+  const grouped=`WITH all_records AS (${all.sql}), ambiguous_names AS (
+      SELECT lower(trim(recordedName)) AS name FROM all_records WHERE origin='unlinked' ${pinSql}
+      GROUP BY lower(trim(recordedName)) HAVING COUNT(DISTINCT exerciseId)>1),
+    b AS (${b.sql}), keyed AS (SELECT *,CASE WHEN origin='unlinked' ${pinSql}
+      AND lower(trim(recordedName)) IN (SELECT name FROM ambiguous_names) THEN 'u:'||lower(trim(recordedName)) ELSE 'e:'||exerciseId END AS finderKey FROM b),
     grouped AS (SELECT finderKey,CASE WHEN substr(finderKey,1,2)='u:' THEN MIN(recordedName) ELSE MIN(catalogName) END AS name,
       COUNT(DISTINCT CAST(sessionId AS TEXT)||':'||observationKey) AS historyCount,MAX(date) AS lastDate,
       MAX(date||':'||printf('%020d',sessionId)) AS lastOrder,
       MAX(CASE WHEN lower(catalogName)=? OR lower(recordedName)=? THEN 3 WHEN instr(lower(catalogName),?)=1 OR instr(lower(recordedName),?)=1 THEN 2 ELSE 1 END) AS rank
       FROM keyed GROUP BY finderKey HAVING (?='' OR MAX(instr(lower(catalogName),?)>0 OR instr(lower(recordedName),?)>0)))`;
-  const args=[...b.args,...pins,q,q,q,q,q,q,q,initial,initial];
+  const args=[...all.args,...pins,...b.args,...pins,q,q,q,q,q,q,q,initial,initial];
   const order=filters.sort==="name"?"rank DESC,lower(name),finderKey":"rank DESC,lastOrder DESC,finderKey";
   const rows=db.prepare(`${grouped} SELECT * FROM grouped WHERE (?='' OR lower(substr(name,1,1))=?) ORDER BY ${order} LIMIT ? OFFSET ?`).all(...args,p.limit+1,p.offset) as {finderKey:string;name:string;historyCount:number;lastDate:string}[];
   const items=rows.slice(0,p.limit).map(row=>{

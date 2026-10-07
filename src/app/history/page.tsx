@@ -1,6 +1,6 @@
 import { redirect } from "next/navigation";
 import { requireUser } from "@/lib/auth";
-import { getExerciseDetail, getProgressHome, listUnlinkedExercises } from "@/features/progress/queries";
+import { getExerciseDetail, getProgressHome, listUnlinkedExercises, resolveUnlinkedExerciseId } from "@/features/progress/queries";
 import { ProgressOverview } from "@/components/progress/ProgressOverview";
 import { decodeProgressKey, progressMetric, progressUrl, single, type ProgressSearch } from "@/components/progress/navigation";
 
@@ -12,7 +12,9 @@ export default async function ProgressPage({ searchParams }: { searchParams: Pro
   const home = getProgressHome(user.id, { period });
   const requested = single(params.exercise);
   const defaultKey = home.pinned[0] ? `e:${home.pinned[0].id}` : home.recent.find(item => item.kind === "exercise" && item.exercise?.origin !== "unlinked")?.key ?? home.recent[0]?.key ?? "";
-  const selectedKey = requested ? decodeProgressKey(requested) ?? "" : defaultKey;
+  const initialKey = requested ? decodeProgressKey(requested) ?? "" : defaultKey;
+  const singleExerciseId = initialKey.startsWith("u:") ? resolveUnlinkedExerciseId(user.id, initialKey) : null;
+  const selectedKey = singleExerciseId ? `e:${singleExerciseId}` : initialKey;
   const detail = selectedKey.startsWith("e:") ? getExerciseDetail(user.id, selectedKey.slice(2), { period, limit: 2 }) : null;
   const candidates = selectedKey.startsWith("u:") ? listUnlinkedExercises(user.id, selectedKey, { period, limit: 2 }).items : [];
   const selectionError = requested && (!selectedKey || (selectedKey.startsWith("e:") && !detail)) ? "This exercise is unavailable. Choose another exercise from your history." : undefined;

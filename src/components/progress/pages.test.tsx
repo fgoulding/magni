@@ -2,16 +2,17 @@
 import "@testing-library/jest-dom/vitest";
 import { cleanup, render, screen } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-const queries = vi.hoisted(() => ({ listProgressExercises: vi.fn(), listProgressPrograms: vi.fn(), getProgressHome: vi.fn(), getExerciseDetail: vi.fn(), listUnlinkedExercises: vi.fn() }));
+const queries = vi.hoisted(() => ({ listProgressExercises: vi.fn(), listProgressPrograms: vi.fn(), getProgressHome: vi.fn(), getExerciseDetail: vi.fn(), listUnlinkedExercises: vi.fn(), resolveUnlinkedExerciseId: vi.fn() }));
 vi.mock("@/features/progress/queries", () => queries);
 vi.mock("@/lib/auth", () => ({ requireUser: async () => ({ id: 7 }) }));
 vi.mock("next/navigation", () => ({ redirect: (href: string) => { throw new Error(`REDIRECT ${href}`); } }));
 import FinderPage from "@/app/history/exercises/page";
 import ProgressPage from "@/app/history/page";
 import LegacyPage from "@/app/history/[lift]/page";
+import ExercisePage from "@/app/history/exercises/[key]/page";
 
 afterEach(cleanup);
-beforeEach(() => { vi.clearAllMocks(); queries.listProgressExercises.mockReturnValue({ items: [], nextCursor: null }); queries.listProgressPrograms.mockReturnValue({ items: [], nextCursor: null }); queries.listUnlinkedExercises.mockReturnValue({ items: [], nextCursor: null }); queries.getExerciseDetail.mockReturnValue(null); });
+beforeEach(() => { vi.clearAllMocks(); queries.listProgressExercises.mockReturnValue({ items: [], nextCursor: null }); queries.listProgressPrograms.mockReturnValue({ items: [], nextCursor: null }); queries.listUnlinkedExercises.mockReturnValue({ items: [], nextCursor: null }); queries.getExerciseDetail.mockReturnValue(null); queries.resolveUnlinkedExerciseId.mockReturnValue(null); });
 describe("Progress page discovery boundaries", () => {
   it("does not request or render the full library on initial finder entry", async () => {
     render(await FinderPage({ searchParams: Promise.resolve({}) }));
@@ -46,6 +47,26 @@ describe("Progress page discovery boundaries", () => {
     expect(queries.getExerciseDetail).toHaveBeenCalledWith(7, "chosen", { period: "4w", limit: 2 });
     expect(result.props.selectedKey).toBe("e:chosen");
     expect(result.props.currentHref).toBe("/history?exercise=e%3Achosen&period=4w");
+  });
+  it("opens a single recorded exercise from an existing name-group URL without requiring grouping", async () => {
+    queries.getProgressHome.mockReturnValue({ pinned: [], recent: [] });
+    queries.resolveUnlinkedExerciseId.mockReturnValue("single-row");
+    const detail = { exercise: { name: "Single leg abducted DL" } };
+    queries.getExerciseDetail.mockReturnValue(detail);
+    const result = await ProgressPage({ searchParams: Promise.resolve({ exercise: "u:cm93", period: "4w", metric: "load:lb" }) });
+    expect(queries.resolveUnlinkedExerciseId).toHaveBeenCalledWith(7, "u:cm93");
+    expect(result.props.selectedKey).toBe("e:single-row");
+    expect(result.props.detail).toBe(detail);
+    expect(result.props.currentHref).toBe("/history?exercise=e%3Asingle-row&period=4w&metric=load%3Alb");
+    expect(queries.listUnlinkedExercises).not.toHaveBeenCalled();
+  });
+  it("updates an old single-exercise detail link while retaining filters and return context", async () => {
+    queries.resolveUnlinkedExerciseId.mockReturnValue("single-row");
+    const returnTo = "/history?exercise=u%3Acm93&period=all&metric=load%3Alb";
+    const result = ExercisePage({ params: Promise.resolve({ key: "u:cm93" }), searchParams: Promise.resolve({ from: "2026-09-01", to: "2026-10-06", cursor: "old-group-page", returnTo }) });
+    await expect(result).rejects.toThrow(`REDIRECT /history/exercises/e%3Asingle-row?from=2026-09-01&to=2026-10-06&returnTo=${encodeURIComponent(returnTo)}`);
+    expect(queries.resolveUnlinkedExerciseId).toHaveBeenCalledWith(7, "u:cm93");
+    expect(queries.listUnlinkedExercises).not.toHaveBeenCalled();
   });
   it("defaults to the first pin, then a proven recent exercise, without merging an unlinked name group", async () => {
     queries.getProgressHome.mockReturnValue({ pinned: [{ id: "favorite" }], recent: [] });
