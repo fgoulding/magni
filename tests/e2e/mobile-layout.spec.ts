@@ -1,7 +1,7 @@
 import { expect, test } from "@playwright/test";
 import { registerViaApi } from "./helpers";
 
-test("Today workout fits above navigation without old workouts or nested scrolling", async ({ page }, info) => {
+test("Today exercise cards collapse and scroll above navigation without old workouts or nested scrolling", async ({ page }, info) => {
   await registerViaApi(page, "today-scroll");
   expect((await page.request.post("/api/settings", { data: { timezone: "UTC" } })).ok()).toBe(true);
   const program = await (await page.request.post("/api/programs", { data: { name: "Today scroll training", numWeeks: 8 } })).json();
@@ -42,7 +42,30 @@ test("Today workout fits above navigation without old workouts or nested scrolli
   await page.screenshot({ path: info.outputPath("today-scroll-top.png"), animations: "disabled" });
   const loggerBounds = (await card.boundingBox())!;
   const navigationBounds = (await page.getByRole("navigation", { name: "Main navigation" }).boundingBox())!;
-  expect(loggerBounds.y + loggerBounds.height).toBeLessThanOrEqual(navigationBounds.y);
+  // All physical sets now share the Quick Workout row layout. A multi-lift
+  // workout uses document scroll; collapsing lifts keeps the overview short.
+  await expect(card.locator("[data-exercise-log-card]")).toHaveCount(4);
+  await expect(card.locator("[data-set-log-row]")).toHaveCount(12);
+  // Check normal document scrolling while all rows are still expanded; hiding
+  // them first could conceal a nested scroller or sticky workout regression.
+  await page.evaluate(distance => window.scrollTo(0, distance), loggerBounds.y + 100);
+  await expect.poll(() => page.evaluate(() => window.scrollY)).toBeGreaterThan(0);
+  const expandedScroll = await page.evaluate(() => window.scrollY);
+  expect(Math.abs((await card.boundingBox())!.y - (loggerBounds.y - expandedScroll))).toBeLessThan(2);
+  expect(await page.evaluate(() => [...document.querySelectorAll("main *")].filter(element => /^(auto|scroll)$/.test(getComputedStyle(element).overflowY) && element.scrollHeight > element.clientHeight + 1).length)).toBe(0);
+  await page.evaluate(() => window.scrollTo(0, 0));
+  await expect.poll(() => page.evaluate(() => window.scrollY)).toBe(0);
+  for (const name of ["Squat", "Bench press", "Row", "Curl"]) {
+    await card.getByRole("button", { name: `Collapse ${name}`, exact: true }).click();
+    await expect(card.getByRole("button", { name: `Expand ${name}`, exact: true })).toHaveAttribute("aria-expanded", "false");
+  }
+  await expect(card.locator("[data-set-log-row]:visible")).toHaveCount(0);
+  const finish = card.getByRole("button", { name: "Finish Workout", exact: true });
+  await finish.evaluate(button => button.scrollIntoView({ block: "center" }));
+  await finish.click({ trial: true });
+  const finishBounds = (await finish.boundingBox())!;
+  expect(finishBounds.y + finishBounds.height).toBeLessThanOrEqual(navigationBounds.y);
+  await expect(finish).toBeInViewport();
   await card.getByText("More", { exact: true }).click();
   await card.getByRole("button", { name: "Add exercise", exact: true }).click();
   await expect(card.getByLabel("New exercise name", { exact: true })).toBeVisible();

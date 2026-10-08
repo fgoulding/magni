@@ -1,0 +1,39 @@
+/* Keep containment around stable controls, outside conditional save/Undo UI.
+   Chromium can lose sibling layout when a contained row inserts recovery actions. */
+.entryContainer {
+  container-type: inline-size;
+}
+
+.entries {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  align-items: end;
+  gap: 0.5rem;
+}
+
+.entries input {
+  font-size: max(16px, 1rem);
+}
+
+@container (min-width: 14rem) {
+  .entries {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+.save {
+  grid-column: 1 / -1;
+  justify-self: end;
+  width: 44px;
+  height: 44px;
+}
+
+/* Text-relative threshold: keep numeric content roomy when text is enlarged. */
+@container (min-width: 18rem) {
+  .entries {
+    grid-template-columns: minmax(90px, 1fr) minmax(100px, 1fr) 44px;
+  }
+  .save {
+    grid-column: auto;
+  }
+}

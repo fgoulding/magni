@@ -40,8 +40,9 @@ Defined as CSS variables in `globals.css` and exposed as Tailwind utilities via
 | `--brand-line` | `#fcd9bd` | `border-brand-line` | Borders on brand-soft surfaces |
 
 > **Contrast rule:** small orange text on white must use `text-brand-strong`
-> (`#c2410c`), not `text-brand`. White-on-`bg-brand` is reserved for large/bold
-> button labels (≥16px semibold).
+> (`#c2410c`), not `text-brand`. White-on-`bg-brand` does not meet 4.5:1 for
+> normal text; 16px semibold is not qualifying large text. Use a verified ink
+> pair such as `bg-foreground text-background` for small text actions.
 
 ### Success — training green
 | Token | Hex | Tailwind | Use |
@@ -140,14 +141,29 @@ Inputs are forced to 16px (prevents iOS zoom-on-focus).
 **Cards:** `.card`. Hero/featured cards get a `h-1 bg-brand` top accent bar.
 Card title = `.display`; small uppercase context = `.eyebrow text-brand-strong`.
 
-**Today:** one primary workout logger for today, in normal document flow. Its
-exercise selector and set controls fit above the bottom navigation; extra actions
-open from More. Old sessions stay on their Calendar dates and never take over
+**Today:** one primary workout logger for today, in normal document flow. Use the
+shared collapsible exercise cards below; extra actions open from More. Old sessions stay on their Calendar dates and never take over
 Today. The whole workout card must never stick over later content. Use a compact
 Today/date header with access to workout history.
 Lead the workout card with its authored workout name, then muted program/week
 context. Use a plain lift list and one prominent Start/Resume action. Idle Pause
 and Skip actions live under More. Show dates only when they add new context.
+
+**Active workout exercises:** Quick Workout, planned Today, Calendar details and
+planned resume share the same exercise disclosure and set-row presentation.
+Use a full-width header button with the exercise name, saved count and
+`aria-expanded`. Collapse is manual and does not mean completion; it preserves
+entered values. Closed summaries still show pending, saving, failure or conflict
+states. Saving the final set leaves its controls and Undo visible.
+
+Set rows have visible Reps and Weight (unit) labels above generously sized numeric
+inputs, separate save feedback and an explicit Undo action. Fields and actions
+wrap when space is tight or text is enlarged; never squeeze decimal digits behind
+native input steppers. Use `text-muted` for meaningful secondary labels and at
+least 44px targets. Keep authored targets, roles, effort, rest, tempo, notes,
+bodyweight and superset context available. Legacy rows storing multiple sets
+remain clearly labeled as a batch. Undo clears actuals only after acknowledgement,
+retaining the input values without treating them as unsaved performed work.
 
 **Calendar:** Week is the default, with workout names and quiet status symbols.
 Use the shared `CalendarStatus` shapes in Week, Month and the legend: completed

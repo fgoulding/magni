@@ -18,6 +18,12 @@ function set(id: number, name: string, opts: Partial<WorkoutSet> = {}): WorkoutS
 }
 
 describe("buildGroups", () => {
+  it("keeps same-name authored appearances separate while grouping their own sets", () => {
+    const a = JSON.stringify({ exerciseId: "row-a" });
+    const b = JSON.stringify({ exerciseId: "row-b" });
+    const groups = buildGroups([set(1, "Row", { editor_json: a }), set(2, "Row", { editor_json: a }), set(3, "Row", { editor_json: b })]);
+    expect(groups.map(group => group.sets.map(row => row.id))).toEqual([[1, 2], [3]]);
+  });
   it("assigns ordinal group indices even when groups hold multiple sets", () => {
     // Bench day: a 3-set lift, then two supersets — exactly the shape that broke
     // group navigation when index was the flat set index instead of the ordinal.
@@ -57,4 +63,14 @@ describe("editor prescription display", () => {
     expect(summaryDetail(row)).toBe("10 reps @ 40 kg");
     expect(row.tonnage).toBe(400);
   });
+});
+
+it("never counts a prescribed load as recorded volume when the saved load is missing", () => {
+  const saved = set(1, "Row", { actual_reps: 10, actual_weight: null, calculated_weight: 62.5 });
+  const [summary] = buildSummaryRows([saved], new Set([1]), {});
+  expect(summary).toMatchObject({ reps: 10, weight: null, tonnage: 0 });
+  expect(summaryDetail(summary)).toBe("10 reps");
+  const [zero] = buildSummaryRows([{ ...saved, actual_weight: 0 }], new Set([1]), {});
+  expect(zero).toMatchObject({ weight: 0, tonnage: 0 });
+  expect(summaryDetail(zero)).toBe("10 reps @ 0 lb");
 });

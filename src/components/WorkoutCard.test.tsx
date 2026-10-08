@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 
 import "@testing-library/jest-dom/vitest";
-import { act, cleanup, render, screen } from "@testing-library/react";
+import { act, cleanup, render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { WorkoutCard } from "@/components/WorkoutCard";
@@ -79,7 +79,7 @@ describe("WorkoutCard", () => {
     expect(JSON.parse(calls.mock.calls[0][1].body)).toEqual({ dayId: 2, occurrenceId: 77 });
   });
 
-  it("keeps exercise selection stable until Log and Next finishes saving", async () => {
+  it("keeps lift disclosures stable during and after saving a set", async () => {
     const user = userEvent.setup();
     let acknowledge!: (response: Response) => void;
     stubFetch(vi.fn().mockResolvedValueOnce(jsonResponse({ id: 42, sets: [
@@ -88,14 +88,16 @@ describe("WorkoutCard", () => {
     ] })).mockImplementationOnce(() => new Promise<Response>(resolve => { acknowledge = resolve; })));
     render(<WorkoutCard {...makeCardProps({ focusMode: true })} />);
     await user.click(screen.getByRole("button", { name: "Start Workout" }));
-    const exercise = await screen.findByRole("combobox", { name: "Exercise" });
-    await user.click(screen.getByRole("button", { name: "Log & Next" }));
-    expect(exercise).toBeDisabled();
-    await user.selectOptions(exercise, "1");
+    const squat = await screen.findByRole("button", { name: "Collapse Squat" });
+    const bench = screen.getByRole("button", { name: "Collapse Bench Press" });
+    await user.click(bench);
+    await user.click(within(squat.closest("section")!).getByRole("button", { name: "Save set 1" }));
+    expect(squat).toHaveAttribute("aria-expanded", "true");
+    expect(screen.getByRole("button", { name: "Expand Bench Press" })).toHaveAttribute("aria-expanded", "false");
     await act(async () => acknowledge(jsonResponse({ success: true })));
-    expect(exercise).toBeEnabled();
-    expect(exercise).toHaveValue("1");
-    expect(screen.getByRole("heading", { name: "Bench Press" })).toBeVisible();
+    expect(squat).toHaveAttribute("aria-expanded", "true");
+    expect(screen.getByRole("button", { name: "Expand Bench Press" })).toHaveAttribute("aria-expanded", "false");
+    expect(within(squat.closest("section")!).getByRole("button", { name: "Save set 1" })).toHaveAttribute("aria-pressed", "true");
   });
   it("offers an explicit unchanged-max finish only after a missing-template response", async () => {
     const user = userEvent.setup();
@@ -156,8 +158,8 @@ describe("WorkoutCard", () => {
 
     expect(await screen.findByText("Squat")).toBeInTheDocument();
     // Flat single lift shows a weight hero + scheme.
-    expect(screen.getByText("225")).toBeInTheDocument();
-    expect(screen.getByText("1 × 5")).toBeInTheDocument();
+    expect(screen.getByRole("spinbutton", { name: "Squat set 1 weight (lb)" })).toHaveValue(225);
+    expect(screen.getByText("Work · 5 reps · 225 lb")).toBeInTheDocument();
     expect(screen.getByText("Bench Press")).toBeInTheDocument();
   });
 
@@ -175,7 +177,7 @@ describe("WorkoutCard", () => {
     expect(alert).not.toHaveTextContent(/Unexpected token|not valid JSON|JSON\.parse/i);
   });
 
-  it("logs a set and advances to the next lift", async () => {
+  it("logs only the selected lift without automatic navigation", async () => {
     const user = userEvent.setup();
     const fetchMock = vi
       .fn()
@@ -195,7 +197,7 @@ describe("WorkoutCard", () => {
     await user.click(screen.getByRole("button", { name: "Start Workout" }));
     await screen.findByText("Squat");
 
-    await user.click(screen.getByRole("button", { name: "Log & Next" }));
+    await user.click(within(screen.getByRole("button", { name: "Collapse Squat" }).closest("section")!).getByRole("button", { name: "Save set 1" }));
 
     expect(fetchMock).toHaveBeenLastCalledWith(
       "/api/sessions/42/sets",
@@ -226,7 +228,7 @@ describe("WorkoutCard", () => {
     await user.click(screen.getByRole("button", { name: "Start Workout" }));
     await screen.findByText("Squat");
 
-    await user.click(screen.getByRole("button", { name: "Log Set" }));
+    await user.click(screen.getByRole("button", { name: "Save set 1" }));
     await user.click(screen.getByRole("button", { name: "Finish Workout" }));
 
     expect(await screen.findByText("Workout complete")).toBeInTheDocument();
@@ -234,7 +236,7 @@ describe("WorkoutCard", () => {
     expect(routerMock.refresh).toHaveBeenCalledTimes(1);
   });
 
-  it("summarizes completed workout reps per set with entered reps only on the final set", async () => {
+  it("summarizes each explicitly saved physical set with its own entered reps", async () => {
     const user = userEvent.setup();
     const fetchMock = vi
       .fn()
@@ -258,10 +260,12 @@ describe("WorkoutCard", () => {
     await user.click(screen.getByRole("button", { name: "Start Workout" }));
     await screen.findByText("Squat");
 
-    const repsInput = screen.getByRole("spinbutton", { name: "Reps" });
+    const repsInput = screen.getByRole("spinbutton", { name: "Squat set 3 reps" });
     await user.clear(repsInput);
     await user.type(repsInput, "10");
-    await user.click(screen.getByRole("button", { name: "Log Set" }));
+    await user.click(screen.getByRole("button", { name: "Save set 1" }));
+    await user.click(screen.getByRole("button", { name: "Save set 2" }));
+    await user.click(screen.getByRole("button", { name: "Save set 3" }));
     await user.click(screen.getByRole("button", { name: "Finish Workout" }));
 
     expect(await screen.findByText("Workout complete")).toBeInTheDocument();
@@ -289,13 +293,13 @@ describe("WorkoutCard", () => {
     await user.click(screen.getByRole("button", { name: "Start Workout" }));
     await screen.findByText("Squat");
 
-    await user.click(screen.getByRole("button", { name: "Log Set" }));
+    await user.click(screen.getByRole("button", { name: "Save set 1" }));
 
     expect(await screen.findByText("Network error")).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Log Set" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Save set 1" })).toBeInTheDocument();
   });
 
-  it("resumes an in-progress workout, restoring logged sets, and re-opens one to edit", async () => {
+  it("resumes an in-progress workout, restoring logged sets and keeping their entries editable", async () => {
     const user = userEvent.setup();
     const session = {
       id: 42,
@@ -316,12 +320,14 @@ describe("WorkoutCard", () => {
 
     // Resumed straight into the workout (no Start), with the set shown as logged.
     expect(await screen.findByText("Squat")).toBeInTheDocument();
-    expect(screen.getByText("Logged")).toBeInTheDocument();
+    expect(screen.getByText("Saved")).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Start Workout" })).not.toBeInTheDocument();
 
-    // Editing re-enables the reps input (pre-filled with the logged value).
-    await user.click(screen.getByRole("button", { name: "Edit" }));
-    expect(screen.getByRole("spinbutton", { name: "Reps" })).toBeInTheDocument();
+    const reps = screen.getByRole("spinbutton", { name: "Squat set 1 reps" });
+    expect(reps).toHaveValue(5);
+    await user.clear(reps);
+    await user.type(reps, "7");
+    expect(screen.getByText("Unsaved")).toBeInTheDocument();
   });
 
   it("skips a workout", async () => {

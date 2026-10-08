@@ -133,10 +133,10 @@ describe("QuickWorkout save recovery", () => {
     expect(screen.queryByText("Quick workout complete")).not.toBeInTheDocument();
   });
 
-  it("shows zero recorded load for a legacy logged row without actual weight", () => {
+  it("shows missing recorded load distinctly from zero on a legacy logged row", () => {
     render(<QuickWorkout initialSession={{ ...initialSession, sets: [{ ...initialSession.sets[0], actual_weight: null }] }} />);
-    expect(screen.getByRole("spinbutton", { name: "Weight for set 1" })).toHaveValue(0);
-    expect(screen.getByText("Saved")).toBeInTheDocument();
+    expect(screen.getByRole("spinbutton", { name: "Weight for set 1" })).toHaveValue(null);
+    expect(screen.getByText("Saved · load not recorded")).toBeInTheDocument();
   });
 
   it("warns when device storage fails and still allows the entered draft to be saved", async () => {

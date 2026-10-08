@@ -327,7 +327,7 @@ test("Calendar context survives resuming a manual planned session by its exact I
   await page.getByRole("link",{name:"Resume workout",exact:true}).click();
   await page.getByRole("link",{name:"Resume planned workout",exact:true}).click();
   await expect(page).toHaveURL(`/workouts/${session.id}/resume?returnTo=${encodeURIComponent(returnTo)}`);
-  await expect(page.getByRole("button",{name:"Log Set",exact:true})).toBeVisible();
+  await expect(page.getByRole("button",{name:"Save set 1",exact:true})).toBeVisible();
   await page.getByRole("link",{name:"Workout details"}).click();
   await page.getByRole("link",{name:"Back to Calendar"}).click();
   await expect(page).toHaveURL(returnTo);

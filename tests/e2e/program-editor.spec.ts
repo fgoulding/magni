@@ -135,10 +135,22 @@ test("author a custom double progression program, preview, reload and activate",
   const install = page.getByRole("button", { name: "Dismiss install help", exact: true });
   if (await install.count()) await install.click();
   await page.evaluate(() => window.scrollTo(0, 0));
-  const cardBounds = (await page.locator("[data-workout-focus]").boundingBox())!;
+  const logger = page.locator("[data-workout-focus]");
+  await expect(logger.locator("[data-set-log-row]:visible")).toHaveCount(3);
+  expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
+  // The shared logger shows all physical sets. Collapse the lift to recover
+  // the compact overview, then verify its last row remains reachable on reopen.
+  await logger.getByRole("button", { name: "Collapse Dumbbell row", exact: true }).click();
+  await expect(logger.locator("[data-set-log-row]:visible")).toHaveCount(0);
+  const cardBounds = (await logger.boundingBox())!;
   const navBounds = (await page.getByRole("navigation", { name: "Main navigation" }).boundingBox())!;
   await page.screenshot({ path: info.outputPath("editor-focused-logger-viewport.png") });
   expect(cardBounds.y + cardBounds.height).toBeLessThanOrEqual(navBounds.y);
+  await logger.getByRole("button", { name: "Expand Dumbbell row", exact: true }).click();
+  const lastSave = logger.getByRole("button", { name: "Save set 3", exact: true });
+  await lastSave.evaluate(button => button.scrollIntoView({ block: "center" }));
+  await lastSave.click({ trial: true });
+  await expect(lastSave).toBeInViewport();
   await page.screenshot({ path: info.outputPath("editor-trained-prescription.png"), fullPage: true });
 });
 

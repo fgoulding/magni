@@ -93,7 +93,8 @@ export function buildGroups(sets: WorkoutSet[]): WorkoutGroup[] {
       groups.length > 0 &&
       !groups[groups.length - 1].supersetGroup &&
       !set.superset_group &&
-      groups[groups.length - 1].sets[0].exercise_name === set.exercise_name
+      groups[groups.length - 1].sets[0].exercise_name === set.exercise_name &&
+      editorMetadata(groups[groups.length - 1].sets[0])?.exerciseId === editorMetadata(set)?.exerciseId
     ) {
       groups[groups.length - 1].sets.push(set);
     } else {
@@ -143,8 +144,9 @@ export function buildSummaryRows(
     const bw = isBodyweight(set);
     // Use the in-workout edited load when present: added weight for bodyweight,
     // the edited working weight for supersets/custom, else the prescribed weight.
-    const displayWeight = weights[set.id] ?? set.actual_weight ?? set.calculated_weight;
-    const setWeight = bw ? (added[set.id] ?? set.actual_weight ?? 0) : displayWeight;
+    const missingRecordedWeight = set.actual_reps != null && set.actual_weight == null;
+    const displayWeight = weights[set.id] ?? (missingRecordedWeight ? null : set.actual_weight ?? set.calculated_weight);
+    const setWeight = bw ? (added[set.id] ?? set.actual_weight ?? 0) : displayWeight ?? 0;
     // A flat exercise is one row standing in for `sets` identical sets; a ramp is
     // one row per set (sets = 1). Multiply so total reps & tonnage count every set.
     const setCount = set.sets > 0 ? set.sets : 1;

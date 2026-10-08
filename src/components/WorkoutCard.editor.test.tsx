@@ -157,21 +157,21 @@ describe("custom workout set logging and draft recovery", () => {
     expect(await screen.findByText("50 kg total")).toBeInTheDocument();
   });
 
-  it("recovers a pending legacy flat-lift rep field without changing legacy batch logging", async () => {
+  it("recovers each legacy flat-lift row and saves only the selected physical set", async () => {
     const body = session();
     body.sets = body.sets.map((set) => ({ ...set, editor_json: null, training_max: null }));
     const save = vi.fn<(url: string, init?: RequestInit) => Promise<Response>>().mockImplementation(async () => response({ success: true }));
     mockServer(body, save);
     const first = render(<WorkoutCard {...props} />);
-    await screen.findByRole("spinbutton", { name: "Reps" });
-    edit("Reps", "9");
+    await screen.findByRole("spinbutton", { name: "Row set 3 reps" });
+    edit("Row set 3 reps", "9");
     first.unmount();
     render(<WorkoutCard {...props} />);
-    expect(await screen.findByRole("spinbutton", { name: "Reps" })).toHaveValue(9);
-    fireEvent.click(screen.getByRole("button", { name: "Log Set" }));
-    await screen.findByText("Logged");
-    expect(save).toHaveBeenCalledTimes(3);
-    expect(JSON.parse(save.mock.calls[2][1]!.body as string)).toEqual({ setId: 3, actualReps: 9, actualWeight: 40, expectedActual: { reps: null, weight: null } });
+    expect(await screen.findByRole("spinbutton", { name: "Row set 3 reps" })).toHaveValue(9);
+    fireEvent.click(screen.getByRole("button", { name: "Save set 3" }));
+    await screen.findByText("Saved");
+    expect(save).toHaveBeenCalledTimes(1);
+    expect(JSON.parse(save.mock.calls[0][1]!.body as string)).toEqual({ setId: 3, actualReps: 9, actualWeight: 40, expectedActual: { reps: null, weight: null } });
   });
 
   it("keeps edits recoverable in memory when device storage is unavailable and explains the limit", async () => {
@@ -208,14 +208,15 @@ describe("custom workout set logging and draft recovery", () => {
     expect(await screen.findByRole("spinbutton", { name: "Row set 1 reps" })).toHaveValue(7);
   });
 
-  it("keeps acknowledged legacy volume when merely opening Edit", async () => {
+  it("keeps acknowledged legacy volume when collapsing and reopening a lift", async () => {
     const body = session(true);
     body.sets = [{ ...body.sets[0], editor_json: null, training_max: null }];
     mockServer(body);
     render(<WorkoutCard {...props} />);
-    fireEvent.click(await screen.findByRole("button", { name: "Edit" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Collapse Row" }));
+    fireEvent.click(screen.getByRole("button", { name: "Expand Row" }));
     expect(screen.getByText("400 lb · 1 set")).toBeInTheDocument();
-    expect(screen.getByRole("spinbutton", { name: "Reps" })).toHaveValue(10);
+    expect(screen.getByRole("spinbutton", { name: "Row set 1 reps" })).toHaveValue(10);
   });
 
   it("retains an old draft baseline through reload and resolves a409 only after an explicit choice", async () => {

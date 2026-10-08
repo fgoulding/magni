@@ -1,5 +1,5 @@
 export type ActualBaseline = { reps: number | null; weight: number | null };
-export type SetDraft = { reps: string; weight: string; expectedActual?: ActualBaseline };
+export type SetDraft = { reps: string; weight: string; expectedActual?: ActualBaseline; intent?: "undo" | "retained" };
 export type SetDrafts = Record<number, SetDraft>;
 const draftEvent = "magni-planned-draft-changed";
 const volatileDrafts = new Map<number, string>();

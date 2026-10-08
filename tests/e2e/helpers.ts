@@ -167,13 +167,12 @@ export async function completeVisibleWorkout(page: Page, startButtonName = "Star
   await page.getByRole("button", { name: startButtonName }).click();
   await expect(page.getByRole("heading", { name: "Squat" })).toBeVisible();
 
-  await page.getByRole("button", { name: "Log Set" }).click();
-  if (new URL(page.url()).pathname === "/today") {
-    await expect(page.getByText("3 sets saved", { exact: true })).toBeVisible();
-  } else {
-    await expect(page.getByText("3,000 lb · 3 sets", { exact: true })).toBeVisible();
+  for (const number of [1, 2, 3]) {
+    const save = page.getByRole("button", { name: `Save set ${number}`, exact: true });
+    await save.click();
+    await expect(save).toHaveAttribute("aria-pressed", "true");
   }
-  await expect(page.getByText("Logged", { exact: true })).toBeVisible();
+  await expect(page.getByRole("button", { name: /^Undo set \d+$/ })).toHaveCount(3);
   await page.getByRole("button", { name: "Finish Workout" }).click();
 
   // Calendar refresh replaces the live card with the persisted session recap.

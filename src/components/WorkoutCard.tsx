@@ -1,9 +1,10 @@
 "use client";
 
-import { Check, Circle, Dumbbell, SkipForward, Trophy } from "lucide-react";
+import { Check, Dumbbell, SkipForward, Trophy } from "lucide-react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
 import { type ReactNode, useEffect, useMemo, useState, useSyncExternalStore, useTransition } from "react";
+import { ExerciseLogCard, SetLogRow } from "./ExerciseLogCard";
 import { AddSessionExerciseForm } from "@/components/AddSessionExerciseForm";
 import { ErrorBanner } from "@/components/ErrorBanner";
 import { WorkoutTmEditor, type TmUpdatedSet } from "@/components/WorkoutTmEditor";
@@ -18,7 +19,6 @@ import {
   groupExerciseNames,
   isBodyweight,
   isFlatSingle,
-  lastGroupIndex,
   readResponseJson,
   summaryDetail,
   type LastPerformance,
@@ -30,6 +30,8 @@ import {
 import { isDraftVolatile, parseDrafts, readDraftSnapshot, subscribeDrafts, writeDrafts, type SetDraft, type ActualBaseline } from "@/components/planned-workout-drafts";
 
 import styles from "./WorkoutCard.module.css";
+
+function isPending(draft?: SetDraft): boolean { return !!draft && draft.intent !== "retained"; }
 
 /** Compact "last time" line, e.g. "5/5/8 @ 225 lb" or "12/12/12 BW +25". */
 function formatLastPerformance(last: LastPerformance): string {
@@ -91,8 +93,6 @@ export function WorkoutCard({
   rounding?: number;
 }) {
   const [session, setSession] = useState<SessionResponse | null>(null);
-  const [currentGroupIdx, setCurrentGroupIdx] = useState(0);
-  const [selectedSetId, setSelectedSetId] = useState<number | null>(null);
   const [values, setValues] = useState<Record<number, number>>({});
   // Optional added weight per set for bodyweight exercises (keyed by set id).
   const [added, setAdded] = useState<Record<number, number>>({});
@@ -100,7 +100,6 @@ export function WorkoutCard({
   // Main lifts edit weight via the training max instead, so they're excluded.
   const [weights, setWeights] = useState<Record<number, number>>({});
   const [completedSetIds, setCompletedSetIds] = useState<Set<number>>(new Set());
-  const [editingGroupKeys, setEditingGroupKeys] = useState<Set<number>>(new Set());
   // Lifts the user chose to skip this session, keyed by the group's leading set
   // id. Client-only: skipped lifts are simply left unlogged, so the recap marks
   // them skipped at finish. A full reload resets this (the lift returns as "to do").
@@ -116,7 +115,7 @@ export function WorkoutCard({
   const [progressionDecisions, setProgressionDecisions] = useState<{ progressionKey: string; exerciseName: string; result: { explanation: string } }[]>([]);
   const draftSnapshot = useSyncExternalStore(subscribeDrafts, () => readDraftSnapshot(session?.id), () => null);
   const drafts = useMemo(() => parseDrafts(draftSnapshot), [draftSnapshot]);
-  const hasPending = session?.sets.some((set) => drafts[set.id]) ?? false;
+  const hasPending = session?.sets.some((set) => isPending(drafts[set.id])) ?? false;
   const [skipping, setSkipping] = useState(false);
   const [completing, setCompleting] = useState(false);
   const [refreshingCompletion, startCompletionRefresh] = useTransition();
@@ -129,17 +128,11 @@ export function WorkoutCard({
   const [prs, setPrs] = useState<{ exercise: string; e1rm: number; weight: number; reps: number }[]>([]);
 
   const groups = buildGroups(session?.sets ?? []);
-  const currentGroup = groups[currentGroupIdx];
-  const currentSet = currentGroup?.sets[currentGroup.sets.length - 1];
-  const focusedEditorSet = currentGroup?.sets.find(set => set.id === selectedSetId) ?? currentGroup?.sets.find(set => drafts[set.id]) ?? currentGroup?.sets.find(set => !completedSetIds.has(set.id)) ?? currentGroup?.sets[0];
-  const prevGroups = groups.slice(0, currentGroupIdx);
-  const upcomingGroups = groups.slice(currentGroupIdx + 1);
-  const isLastGroup = currentGroupIdx === lastGroupIndex(groups);
   const unit = (session?.sets[0] ? editorMetadata(session.sets[0])?.unit : undefined) ?? session?.unit ?? "lb";
   // Summaries describe acknowledged actuals; pending edits never inflate performed volume.
   const summaryRows = buildSummaryRows(session?.sets ?? [], completedSetIds, {}, {}, {}, unit);
   const totalTonnage = summaryRows.reduce((sum, row) => sum + row.tonnage, 0);
-  const totalSets = completedSetIds.size;
+  const totalSets = (session?.sets ?? []).filter(set => completedSetIds.has(set.id)).reduce((sum, set) => sum + Math.max(1, set.sets), 0);
   const liftCount = summaryRows.length;
   // A lift is "resolved" once it's logged or deliberately skipped — both let the
   // progress bar advance and the workout reach a finishable state.
@@ -175,13 +168,7 @@ export function WorkoutCard({
           .map((set) => [set.id, set.actual_weight as number]),
       ),
     );
-    const restored = parseDrafts(readDraftSnapshot(body.id));
-    const firstPending = gs.findIndex((group) => group.sets.some((set) => restored[set.id]));
-    const firstUnfinished = firstPending >= 0 ? firstPending : gs.findIndex((group) => {
-      const last = group.sets[group.sets.length - 1];
-      return group.sets.some((set) => set.editor_json) ? !group.sets.every((set) => logged.has(set.id)) : group.sets.length > 1 ? !logged.has(last.id) : !group.sets.every((s) => logged.has(s.id));
-    });
-    setCurrentGroupIdx(firstUnfinished === -1 ? Math.max(0, gs.length - 1) : firstUnfinished);
+
   }
 
   // Resume an in-progress workout when landing back on this card (e.g. after
@@ -276,16 +263,17 @@ export function WorkoutCard({
   }
 
   function inputValues(set: WorkoutSet): SetDraft {
-    return drafts[set.id] ?? {
+    const draft = drafts[set.id];
+    return draft && !(draft.intent === "retained" && set.actual_reps != null) ? draft : {
       expectedActual: { reps: set.actual_reps, weight: set.actual_weight },
       reps: String(values[set.id] ?? set.actual_reps ?? set.rep_out_target),
-      weight: String(isBodyweight(set) ? (added[set.id] ?? set.actual_weight ?? set.calculated_weight ?? 0) : (weights[set.id] ?? set.actual_weight ?? set.calculated_weight)),
+      weight: set.actual_reps != null && set.actual_weight == null ? "" : String(isBodyweight(set) ? (added[set.id] ?? set.actual_weight ?? set.calculated_weight ?? 0) : (weights[set.id] ?? set.actual_weight ?? set.calculated_weight)),
     };
   }
 
   function editSet(set: WorkoutSet, field: keyof SetDraft, value: string) {
     if (!session) return;
-    const next = { ...inputValues(set), expectedActual: inputValues(set).expectedActual ?? { reps: set.actual_reps, weight: set.actual_weight }, [field]: value };
+    const next = { ...inputValues(set), expectedActual: inputValues(set).expectedActual ?? { reps: set.actual_reps, weight: set.actual_weight }, [field]: value, intent: drafts[set.id]?.intent === "undo" ? "undo" as const : undefined };
     if (!writeDrafts(session.id, { ...parseDrafts(readDraftSnapshot(session.id)), [set.id]: next })) setStorageWarning(true);
     setFailedIds((prev) => new Set([...prev].filter((id) => id !== set.id)));
   }
@@ -299,15 +287,18 @@ export function WorkoutCard({
     setFailedIds((prev) => new Set([...prev].filter((id) => id !== set.id)));
   }
 
-  async function saveSets(sets: WorkoutSet[], advance = false, overrides: Record<number, SetDraft> = {}) {
+  async function saveSets(sets: WorkoutSet[], overrides: Record<number, SetDraft> = {}, undo = false) {
     if (!session || savingIds.size || saving) return;
     setError("");
-    const submissions = sets.map((set) => ({ set, draft: overrides[set.id] ?? inputValues(set) }));
+    const submissions = sets.map(set => {
+      const entered = overrides[set.id] ?? inputValues(set);
+      return { set, draft: { ...entered, expectedActual: entered.expectedActual ?? { reps: set.actual_reps, weight: set.actual_weight }, intent: undo ? "undo" as const : undefined } };
+    });
     for (const { draft } of submissions) {
-      if (!/^\d+$/.test(draft.reps) || !Number.isSafeInteger(Number(draft.reps))) {
+      if (!undo && (!/^\d+$/.test(draft.reps) || !Number.isSafeInteger(Number(draft.reps)))) {
         setError("Enter whole reps, including 0 for a performed set with no reps."); return;
       }
-      if (!draft.weight.trim() || !Number.isFinite(Number(draft.weight)) || Number(draft.weight) < 0) {
+      if (!undo && (!draft.weight.trim() || !Number.isFinite(Number(draft.weight)) || Number(draft.weight) < 0)) {
         setError("Enter a weight of 0 or more."); return;
       }
     }
@@ -320,8 +311,8 @@ export function WorkoutCard({
     try {
       for (const { set, draft } of submissions) {
         savingId = set.id;
-        const actualReps = Number(draft.reps);
-        const actualWeight = Number(draft.weight);
+        const actualReps = undo ? null : Number(draft.reps);
+        const actualWeight = undo ? null : Number(draft.weight);
         const response = await fetch(`/api/sessions/${session.id}/sets`, {
           method: "PUT", headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ setId: set.id, actualReps, actualWeight, expectedActual: draft.expectedActual ?? { reps: set.actual_reps, weight: set.actual_weight } }),
@@ -343,26 +334,28 @@ export function WorkoutCard({
           }
           throw new Error(body?.error ?? "Could not save set");
         }
-        const acknowledgement = await readResponseJson<{ success?: boolean; actual_reps?: number; actual_weight?: number }>(response);
-        if (acknowledgement?.success !== true && !(acknowledgement?.actual_reps === actualReps && acknowledgement?.actual_weight === actualWeight)) throw new Error("Could not confirm the saved set. Retry to recover the result.");
+        const acknowledgement = await readResponseJson<{ success?: boolean; actual_reps?: number | null; actual_weight?: number | null }>(response);
+        const actualsMatch = acknowledgement?.actual_reps === actualReps && acknowledgement?.actual_weight === actualWeight;
+        if (!(undo ? actualsMatch : acknowledgement?.success === true || actualsMatch)) throw new Error(undo ? "Could not confirm Undo. Retry undo before finishing." : "Could not confirm the saved set. Retry to recover the result.");
         setSession((prev) => prev ? { ...prev, sets: prev.sets.map((row) => row.id === set.id ? { ...row, actual_reps: actualReps, actual_weight: actualWeight } : row) } : prev);
-        setValues((prev) => ({ ...prev, [set.id]: actualReps }));
-        if (isBodyweight(set)) setAdded((prev) => ({ ...prev, [set.id]: actualWeight }));
-        else setWeights((prev) => ({ ...prev, [set.id]: actualWeight }));
-        setCompletedSetIds((prev) => new Set(prev).add(set.id));
+        if (!undo) {
+          setValues((prev) => ({ ...prev, [set.id]: actualReps! }));
+          if (isBodyweight(set)) setAdded((prev) => ({ ...prev, [set.id]: actualWeight! }));
+          else setWeights((prev) => ({ ...prev, [set.id]: actualWeight! }));
+        }
+        setCompletedSetIds(prev => { const next = new Set(prev); if (undo) next.delete(set.id); else next.add(set.id); return next; });
         setFailedIds((prev) => new Set([...prev].filter((id) => id !== set.id)));
         const latest = parseDrafts(readDraftSnapshot(session.id));
         if (latest[set.id]?.reps === draft.reps && latest[set.id]?.weight === draft.weight) {
-          delete latest[set.id];
+          if (undo) latest[set.id] = { ...latest[set.id], expectedActual: { reps: null, weight: null }, intent: "retained" };
+          else delete latest[set.id];
         } else if (latest[set.id] && JSON.stringify(latest[set.id].expectedActual) === JSON.stringify(draft.expectedActual)) {
-          latest[set.id] = { ...latest[set.id], expectedActual: { reps: actualReps, weight: actualWeight } };
+          latest[set.id] = { ...latest[set.id], expectedActual: { reps: actualReps, weight: actualWeight }, intent: undefined };
         }
         writeDrafts(session.id, latest);
         setConflicts((prev) => { const next = { ...prev }; delete next[set.id]; return next; });
         setSavingIds((prev) => new Set([...prev].filter((id) => id !== set.id)));
       }
-      if (advance) setEditingGroupKeys((prev) => new Set([...prev].filter((key) => key !== sets[0]?.id)));
-      if (advance && !isLastGroup && !sets.some((set) => parseDrafts(readDraftSnapshot(session.id))[set.id])) setCurrentGroupIdx((i) => i + 1);
     } catch (err) {
       if (savingId != null) setFailedIds((prev) => new Set(prev).add(savingId));
       setError(err instanceof Error ? err.message : "Could not save set");
@@ -370,10 +363,6 @@ export function WorkoutCard({
       setSavingIds(new Set());
       setSaving(false);
     }
-  }
-
-  async function logSet() {
-    if (currentGroup) await saveSets(currentGroup.sets, true);
   }
 
   async function complete(holdUnavailable = false) {
@@ -457,12 +446,10 @@ export function WorkoutCard({
       writeDrafts(session.id, {});
       setSession(null);
       setCompletedSetIds(new Set());
-      setEditingGroupKeys(new Set());
       setValues({});
       setAdded({});
       setWeights({});
       setSkippedGroupKeys(new Set());
-      setCurrentGroupIdx(0);
       setConfirmingCancel(false);
       router.refresh();
     } catch (err) {
@@ -472,49 +459,12 @@ export function WorkoutCard({
     }
   }
 
-  function selectGroup(groupIndex: number) {
-    setCurrentGroupIdx(groupIndex);
-  }
-
-  function groupKey(group: WorkoutGroup): number {
-    return group.sets[0].id;
-  }
-
-  function isGroupSkipped(group: WorkoutGroup): boolean {
-    return skippedGroupKeys.has(groupKey(group));
-  }
-
-  // Skip the current lift: mark it skipped (left unlogged → recap shows it as
-  // skipped) and advance to the next lift that's neither logged nor skipped.
-  function skipLift(group: WorkoutGroup) {
-    setSkippedGroupKeys((prev) => new Set(prev).add(groupKey(group)));
-    const next = groups.findIndex(
-      (g, i) => i > currentGroupIdx && !allSetsInGroupLogged(g) && !isGroupSkipped(g),
-    );
-    if (next !== -1) setCurrentGroupIdx(next);
-  }
-
-  // Re-open a skipped lift to do it after all: clear the skip and focus it.
-  function unskipLift(group: WorkoutGroup) {
-    setSkippedGroupKeys((prev) => {
-      const next = new Set(prev);
-      next.delete(groupKey(group));
-      return next;
-    });
-    setCurrentGroupIdx(group.index);
-  }
-
-  // Opening the editor does not remove acknowledged work from the recap.
-  function editGroup(group: WorkoutGroup) {
-    setEditingGroupKeys((prev) => new Set(prev).add(groupKey(group)));
-  }
-
+  function groupKey(group: WorkoutGroup): number { return group.sets[0].id; }
+  function isGroupSkipped(group: WorkoutGroup): boolean { return skippedGroupKeys.has(groupKey(group)); }
+  function skipLift(group: WorkoutGroup) { setSkippedGroupKeys(prev => new Set(prev).add(groupKey(group))); }
+  function unskipLift(group: WorkoutGroup) { setSkippedGroupKeys(prev => { const next = new Set(prev); next.delete(groupKey(group)); return next; }); }
   function allSetsInGroupLogged(group: WorkoutGroup): boolean {
-    if (editingGroupKeys.has(groupKey(group))) return false;
-    if (group.sets.some((set) => drafts[set.id] || savingIds.has(set.id))) return false;
-    if (group.sets.some((set) => set.editor_json)) return group.sets.every((set) => completedSetIds.has(set.id));
-    if (group.sets.length > 1) return completedSetIds.has(group.sets[group.sets.length - 1].id);
-    return group.sets.every((s) => completedSetIds.has(s.id));
+    return group.sets.every(set => completedSetIds.has(set.id) && !isPending(drafts[set.id]) && !savingIds.has(set.id));
   }
 
   const isLive = Boolean(session) && !finished && !skipped;
@@ -712,366 +662,75 @@ export function WorkoutCard({
         </div>
       ) : (
         <fieldset disabled={completing || refreshingCompletion} className="min-w-0 border-0 border-t border-line p-0">
-          {/* Progress header */}
-          {focusMode && <label className={styles.exercisePicker}>
-            <span className="sr-only">Exercise</span>
-            <select aria-label="Exercise" value={currentGroupIdx} disabled={saving} onChange={event => selectGroup(Number(event.target.value))} className="touch-target min-w-0 flex-1 rounded-lg border border-line bg-surface px-2 text-sm font-semibold disabled:opacity-50">
-              {groups.map(group => <option key={groupKey(group)} value={group.index}>{group.index + 1}. {groupExerciseNames(group).join(" + ")}{isGroupSkipped(group) ? " · Skipped" : allSetsInGroupLogged(group) ? " · Done" : ""}</option>)}
-            </select>
-            <span className="shrink-0 text-xs text-muted">{totalSets} sets saved</span>
-          </label>}
-          <div className={focusMode ? "hidden" : "px-4 pt-3.5"}>
-            <div className="flex items-center justify-between">
-              <span className="eyebrow text-[11px] text-brand-strong">
-                Exercise {Math.min(currentGroupIdx + 1, groups.length)} of {groups.length}
-              </span>
-              <span className="font-display text-xs tracking-tight text-muted">
-                {formatTonnage(totalTonnage)} {unit} · {totalSets} {totalSets === 1 ? "set" : "sets"}
-              </span>
-            </div>
-            <div className="mt-2 h-1.5 overflow-hidden rounded-full bg-surface-muted">
-              <div
-                className="h-full rounded-full bg-brand transition-all duration-300"
-                style={{ width: `${groups.length ? (resolvedGroupCount / groups.length) * 100 : 0}%` }}
-              />
+          <div className="px-4 py-3">
+            <p className="text-sm text-muted">{formatTonnage(totalTonnage)} {unit} · {totalSets} {totalSets === 1 ? "set" : "sets"}</p>
+            <div className="mt-2 h-1.5 overflow-hidden rounded-full bg-surface-muted" aria-label={`${resolvedGroupCount} of ${groups.length} lifts complete or skipped`}>
+              <div className="h-full bg-brand" style={{ width: `${groups.length ? (resolvedGroupCount / groups.length) * 100 : 0}%` }} />
             </div>
           </div>
-
-          {storageWarning || isDraftVolatile(session.id) ? <p role="status" className="px-4 pt-3 text-sm text-muted">Device storage is unavailable. Keep this page open until your pending sets are saved.</p> : null}
-          {error ? (
-            <div className="px-4 pt-3">
-              <ErrorBanner message={error} />
-            </div>
-          ) : null}
-
-          {!focusMode && prevGroups.length > 0 && (
-            <div className="px-4 pt-3">
-              {prevGroups.map((group) =>
-                isGroupSkipped(group) ? (
-                  <button
-                    key={group.sets[0].id}
-                    type="button"
-                    onClick={() => unskipLift(group)}
-                    className="flex w-full items-center gap-2.5 rounded-lg px-2 py-2 text-left text-sm text-faint transition-colors active:bg-surface-muted"
-                  >
-                    <SkipForward aria-hidden="true" size={15} className="shrink-0 text-faint" />
-                    <span className="truncate line-through">{groupExerciseNames(group).join(" + ")}</span>
-                    <span className="ml-auto font-display tracking-tight">Skipped</span>
-                  </button>
-                ) : (
-                  <button
-                    key={group.sets[0].id}
-                    type="button"
-                    onClick={() => selectGroup(group.index)}
-                    className="flex w-full items-center gap-2.5 rounded-lg px-2 py-2 text-left text-sm text-muted transition-colors active:bg-surface-muted"
-                  >
-                    <Check aria-hidden="true" size={16} className="shrink-0 text-success" strokeWidth={3} />
-                    <span className="truncate">{groupExerciseNames(group).join(" + ")}</span>
-                    <span className="ml-auto font-display tracking-tight text-faint">
-                      {group.sets.map((s) => `${values[s.id] ?? s.rep_out_target}`).join("/")} reps
-                    </span>
-                  </button>
-                ),
-              )}
-            </div>
-          )}
-
-          {currentGroup && isGroupSkipped(currentGroup) && (
-            <div className="px-4 py-3">
-              <div className="rounded-2xl border border-line bg-surface-muted px-4 py-4">
-                <div className="flex items-start justify-between gap-3">
-                  <div className="min-w-0">
-                    <span className="eyebrow block text-[10px] text-faint">Skipped</span>
-                    <h3 className="display text-2xl leading-tight text-muted">
-                      {groupExerciseNames(currentGroup).join(" + ")}
-                    </h3>
-                  </div>
-                  <SkipForward aria-hidden="true" size={20} className="mt-1 shrink-0 text-faint" />
-                </div>
-                <button
-                  type="button"
-                  onClick={() => unskipLift(currentGroup)}
-                  className="touch-target mt-3 w-full rounded-xl border border-line bg-surface px-4 py-2.5 text-sm font-semibold text-muted transition-colors active:bg-surface-muted"
-                >
-                  Do this lift instead
-                </button>
+          {storageWarning || isDraftVolatile(session.id) ? <p role="status" className="px-4 pb-3 text-sm text-muted">Device storage is unavailable. Keep this page open until your pending sets are saved.</p> : null}
+          {error ? <div className="px-4 pb-3"><ErrorBanner message={error} /></div> : null}
+          {groups.map(group => {
+            const savedCount = group.sets.filter(set => completedSetIds.has(set.id) && !isPending(drafts[set.id]) && !savingIds.has(set.id)).reduce((sum, set) => sum + Math.max(1, set.sets), 0);
+            const status = group.sets.some(set => conflicts[set.id]) ? "Resolve conflicting changes" : group.sets.some(set => savingIds.has(set.id)) ? "Saving…" : group.sets.some(set => drafts[set.id]?.intent === "undo") ? "Undo unconfirmed" : group.sets.some(set => failedIds.has(set.id)) ? "Save failed" : group.sets.some(set => isPending(drafts[set.id])) ? "Unsaved changes" : isGroupSkipped(group) ? "Skipped" : undefined;
+            const first = group.sets[0];
+            return <ExerciseLogCard key={groupKey(group)} name={groupExerciseNames(group).join(" + ")} saved={savedCount} total={group.sets.reduce((sum, set) => sum + Math.max(1, set.sets), 0)} status={status}>
+              {group.supersetGroup && <p className="mb-2 text-xs font-semibold text-muted">Superset · {group.supersetGroup}</p>}
+              {group.sets.filter((set, index, all) => {
+                const last = session.lastPerformance?.[String(set.id)];
+                return last && !all.slice(0, index).some(prior => { const other = session.lastPerformance?.[String(prior.id)]; return other?.sessionId === last.sessionId && other?.exerciseId === last.exerciseId; });
+              }).map(set => { const last = session.lastPerformance![String(set.id)]; return <Link key={set.id} href={withWorkoutReturn(`/workouts/${last.sessionId}`, trainingHref)} className="touch-target mb-2 flex items-center text-sm text-muted underline decoration-line underline-offset-2" aria-label={`Previous ${set.exercise_name} workout, ${last.date}: ${formatLastPerformance(last)}`}>Last{group.supersetGroup ? ` · ${set.exercise_name}` : ""}: {formatLastPerformance(last)}</Link>; })}
+              {isGroupSkipped(group) ? <div className="mb-3 flex flex-wrap items-center justify-between gap-2"><p className="text-sm text-muted">Unlogged sets skipped</p><button type="button" onClick={() => unskipLift(group)} className="touch-target rounded-xl border border-line px-3 text-sm font-semibold">Do this lift</button></div> : null}
+              {group.sets.map((set, index) => {
+                const number = index + 1;
+                const rowUnit = setUnit(set, unit);
+                const draft = drafts[set.id];
+                const pending = isPending(draft);
+                const rowSaving = savingIds.has(set.id);
+                const logged = completedSetIds.has(set.id);
+                const saved = logged && !pending && !rowSaving;
+                const editor = editorMetadata(set);
+                const spec = editor?.set;
+                const role = spec?.role ?? (set.rep_out_target > set.reps ? "amrap" : "work");
+                const roleLabel = role === "amrap" ? "AMRAP" : role[0].toUpperCase() + role.slice(1);
+                const range = set.reps === set.rep_out_target ? String(set.reps) : `${set.reps}–${set.rep_out_target}`;
+                const loadLabel = isBodyweight(set) ? `BW${set.calculated_weight > 0 ? ` +${set.calculated_weight} ${rowUnit}` : ""}` : `${set.calculated_weight} ${rowUnit}`;
+                return <SetLogRow key={set.id} number={number} count={set.sets} name={group.supersetGroup ? set.exercise_name : undefined}
+                  reps={inputValues(set).reps} weight={inputValues(set).weight} unit={rowUnit} addedWeight={isBodyweight(set)}
+                  repsLabel={`${set.exercise_name} set ${number} reps`} weightLabel={`${set.exercise_name} set ${number} weight (${rowUnit})`}
+                  saved={saved} logged={logged} pending={pending} saving={rowSaving} failed={failedIds.has(set.id)} missingWeight={set.actual_reps != null && set.actual_weight == null} undoPending={draft?.intent === "undo"}
+                  saveDisabled={saving || !!conflicts[set.id]} saveLabel={`Save set ${number}`}
+                  onChange={(field, value) => editSet(set, field, value)} onSave={() => { unskipLift(group); void saveSets([set]); }} onUndo={() => { void saveSets([set], {}, true); }}
+                  prescription={<>
+                    <p className="mt-1 text-sm text-muted">{roleLabel} · {range} reps · {loadLabel}</p>
+                    {spec ? <p className="mt-1 text-xs text-muted">{[spec.effortKind !== "none" ? `${spec.effortKind.toUpperCase()} ${spec.effort}` : "", `Rest ${spec.restSeconds} s`, spec.tempo ? `Tempo ${spec.tempo}` : ""].filter(Boolean).join(" · ")}</p> : null}
+                    {spec?.notes ? <p className="mt-1 whitespace-pre-wrap text-sm text-muted">{spec.notes}</p> : null}
+                  </>}>
+                  {conflicts[set.id] ? <div className="mt-3 rounded-xl border border-warn-line bg-warn-soft p-3 text-sm text-warn-ink">
+                    <p>Saved elsewhere: {conflicts[set.id].reps == null ? "unperformed" : `${conflicts[set.id].reps} reps at ${conflicts[set.id].weight ?? 0} ${rowUnit}`}.</p>
+                    <button type="button" disabled={saving} onClick={() => discardSetChanges(set)} className="touch-target mt-2 w-full rounded-xl border border-line bg-surface px-2 text-sm font-semibold text-muted">Use saved values</button>
+                    <button type="button" aria-label={`Keep my set ${number} edits`} disabled={saving} onClick={() => saveSets([set], { [set.id]: { ...inputValues(set), expectedActual: conflicts[set.id] } }, draft?.intent === "undo")} className="touch-target mt-2 w-full rounded-xl border border-line bg-surface px-2 text-sm font-semibold text-muted">Keep my edits</button>
+                  </div> : null}
+                  {pending && !rowSaving && draft?.intent !== "undo" ? <button type="button" aria-label={`Discard set ${number} changes`} onClick={() => discardSetChanges(set)} className="touch-target mt-1 w-full rounded-xl px-3 py-2 text-sm font-semibold text-muted">Discard changes</button> : null}
+                </SetLogRow>;
+              })}
+              <div className="flex flex-wrap items-center gap-2 border-t border-line pt-2">
+                {!isGroupSkipped(group) && !allSetsInGroupLogged(group) ? <button type="button" disabled={saving || group.sets.some(set => isPending(drafts[set.id]))} onClick={() => skipLift(group)} className="touch-target inline-flex items-center justify-center gap-2 rounded-xl px-3 text-sm font-semibold text-muted active:bg-surface-muted disabled:opacity-50"><SkipForward aria-hidden="true" size={16} />Skip lift</button> : null}
+                {!group.supersetGroup && !group.sets.some(set => set.editor_json) && first.training_max && !isBodyweight(first) ? <details className={styles.options}><summary className="touch-target flex cursor-pointer items-center justify-center rounded-xl px-3 text-sm font-semibold text-muted">Training max</summary><WorkoutTmEditor key={first.exercise_name} sessionId={session.id} exerciseName={first.exercise_name} value={first.training_max} onPreview={tm => previewTm(first.exercise_name, tm)} onUpdated={applyTmUpdate} /></details> : null}
               </div>
-            </div>
-          )}
-
-          {currentGroup && !isGroupSkipped(currentGroup) && (
-            <div className="px-4 py-3">
-              <div data-active-lift className="rounded-2xl border border-brand-line bg-brand-soft px-4 py-4">
-                <div className="flex items-start gap-2">
-                  {allSetsInGroupLogged(currentGroup) ? (
-                    <Check aria-hidden="true" size={22} className="mt-1 shrink-0 text-success" strokeWidth={3} />
-                  ) : null}
-                  <div className="min-w-0">
-                    {currentGroup.supersetGroup ? (
-                      <span className="eyebrow block text-[10px] text-brand-strong">Superset</span>
-                    ) : null}
-                    <h3 className="display text-3xl leading-tight">
-                      {groupExerciseNames(currentGroup).join(" + ")}
-                    </h3>
-                    {currentGroup.sets.map((set, index, groupSets) => {
-                      const last = session.lastPerformance?.[String(set.id)];
-                      if (!last || last.reps.length === 0 || groupSets.slice(0, index).some(previous => session.lastPerformance?.[String(previous.id)]?.exerciseId === last.exerciseId)) return null;
-                      return (
-                        <Link key={set.id} href={withWorkoutReturn(`/workouts/${last.sessionId}`, trainingHref)} className="touch-target mt-1 flex items-center text-xs text-muted underline underline-offset-2" aria-label={`Previous ${set.exercise_name} workout, ${last.date}: ${formatLastPerformance(last)}`}>
-                          Last{currentGroup.supersetGroup ? ` · ${set.exercise_name}` : ""}: {formatLastPerformance(last)}
-                        </Link>
-                      );
-                    })}
-                  </div>
-                  {!currentGroup.supersetGroup &&
-                  !currentGroup.sets.some((set) => set.editor_json) &&
-                  currentGroup.sets[0].training_max &&
-                  !isBodyweight(currentGroup.sets[0]) ? (
-                    <WorkoutTmEditor
-                      key={currentGroup.sets[0].exercise_name}
-                      sessionId={session.id}
-                      exerciseName={currentGroup.sets[0].exercise_name}
-                      value={currentGroup.sets[0].training_max}
-                      onPreview={(tm) => previewTm(currentGroup.sets[0].exercise_name, tm)}
-                      onUpdated={applyTmUpdate}
-                    />
-                  ) : null}
-                </div>
-
-                {currentGroup.sets.some((set) => set.editor_json) ? (
-                  <div className="mt-4 flex flex-col gap-3">
-                    {focusMode && <select aria-label="Set" value={focusedEditorSet?.id} onChange={event => setSelectedSetId(Number(event.target.value))} className="touch-target w-full rounded-lg border border-line bg-surface px-2 text-sm font-semibold">
-                      {currentGroup.sets.map((set, index) => <option key={set.id} value={set.id}>Set {index + 1} of {currentGroup.sets.length}{currentGroup.supersetGroup ? ` · ${set.exercise_name}` : ""}{completedSetIds.has(set.id) && !drafts[set.id] ? " · Saved" : ""}</option>)}
-                    </select>}
-                    {currentGroup.sets.map((set, index) => {
-                      if (focusMode && set.id !== focusedEditorSet?.id) return null;
-                      const editor = editorMetadata(set);
-                      const spec = editor?.set;
-                      const number = index + 1;
-                      const rowUnit = setUnit(set, unit);
-                      const pending = Boolean(drafts[set.id]);
-                      const rowSaving = savingIds.has(set.id);
-                      const rowFailed = failedIds.has(set.id);
-                      const saved = completedSetIds.has(set.id) && !pending && !rowSaving;
-                      const role = spec?.role ?? "work";
-                      const roleLabel = role === "amrap" ? "AMRAP" : role[0].toUpperCase() + role.slice(1);
-                      const range = set.reps === set.rep_out_target ? String(set.reps) : `${set.reps}–${set.rep_out_target}`;
-                      const loadLabel = isBodyweight(set) ? `BW${set.calculated_weight > 0 ? ` +${set.calculated_weight} ${rowUnit}` : ""}` : `${set.calculated_weight} ${rowUnit}`;
-                      const saveButton = (<button type="button" aria-label={`Save set ${number}`} aria-pressed={saved} disabled={saving || Boolean(conflicts[set.id])} onClick={() => { if (focusMode) setSelectedSetId(set.id); void saveSets([set]); }} className={`touch-target mt-3 w-full rounded-lg px-3 py-2 text-base font-semibold disabled:opacity-50 ${saved ? "bg-success-soft text-success-ink" : "bg-brand text-white active:bg-brand-strong"}`}>{saved ? "Saved" : "Save set"}</button>);
-                      return (
-                        <div key={set.id} data-editor-set className="rounded-xl border border-line bg-surface p-3">
-                          <div className="flex items-start justify-between gap-2">
-                            <p className="text-sm font-semibold">{currentGroup.supersetGroup ? `${set.exercise_name} · ` : ""}Set {number}</p>
-                            <span role="status" className={`text-xs font-semibold ${saved ? "text-success-ink" : "text-muted"}`}>{rowSaving ? "Saving…" : rowFailed ? "Save failed" : pending ? "Unsaved" : saved ? "Saved" : "Not logged"}</span>
-                          </div>
-                          <p className="mt-1 text-sm text-muted">{roleLabel} · {range} reps · {loadLabel}</p>
-                          {spec ? <p className="mt-1 text-xs text-muted">{[spec.effortKind !== "none" ? `${spec.effortKind.toUpperCase()} ${spec.effort}` : "", `Rest ${spec.restSeconds} s`, spec.tempo ? `Tempo ${spec.tempo}` : ""].filter(Boolean).join(" · ")}</p> : null}
-                          {spec?.notes ? focusMode ? <details className="mt-1"><summary className="touch-target flex cursor-pointer items-center text-sm font-semibold text-muted">Exercise notes</summary><p className="text-sm text-muted">{spec.notes}</p></details> : <p className="mt-2 text-sm text-muted">{spec.notes}</p> : null}
-                          <div data-entry-fields className="mt-3 grid grid-cols-2 gap-2">
-                            <label className="min-w-0 text-xs font-semibold text-muted">Reps
-                              <input type="number" min={0} step={1} value={inputValues(set).reps} onChange={(event) => editSet(set, "reps", event.target.value)} aria-label={`${set.exercise_name} set ${number} reps`} className="touch-target mt-1 w-full rounded-lg border border-line bg-surface px-2 py-2 text-center font-display text-xl text-foreground outline-none focus:border-brand" />
-                            </label>
-                            <label className="min-w-0 text-xs font-semibold text-muted">{isBodyweight(set) ? "Added weight" : "Weight"} ({rowUnit})
-                              <input type="number" min={0} step="any" value={inputValues(set).weight} onChange={(event) => editSet(set, "weight", event.target.value)} aria-label={`${set.exercise_name} set ${number} weight (${rowUnit})`} className="touch-target mt-1 w-full rounded-lg border border-line bg-surface px-2 py-2 text-center font-display text-xl text-foreground outline-none focus:border-brand" />
-                            </label>
-                            {focusMode && saveButton}
-                          </div>
-                          {!focusMode && saveButton}
-                          {conflicts[set.id] ? <div className="mt-3 rounded-lg border border-warn-line bg-warn-soft p-2 text-sm text-warn-ink">
-                            <p>Saved elsewhere: {conflicts[set.id].reps == null ? "unperformed" : `${conflicts[set.id].reps} reps at ${conflicts[set.id].weight ?? 0} ${rowUnit}`}.</p>
-                            <button type="button" disabled={saving} onClick={() => discardSetChanges(set)} className="touch-target mt-2 w-full rounded-lg border border-line bg-surface px-2 text-sm font-semibold text-muted">Use saved values</button>
-                            <button type="button" aria-label={`Keep my set ${number} edits`} disabled={saving} onClick={() => saveSets([set], false, { [set.id]: { ...inputValues(set), expectedActual: conflicts[set.id] } })} className="touch-target mt-2 w-full rounded-lg border border-line bg-surface px-2 text-sm font-semibold text-muted">Keep my edits</button>
-                          </div> : null}
-                          {pending && !rowSaving ? <button type="button" aria-label={`Discard set ${number} changes`} onClick={() => discardSetChanges(set)} className="touch-target mt-1 w-full rounded-lg px-3 py-2 text-sm font-semibold text-muted">Discard changes</button> : null}
-                        </div>
-                      );
-                    })}
-                  </div>
-                ) : isFlatSingle(currentGroup) ? (
-                  <div data-flat-prescription>
-                    <div className="mt-2.5 flex items-end gap-2.5">
-                      <span className="display text-5xl leading-none">
-                        {currentGroup.sets[0].calculated_weight}
-                      </span>
-                      <span className="mb-1 text-sm font-semibold text-muted">{unit}</span>
-                      <span className="mb-1 ml-auto rounded-full bg-surface/80 px-2.5 py-1 font-display text-sm tracking-tight">
-                        {currentGroup.sets.length} × {currentGroup.sets[0].reps}
-                      </span>
-                    </div>
-
-                    {!allSetsInGroupLogged(currentGroup) ? (
-                      <label className="mt-4 flex flex-col gap-1.5">
-                        <span className="eyebrow text-[10px] text-muted">Reps</span>
-                        <input
-                          type="number"
-                          value={inputValues(currentSet).reps}
-                          onChange={(event) =>
-                            editSet(currentSet, "reps", event.target.value)
-                          }
-                          min={0}
-                          className="touch-target w-full rounded-xl border border-line bg-surface px-3 py-3 text-center font-display text-3xl tracking-tight outline-none transition-colors focus:border-brand"
-                        />
-                      </label>
-                    ) : null}
-                  </div>
-                ) : (
-                  <div className="mt-2.5 flex flex-col gap-2.5">
-                    {currentGroup.sets.map((set) => (
-                      <div key={set.id} className="flex items-center justify-between gap-3">
-                        <div className="min-w-0">
-                          <p className="truncate text-sm font-semibold">
-                            {currentGroup.supersetGroup ? set.exercise_name : `Set ${set.set_number}`}
-                          </p>
-                          <p className="font-display text-xs tracking-tight text-muted">
-                            {set.sets > 1 ? `${set.sets} × ` : ""}
-                            {set.reps} @{" "}
-                            {isBodyweight(set) ? `BW${added[set.id] ? ` +${added[set.id]}` : ""}` : `${set.calculated_weight} ${unit}`}
-                          </p>
-                        </div>
-                        {allSetsInGroupLogged(currentGroup) ? (
-                          <Check aria-hidden="true" size={18} className="shrink-0 text-success" strokeWidth={3} />
-                        ) : (
-                          <div className="flex shrink-0 items-center gap-1.5">
-                            {isBodyweight(set) ? (
-                              <label className="flex items-center gap-1">
-                                <input
-                                  type="number"
-                                  min={0}
-                                  step={0.5}
-                                  placeholder="0"
-                                  value={inputValues(set).weight}
-                                  onChange={(event) => editSet(set, "weight", event.target.value)}
-                                  aria-label={`${set.exercise_name} added weight`}
-                                  className="touch-target w-14 rounded-xl border border-line bg-surface px-2 py-2 text-center font-display text-xl tracking-tight outline-none transition-colors focus:border-brand"
-                                />
-                                <span className="text-xs text-faint">+{unit}</span>
-                              </label>
-                            ) : (
-                              <label className="flex items-center gap-1">
-                                <input
-                                  type="number"
-                                  min={0}
-                                  step={2.5}
-                                  value={inputValues(set).weight}
-                                  onChange={(event) => editSet(set, "weight", event.target.value)}
-                                  aria-label={`${set.exercise_name} weight`}
-                                  className="touch-target w-16 rounded-xl border border-line bg-surface px-2 py-2 text-center font-display text-xl tracking-tight outline-none transition-colors focus:border-brand"
-                                />
-                                <span className="text-xs text-faint">{unit}</span>
-                              </label>
-                            )}
-                            <label className="flex items-center gap-1.5">
-                              <input
-                                type="number"
-                                min={0}
-                                value={inputValues(set).reps}
-                                onChange={(event) =>
-                                  editSet(set, "reps", event.target.value)
-                                }
-                                aria-label={`${set.exercise_name} reps`}
-                                className="touch-target w-16 rounded-xl border border-line bg-surface px-2 py-2 text-center font-display text-xl tracking-tight outline-none transition-colors focus:border-brand"
-                              />
-                              <span className="text-xs text-faint">reps</span>
-                            </label>
-                          </div>
-                        )}
-                      </div>
-                    ))}
-                  </div>
-                )}
-
-                {!currentGroup.sets.some((set) => set.editor_json) ? currentGroup.sets.filter((set) => conflicts[set.id]).map((set) => (
-                  <div key={set.id} className="mt-3 rounded-lg border border-warn-line bg-warn-soft p-3 text-sm text-warn-ink">
-                    <p>{set.exercise_name} set {set.set_number}: saved elsewhere as {conflicts[set.id].reps == null ? "unperformed" : `${conflicts[set.id].reps} reps at ${conflicts[set.id].weight ?? 0} ${setUnit(set, unit)}`}.</p>
-                    <button type="button" disabled={saving} onClick={() => discardSetChanges(set)} className="touch-target mt-2 w-full rounded-lg border border-line bg-surface px-2 font-semibold text-muted">Use saved values</button>
-                    <button type="button" disabled={saving} onClick={() => saveSets([set], false, { [set.id]: { ...inputValues(set), expectedActual: conflicts[set.id] } })} className="touch-target mt-2 w-full rounded-lg border border-line bg-surface px-2 font-semibold text-muted">Keep my edits</button>
-                  </div>
-                )) : null}
-
-                {currentGroup.sets.some((set) => set.editor_json) ? (
-                  !isLastGroup ? <button type="button" onClick={() => setCurrentGroupIdx((i) => i + 1)} className="touch-target mt-3 w-full rounded-xl border border-line bg-surface px-4 py-2.5 text-sm font-semibold text-muted">Next lift</button> : null
-                ) : allSetsInGroupLogged(currentGroup) ? (
-                  <div className="mt-3 flex items-center justify-between gap-3">
-                    <span className="inline-flex items-center gap-1.5 text-sm font-semibold text-success-ink">
-                      <Check aria-hidden="true" size={15} strokeWidth={3} />
-                      Logged
-                    </span>
-                    <button
-                      type="button"
-                      onClick={() => editGroup(currentGroup)}
-                      className="touch-target rounded-xl border border-line bg-surface px-3 text-sm font-semibold text-muted transition-colors active:bg-surface-muted"
-                    >
-                      Edit
-                    </button>
-                  </div>
-                ) : (
-                  <div data-log-actions>
-                    <button
-                      type="button"
-                      disabled={saving}
-                      onClick={logSet}
-                      className="touch-target mt-3 w-full rounded-xl bg-brand px-4 py-3 text-base font-semibold text-white transition-colors active:bg-brand-strong disabled:opacity-50"
-                    >
-                      {saving ? "Saving…" : isLastGroup ? "Log Set" : "Log & Next"}
-                    </button>
-                    <button
-                      type="button"
-                      disabled={saving}
-                      onClick={() => skipLift(currentGroup)}
-                      className="touch-target mt-2 inline-flex w-full items-center justify-center gap-1.5 rounded-xl px-4 py-2 text-sm font-semibold text-faint transition-colors active:bg-surface-muted disabled:opacity-50"
-                    >
-                      <SkipForward aria-hidden="true" size={14} />
-                      {focusMode ? "Skip lift" : "Skip this lift"}
-                    </button>
-                  </div>
-                )}
-              </div>
-            </div>
-          )}
-
-          {!focusMode && upcomingGroups.length > 0 && (
-            <div className="px-4 pb-1">
-              {upcomingGroups.map((group) =>
-                isGroupSkipped(group) ? (
-                  <button
-                    key={group.sets[0].id}
-                    type="button"
-                    onClick={() => unskipLift(group)}
-                    className="flex w-full items-center gap-2.5 rounded-lg px-2 py-2 text-left text-sm text-faint transition-colors active:bg-surface-muted"
-                  >
-                    <SkipForward aria-hidden="true" size={15} className="shrink-0 text-faint" />
-                    <span className="truncate line-through">{groupExerciseNames(group).join(" + ")}</span>
-                    <span className="ml-auto font-display tracking-tight">Skipped</span>
-                  </button>
-                ) : (
-                  <button
-                    key={group.sets[0].id}
-                    type="button"
-                    onClick={() => selectGroup(group.index)}
-                    className="flex w-full items-center gap-2.5 rounded-lg px-2 py-2 text-left text-sm text-faint transition-colors active:bg-surface-muted"
-                  >
-                    <Circle aria-hidden="true" size={15} className="shrink-0 text-line" strokeWidth={2.5} />
-                    <span className="truncate text-muted">{groupExerciseNames(group).join(" + ")}</span>
-                    <span className="ml-auto font-display tracking-tight">
-                      {group.sets.length} set{group.sets.length > 1 ? "s" : ""} · {group.sets[0].reps} @{" "}
-                      {group.sets[0].calculated_weight} {setUnit(group.sets[0], unit)}
-                    </span>
-                  </button>
-                ),
-              )}
-            </div>
-          )}
+            </ExerciseLogCard>;
+          })}
 
           {!focusMode && addExerciseControl}
 
           <div className="flex flex-col gap-2 px-4 pb-4 pt-3">
             {hasPending ? <p className="text-xs text-muted">Save pending edits before finishing. Sets left unlogged stay unperformed.</p> : null}
-            <div className="flex items-start gap-2">
+            <div className="flex flex-wrap items-start gap-2">
               <button
                 type="button"
                 disabled={completing || refreshingCompletion || saving || hasPending}
                 onClick={() => { void complete(); }}
-                className="touch-target flex-1 rounded-xl bg-foreground px-4 py-2.5 text-sm font-semibold text-background transition-colors active:opacity-90 disabled:opacity-50"
+                className="touch-target flex-[1_1_12rem] whitespace-normal break-words rounded-xl bg-foreground px-4 py-2.5 text-sm font-semibold text-background transition-colors active:opacity-90 disabled:opacity-50"
               >
                 {completing || refreshingCompletion ? "Finishing…" : "Finish Workout"}
               </button>
