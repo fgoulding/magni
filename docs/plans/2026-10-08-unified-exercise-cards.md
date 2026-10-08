@@ -75,3 +75,13 @@
 Release status in this committed plan is the implementation handoff. The final exact-commit receipt is `.playwright/exercise-cards/release/final-result.json`; it is generated only after CI, staging, promotion, live readiness and updater restoration pass.
 
 - Final local release runner: **all eight gates passed**, `.playwright/release-checks/result.json`; browser result **164 passed (6.7m)**, zero failed/skipped/flaky cases. Remote fetched again before integration and remained at the original baseline (0/0). Source and independent review are ready for commit; publication and deployment remain gated by exact-commit CI and staging.
+
+## CI timing follow-up
+
+First published source commit `708a010` passed the local eight-gate runner, but CI run `37831090804` rejected two flaky WebKit cases and published no image. Trace review showed the planned card test completing its UI flow after about 30 seconds, with 16 screenshots consuming 11.78 seconds of the default total budget. The history recovery test started its five-second Retry assertion while its simulated lost-response handler was still waiting for the real POST to commit. No application defect was established by either trace.
+
+Only test synchronization/budgets changed: scoped 90-second budgets for the two multi-render card cases and the long history recovery workflow; register and await the matching POST request failure before checking Retry with its unchanged five-second assertion. The 201 response, exact row counts, reload, identity, progression and volume checks remain intact. Independent review approved the diff; all 12 affected Chromium/WebKit cases passed without retries (59.9s). Typecheck and targeted ESLint passed. Duplicate auto-generated type files were preserved under private diagnostics and route types regenerated; no source declarations were removed.
+
+The failed run skipped image publication. The original automatic updater was restored only after verifying registry latest and healthy live app both remained at the baseline. The next commit will pass all eight exact-source CI gates before any staging or rollout.
+
+A private diagnostic delayed the aborted response six seconds after the real 201 commit, exceeding the old UI assertion window. Both Chromium and WebKit completed the full recovery/edit/reload/history flow: **2/2 passed (30.8s)**. Evidence: `.playwright/exercise-cards/slow-add/run.log`.

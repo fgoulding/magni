@@ -31,6 +31,7 @@ async function startPastWorkout(page: Page) {
 }
 
 test("past workout preserves lost add responses and structural edits through reload", async ({ page }, testInfo) => {
+  test.setTimeout(90_000);
   const hydrationErrors = watchHydration(page);
   const shot = historyScreenshots(page, testInfo);
   await registerViaApi(page, "history-edit-recovery");
@@ -43,7 +44,14 @@ test("past workout preserves lost add responses and structural edits through rel
     if (route.request().method() === "POST") { expect((await route.fetch()).status()).toBe(201); await route.abort("failed"); }
     else await route.continue();
   });
+  // Wait for the simulated lost response before starting the UI recovery clock.
+  // route.fetch must first commit the real write and can exceed five seconds on CI.
+  const lostAdd = page.waitForEvent("requestfailed", {
+    predicate: request => request.method() === "POST" && /\/api\/sessions\/\d+\/sets$/.test(request.url()),
+    timeout: 30_000,
+  });
   await page.getByRole("button", { name: "Add to workout", exact: true }).click();
+  await lostAdd;
   await expect(page.getByRole("button", { name: "Retry adding exercise" })).toBeVisible();
   await page.unroute("**/api/sessions/*/sets");
   const sessions = await (await page.request.get("/api/sessions")).json();

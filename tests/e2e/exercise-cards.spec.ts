@@ -38,6 +38,8 @@ async function captureRows(page: Page, info: TestInfo, name: string) {
 }
 
 test("quick exercise cards retain edits through collapse and undo without counting unlogged sets", async ({ page }, info) => {
+  // Full logging/reload flows also capture four text/theme variants on slow CI WebKit.
+  test.setTimeout(90_000);
   await registerViaApi(page, "exercise-cards-quick");
   const created = await page.request.post("/api/sessions", { data: { name: "Independent set rows", date: "2026-10-08", unit: "lb", newWorkout: true, requestKey: randomUUID() } });
   expect(created.status()).toBe(201);
@@ -83,6 +85,8 @@ test("quick exercise cards retain edits through collapse and undo without counti
 });
 
 test("planned Today and calendar share collapsible rows and undo preserves the prescription", async ({ page }, info) => {
+  // Full logging/reload flows also capture four text/theme variants on slow CI WebKit.
+  test.setTimeout(90_000);
   await registerViaApi(page, "exercise-cards-planned");
   const document = JSON.parse(await readFile("examples/programs/linear.magni.json", "utf8"));
   document.startDate = new Date().toLocaleDateString("en-CA", { timeZone: "America/Los_Angeles" });
