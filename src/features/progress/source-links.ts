@@ -1,12 +1,13 @@
 import { randomUUID } from "node:crypto";
 import type Database from "better-sqlite3";
+import { findExerciseAlias, registerExerciseAlias, resolveCatalogRedirect } from "./aliases";
 
 export const PROGRESS_SET_JOINS = `
   LEFT JOIN exercise_set_sources pes ON pes.session_set_id=ss.id AND pes.user_id=s.user_id
   LEFT JOIN exercise_sources ps ON ps.user_id=pes.user_id AND ps.source_key=pes.source_key
   LEFT JOIN exercise_catalog pc ON pc.id=pes.exercise_id AND pc.user_id=s.user_id`;
 
-type SourceRow = { id: number; session_id: number; user_id: number; program_id: number | null; program_run_id: number | null; program_definition_exercise_id: number | null; shared_exercise_key: string | null; exercise_key: string | null; exercise_name: string; progression_type: string; editor_json: string | null };
+export type SourceRow = { id: number; session_id: number; user_id: number; program_id: number | null; program_run_id: number | null; program_definition_exercise_id: number | null; shared_exercise_key: string | null; exercise_key: string | null; exercise_name: string; progression_type: string; editor_json: string | null };
 function textKey(value: unknown): value is string { return typeof value === "string" && value.length > 0 && value.length <= 200; }
 function metadataFor(row:SourceRow):{historyKey?:unknown;exerciseId?:unknown;set?:{role?:unknown;loadMode?:unknown}}|null {
   try {const value=row.editor_json?JSON.parse(row.editor_json):null;return value&&typeof value==="object"&&!Array.isArray(value)?value:null;}catch{return null;}
@@ -31,19 +32,34 @@ function sourceFor(row: SourceRow, measurement:string): { key: string; observati
   return { key: `unlinked:${row.session_id}:${row.id}`, observation: `set:${row.id}`, kind: "unlinked", origin: "unlinked" };
 }
 
+export function sessionSourceDescriptions(rows: SourceRow[]) {
+  const families = new Map<string, Set<string>>();
+  for (const row of rows) if (metadataFor(row)?.set?.role !== "warmup") {
+    const key = slotKey(row), values = families.get(key) ?? new Set<string>();
+    values.add(family(row)); families.set(key, values);
+  }
+  return rows.map(row => {
+    const measurement = [...(families.get(slotKey(row)) ?? new Set([family(row)]))].sort().join("+");
+    return { row, measurement, source: sourceFor(row, measurement) };
+  });
+}
+
 /** Called only during migration or a caller-owned workout write transaction. */
-export function attachSessionExerciseSources(database: Database.Database, userId: number, sessionId: number): void {
+export function attachSessionExerciseSources(database: Database.Database, userId: number, sessionId: number, preferred = new Map<number, string>(), useAliases = true): void {
   const rows = database.prepare(`SELECT ss.*,s.user_id,s.program_id,s.program_run_id FROM session_sets ss JOIN sessions s ON s.id=ss.session_id
     LEFT JOIN exercise_set_sources x ON x.session_set_id=ss.id WHERE s.user_id=? AND s.id=? AND x.session_set_id IS NULL ORDER BY ss.id`).all(userId, sessionId) as SourceRow[];
-  const families=new Map<string,Set<string>>();
-  for(const row of rows) if(metadataFor(row)?.set?.role!=="warmup") {const key=slotKey(row);const values=families.get(key)??new Set<string>();values.add(family(row));families.set(key,values);}
-  for (const row of rows) {
-    const source = sourceFor(row, [...(families.get(slotKey(row))??new Set([family(row)]))].sort().join("+"));
+  for (const { row, measurement, source } of sessionSourceDescriptions(rows)) {
     let assignment = database.prepare("SELECT exercise_id FROM exercise_sources WHERE user_id=? AND source_key=?").get(userId, source.key) as { exercise_id: string } | undefined;
+    const chosen = preferred.get(row.id);
     if (!assignment) {
-      assignment = { exercise_id: randomUUID() };
-      database.prepare("INSERT INTO exercise_catalog(id,user_id,name,origin) VALUES (?,?,?,?)").run(assignment.exercise_id, userId, row.exercise_name.trim() || "Unnamed exercise", source.origin);
+      const known = chosen ?? (useAliases ? findExerciseAlias(database, userId, row.exercise_name, measurement) : null);
+      assignment = { exercise_id: known ?? randomUUID() };
+      if (!known) database.prepare("INSERT INTO exercise_catalog(id,user_id,name,origin) VALUES (?,?,?,?)").run(assignment.exercise_id, userId, row.exercise_name.trim() || "Unnamed exercise", source.origin);
       database.prepare("INSERT INTO exercise_sources(user_id,source_key,exercise_id,kind) VALUES (?,?,?,?)").run(userId, source.key, assignment.exercise_id, source.kind);
+    }
+    if (useAliases) {
+      assignment.exercise_id = resolveCatalogRedirect(database, userId, chosen ?? assignment.exercise_id);
+      registerExerciseAlias(database, userId, row.exercise_name, measurement, assignment.exercise_id);
     }
     database.prepare("INSERT INTO exercise_set_sources(session_set_id,user_id,source_key,observation_key,exercise_id) VALUES (?,?,?,?,?)")
       .run(row.id, userId, source.key, source.observation, assignment.exercise_id);

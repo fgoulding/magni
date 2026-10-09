@@ -36,7 +36,17 @@ export function RecordedRepsChart({ points, truncated, currentHref, overview = f
   const y = (value: number) => 132 - (value - low) * 114 / (high - low || 1);
   const segments: string[][] = [[]];
   values.forEach((value, index) => { if (value === null) { if (segments.at(-1)!.length) segments.push([]); } else segments.at(-1)!.push(`${x(index)},${y(value)}`); });
-  const dateIndices = sorted.length ? [...new Set([0, Math.floor((sorted.length - 1) / 2), sorted.length - 1])].filter((index, position, all) => all.findIndex(candidate => sorted[candidate].date === sorted[index].date) === position) : [];
+  const distinctDates = sorted.flatMap((point, index) => index === 0 || point.date !== sorted[index - 1].date ? [index] : []);
+  const firstDateIndex = distinctDates[0], lastDateIndex = distinctDates.at(-1);
+  const dateIndices = distinctDates.length <= 2 ? distinctDates : (() => {
+    const left = x(firstDateIndex), right = x(lastDateIndex!), center = (left + right) / 2;
+    // Labels use fixed SVG font units. Leave enough room for an endpoint label,
+    // half an interior label and a gap; point positions still follow actual dates.
+    const interior = distinctDates.slice(1, -1)
+      .filter(index => x(index) - left >= 80 && right - x(index) >= 80)
+      .sort((a, b) => Math.abs(x(a) - center) - Math.abs(x(b) - center))[0];
+    return interior === undefined ? [firstDateIndex, lastDateIndex!] : [firstDateIndex, interior, lastDateIndex!];
+  })();
   const description = estimate ? `Epley estimate from positive loaded sets, in original ${unit}. An estimate is not a tested maximum. Missing loads, zero loads and zero-rep attempts have no estimate.` : load ? `Heaviest successfully completed set, in original ${unit}. Zero-rep attempts and missing loads have no value.` : "Actual reps across logged sets in each workout. Set counts and prescriptions can vary.";
   return <section className="card min-w-0 p-3 sm:p-4" aria-label={overview ? "Exercise chart" : undefined} aria-labelledby={overview ? undefined : chartId}>
     <h2 id={chartId} className={overview ? "sr-only" : "display mb-3 text-2xl"}>{title}</h2>

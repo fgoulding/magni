@@ -14,9 +14,9 @@ export function asFinderItem(exercise: ExerciseSummary): ExerciseFinderItem {
 }
 export function ExerciseRows({ items, currentHref, compact = false }: { items: ExerciseFinderItem[]; currentHref: string; compact?: boolean }) {
   return <ul className="divide-y divide-line" aria-label="Exercises">{items.map(item => <li key={item.key} data-testid="progress-exercise-row"><Link href={exerciseHref(item.key, currentHref)} className="touch-target flex min-w-0 items-center gap-3 py-3">
-    <div className="min-w-0 flex-1"><h3 className="display break-words text-xl leading-6">{item.kind === "unlinked" ? `Records named ${item.name}` : item.name}</h3>
+    <div className="min-w-0 flex-1"><h3 className="display break-words text-xl leading-6">{item.name}</h3>
       <p className="mt-1 text-sm leading-5 text-muted">{actualResult(item.latest)}{item.lastDate && <> · <ProgressDate date={item.lastDate} short={compact} /></>}</p>
-      {!compact && item.kind === "unlinked" && <p className="mt-1 break-words text-sm text-muted">{item.historyCount} matching records · Not linked{item.context && ` · ${item.context}`}</p>}
+      {!compact && item.kind === "unlinked" && <p className="mt-1 break-words text-sm text-muted">Choose a variation · {item.historyCount} workouts{item.context && ` · ${item.context}`}</p>}
     </div><ChevronRight aria-hidden="true" size={18} className="shrink-0 text-faint" />
   </Link></li>)}</ul>;
 }

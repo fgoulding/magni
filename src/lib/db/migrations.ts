@@ -3,6 +3,7 @@ import { runProgramEditorMigration } from "@/features/program-editor/migration";
 import { createCalendarOperations, migrateOccurrenceSessionUniqueness } from "@/features/calendar/migration";
 import { runWorkoutHistoryMigration } from "@/features/workouts/migration";
 import { runLegacyTemplateSnapshotMigration } from "@/features/training-templates/legacy-snapshot";
+import { runExerciseAliasMigration } from "@/features/progress/alias-migration";
 import { runProgressMigration } from "@/features/progress/migration";
 
 /** Persisted in SQLite user_version only after every migration succeeds.
@@ -10,7 +11,7 @@ import { runProgressMigration } from "@/features/progress/migration";
  * the editor/calendar/history migration helpers. Revision 0 covers all releases
  * before migration tracking. Initialization may skip writes only at this exact
  * revision; a newer database requires its matching release, never a downgrade. */
-export const DATABASE_SCHEMA_REVISION = 5;
+export const DATABASE_SCHEMA_REVISION = 6;
 
 export function isDatabaseSchemaCurrent(db: Database.Database): boolean {
   const revision = db.pragma("user_version", { simple: true }) as number;
@@ -1065,6 +1066,7 @@ export function runMigrations(db: Database.Database): void {
   migrateOccurrenceSessionUniqueness(db);
   runLegacyTemplateSnapshotMigration(db);
   runProgressMigration(db);
+  runExerciseAliasMigration(db);
   db.pragma(`user_version = ${DATABASE_SCHEMA_REVISION}`);
 }
 

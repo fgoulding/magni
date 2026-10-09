@@ -5,7 +5,7 @@ import { getSessionRecap } from "@/features/programs/training-stats";
 import { evaluateProgression } from "@/features/program-editor/progression";
 import type { EditorCompletionDecision } from "@/features/program-editor/execution";
 import type { ActualChange, CorrectionPreview, ExerciseSuggestion, HistorySet, WorkoutHistoryItem, WorkoutRoutine, WorkoutSession } from "./types";
-import { attachSessionExerciseSources, resolveSetExerciseIdentities } from "@/features/progress/identity";
+import { attachSessionExerciseSources, requireOwnedExercise, resolveSetExerciseIdentities } from "@/features/progress/identity";
 
 export class WorkoutError extends Error {
   constructor(public status: number, message: string) { super(message); this.name = "WorkoutError"; }
@@ -93,12 +93,13 @@ function insertExercise(sessionId: number, exercise: SavedExercise, exerciseKey:
     ids.push(Number(db.prepare(`INSERT INTO session_sets(session_id,exercise_name,exercise_key,category,progression_type,set_number,reps,sets,rep_out_target,calculated_weight,sort_order)
       VALUES (?,?,?,'accessory','custom',?,?,1,?,?,?)`).run(sessionId, exercise.name.trim(), exerciseKey, index + 1, set.reps, set.reps, set.weight, position + index + 1).lastInsertRowid));
   });
-  attachSessionExerciseSources(db, owner, sessionId);
-  if (exercise.catalogExerciseId) {
+  const catalogId = exercise.catalogExerciseId ? requireOwnedExercise(owner, exercise.catalogExerciseId).id : undefined;
+  attachSessionExerciseSources(db, owner, sessionId, new Map(catalogId ? ids.map(id => [id, catalogId]) : []));
+  if (catalogId) {
     const source = db.prepare("SELECT source_key FROM exercise_set_sources WHERE session_set_id=? AND user_id=?").get(ids[0], owner) as { source_key: string };
-    db.prepare("UPDATE exercise_sources SET exercise_id=?,revision=revision+1 WHERE user_id=? AND source_key=?").run(exercise.catalogExerciseId, owner, source.source_key);
-    for (const id of ids) db.prepare("UPDATE exercise_set_sources SET exercise_id=? WHERE session_set_id=? AND user_id=?").run(exercise.catalogExerciseId, id, owner);
-    db.prepare("UPDATE exercise_catalog SET origin=CASE WHEN origin='unlinked' THEN 'lineage' ELSE origin END,revision=revision+1 WHERE id=? AND user_id=?").run(exercise.catalogExerciseId, owner);
+    db.prepare("UPDATE exercise_sources SET exercise_id=?,revision=revision+1 WHERE user_id=? AND source_key=?").run(catalogId, owner, source.source_key);
+    for (const id of ids) db.prepare("UPDATE exercise_set_sources SET exercise_id=? WHERE session_set_id=? AND user_id=?").run(catalogId, id, owner);
+    db.prepare("UPDATE exercise_catalog SET origin=CASE WHEN origin='unlinked' THEN 'lineage' ELSE origin END,revision=revision+1 WHERE id=? AND user_id=?").run(catalogId, owner);
   }
   return ids;
 }

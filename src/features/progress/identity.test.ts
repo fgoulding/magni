@@ -1,7 +1,7 @@
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { afterAll, beforeAll, expect, it, vi } from "vitest";
+import { afterAll, beforeAll, beforeEach, expect, it, vi } from "vitest";
 let database: typeof import("@/lib/db");
 let history: typeof import("@/features/workouts/history-service");
 let identity: typeof import("./identity");
@@ -13,6 +13,10 @@ beforeAll(async () => {
   userId = Number(database.db.prepare("INSERT INTO users(email,password_hash) VALUES ('progress-owner@example.test','hash')").run().lastInsertRowid);
   otherId = Number(database.db.prepare("INSERT INTO users(email,password_hash) VALUES ('progress-other@example.test','hash')").run().lastInsertRowid);
 });
+beforeEach(()=>{userId=Number(database.db.prepare("INSERT INTO users(email,password_hash) VALUES (?,'hash')").run(`${crypto.randomUUID()}@example.test`).lastInsertRowid);});
+function separateName(owner:number) {
+ database.db.prepare("INSERT INTO exercise_name_aliases(user_id,name_key,family_key,exercise_id,state) VALUES (?,'row','unknown',NULL,'blocked') ON CONFLICT(user_id,name_key,family_key) DO UPDATE SET exercise_id=NULL,state='blocked'").run(owner);
+}
 afterAll(() => { database?.db.close(); if (dir) fs.rmSync(dir, { recursive: true, force: true }); vi.unstubAllEnvs(); });
 function workout(owner=userId, catalogExerciseId?: string) {
   const session = history.createQuickSession({ userId: owner, newWorkout: true, date: "2026-10-01" }).session;
@@ -21,10 +25,10 @@ function workout(owner=userId, catalogExerciseId?: string) {
   history.finishQuickSession(owner, session.id);
   return { ...session, sets: result.sets };
 }
-it("keeps equal names separate and carries selected, repeated and routine identity", () => {
+it("reuses equal names and carries selected, repeated and routine identity", () => {
   const a=workout(); const b=workout();
   const aId=identity.resolveSetExerciseIdentities(userId,a.id).get(a.sets[0].id)!.exerciseId;
-  expect(identity.resolveSetExerciseIdentities(userId,b.id).get(b.sets[0].id)!.exerciseId).not.toBe(aId);
+  expect(identity.resolveSetExerciseIdentities(userId,b.id).get(b.sets[0].id)!.exerciseId).toBe(aId);
   const chosen=workout(userId,aId);
   expect(identity.resolveSetExerciseIdentities(userId,chosen.id).get(chosen.sets[0].id)!.exerciseId).toBe(aId);
   const repeated=history.createQuickSession({userId,sourceSessionId:a.id}).session;
@@ -36,6 +40,7 @@ it("keeps equal names separate and carries selected, repeated and routine identi
   expect(identity.resolveSetExerciseIdentities(otherId,a.id).size).toBe(0);
 });
 it("links only selected observations with a preview, preserves originals, retries and reverses", () => {
+  separateName(userId);
   const a=workout(); const b=workout(); const omitted=workout();
   const original=database.db.prepare("SELECT * FROM session_sets WHERE session_id IN (?,?,?) ORDER BY id").all(a.id,b.id,omitted.id);
   const input={observationIds:[a.sets[0].id,b.sets[0].id],name:"Barbell row"};
@@ -61,6 +66,7 @@ it("rejects stale previews and foreign observations atomically", () => {
   expect(database.db.prepare("SELECT id FROM exercise_catalog WHERE name='Chosen'").get()).toBeUndefined();
 });
 it("limits owned pins to four, replaces explicitly, and never silently evicts", () => {
+  separateName(userId);
   const ids=Array.from({length:5},()=>{const a=workout();return identity.resolveSetExerciseIdentities(userId,a.id).get(a.sets[0].id)!.exerciseId;});
   ids.slice(0,4).forEach(exerciseId=>identity.updateExercisePin(userId,{exerciseId,pinned:true}));
   expect(()=>identity.updateExercisePin(userId,{exerciseId:ids[4],pinned:true})).toThrow(/four|4/i);
@@ -71,6 +77,7 @@ it("limits owned pins to four, replaces explicitly, and never silently evicts", 
 });
 it("keeps recent suggestions distinct and identifies the exact source workout",()=>{
  const owner=Number(database.db.prepare("INSERT INTO users(email,password_hash) VALUES ('suggestion-owner@example.test','hash')").run().lastInsertRowid);
+ separateName(owner);
  const a=workout(owner);const b=workout(owner);
  const suggestions=history.recentExercises(owner,"Row");expect(suggestions).toHaveLength(2);
  expect(new Set(suggestions.map(row=>row.catalogExerciseId)).size).toBe(2);
@@ -99,6 +106,7 @@ it("detaches only selected observations and rejects undo after another mapping e
 it("undo restores discovery origin and rejects later legitimate target reuse",async()=>{
  const queries=await import("./queries");
  const owner=Number(database.db.prepare("INSERT INTO users(email,password_hash) VALUES ('undo-origin@example.test','hash')").run().lastInsertRowid);
+ separateName(owner);
  const a=workout(owner);const b=workout(owner);
  const target=identity.resolveSetExerciseIdentities(owner,a.id).get(a.sets[0].id)!.exerciseId;
  const before=queries.listProgressExercises(owner).items;

@@ -1,8 +1,9 @@
 import { createHash } from "node:crypto";
 import { db } from "@/lib/db";
+import { exerciseNameKey, resolveCatalogRedirect } from "./aliases";
 import { userDateKey } from "@/lib/user-date";
 import { CANDIDATE_CTE, decorateCandidate, getPinnedExerciseIds, ProgressError, PROGRESS_SET_JOINS } from "./identity";
-import type { CandidateObservation, ExerciseChartPoint, ExerciseDetail, ExerciseFinderItem, ExerciseObservation, ExerciseSummary, ProgressFilters, ProgressHome, ProgressPage, ProgressPerformance, ProgressProgram, ProgressRoutine, ProgressWorkout } from "./types";
+import type { CandidateObservation, ExerciseChartPoint, ExerciseDetail, ExerciseFinderItem, ExerciseObservation, ExerciseSummary, ProgressFilters, ProgressHome, ProgressPrimaryExercise, ProgressPage, ProgressPerformance, ProgressProgram, ProgressRoutine, ProgressWorkout } from "./types";
 
 type Value=string|number|null;
 const KG_TO_LB=2.2046226218487757;
@@ -58,6 +59,7 @@ function base(userId:number,filters:ProgressFilters,now?:Date) {
 type BaseRow={setId:number;sessionId:number;date:string;unit:"lb"|"kg";workoutName:string;programName:string;programId:number|null;recordedName:string;exerciseId:string;catalogName:string;origin:ExerciseSummary["origin"];observationKey:string;reps:number;weight:number|null;weightLb:number|null;multiplicity:number;sortOrder:number;setNumber:number;role:string|null;loadMode:string|null};
 function performance(row:BaseRow|undefined):ProgressPerformance|null {return row?{sessionId:row.sessionId,date:row.date,setId:row.setId,reps:row.reps,weight:row.weight,unit:row.unit}:null;}
 function summary(userId:number,id:string,filters:ProgressFilters={}):ExerciseSummary|null {
+  id=resolveCatalogRedirect(db,userId,id);
   const catalog=db.prepare("SELECT id,name,origin FROM exercise_catalog WHERE id=? AND user_id=?").get(id,userId) as Pick<ExerciseSummary,"id"|"name"|"origin">|undefined;if(!catalog)return null;
   const b=base(userId,filters);
   const totals=db.prepare(`WITH b AS (${b.sql}) SELECT COUNT(DISTINCT sessionId) AS sessionCount,COALESCE(SUM(multiplicity),0) AS recordedSets,COALESCE(MAX(date),'') AS lastDate FROM b WHERE exerciseId=?`).get(...b.args,id) as Pick<ExerciseSummary,"sessionCount"|"recordedSets"|"lastDate">;
@@ -70,10 +72,9 @@ function decodeGroup(key:string):string {
 }
 /** Resolve existing identity only; equal names never establish a new link. */
 export function resolveUnlinkedExerciseId(userId:number,groupKey:string):string|null {
-  const name=decodeGroup(groupKey);const b=base(userId,{});const pins=getPinnedExerciseIds(userId);
-  const exclude=pins.length?`AND exerciseId NOT IN (${pins.map(()=>"?").join(",")})`:"";
+  const name=decodeGroup(groupKey);const b=base(userId,{});
   const rows=db.prepare(`WITH b AS (${b.sql}) SELECT DISTINCT exerciseId FROM b
-    WHERE origin='unlinked' AND lower(trim(recordedName))=? ${exclude} LIMIT 2`).all(...b.args,name,...pins) as {exerciseId:string}[];
+    WHERE origin='unlinked' AND lower(trim(recordedName))=? LIMIT 2`).all(...b.args,name) as {exerciseId:string}[];
   if(rows.length)return rows.length===1?rows[0].exerciseId:null;
   // Old recorded-name URLs remain useful after pinning, reusing or explicitly linking
   // their sole identity. Do not choose between multiple identities removed from a group.
@@ -82,28 +83,27 @@ export function resolveUnlinkedExerciseId(userId:number,groupKey:string):string|
   return existing.length===1?existing[0].exerciseId:null;
 }
 export function listProgressExercises(userId:number,filters:ProgressFilters={}):ProgressPage<ExerciseFinderItem> {
-  const b=base(userId,filters);const all=base(userId,{});const p=pagination(userId,"exercises",filters);const pins=getPinnedExerciseIds(userId);
-  const pinSql=pins.length?`AND exerciseId NOT IN (${pins.map(()=>"?").join(",")})`:"";
+  const b=base(userId,filters);const all=base(userId,{});const p=pagination(userId,"exercises",filters);
   const q=(filters.search??"").trim().toLowerCase();const initial=(filters.initial??"").toLowerCase();
   // Identity ambiguity belongs to the whole recorded history, not the current date/search page.
   // Key before grouping/pagination so one existing identity with multiple labels stays one row.
   const grouped=`WITH all_records AS (${all.sql}), ambiguous_names AS (
-      SELECT lower(trim(recordedName)) AS name FROM all_records WHERE origin='unlinked' ${pinSql}
+      SELECT lower(trim(recordedName)) AS name FROM all_records WHERE origin='unlinked'
       GROUP BY lower(trim(recordedName)) HAVING COUNT(DISTINCT exerciseId)>1),
-    b AS (${b.sql}), keyed AS (SELECT *,CASE WHEN origin='unlinked' ${pinSql}
+    b AS (${b.sql}), keyed AS (SELECT *,CASE WHEN origin='unlinked'
       AND lower(trim(recordedName)) IN (SELECT name FROM ambiguous_names) THEN 'u:'||lower(trim(recordedName)) ELSE 'e:'||exerciseId END AS finderKey FROM b),
     grouped AS (SELECT finderKey,CASE WHEN substr(finderKey,1,2)='u:' THEN MIN(recordedName) ELSE MIN(catalogName) END AS name,
       COUNT(DISTINCT CAST(sessionId AS TEXT)||':'||observationKey) AS historyCount,MAX(date) AS lastDate,
       MAX(date||':'||printf('%020d',sessionId)) AS lastOrder,
       MAX(CASE WHEN lower(catalogName)=? OR lower(recordedName)=? THEN 3 WHEN instr(lower(catalogName),?)=1 OR instr(lower(recordedName),?)=1 THEN 2 ELSE 1 END) AS rank
       FROM keyed GROUP BY finderKey HAVING (?='' OR MAX(instr(lower(catalogName),?)>0 OR instr(lower(recordedName),?)>0)))`;
-  const args=[...all.args,...pins,...b.args,...pins,q,q,q,q,q,q,q,initial,initial];
+  const args=[...all.args,...b.args,q,q,q,q,q,q,q,initial,initial];
   const order=filters.sort==="name"?"rank DESC,lower(name),finderKey":"rank DESC,lastOrder DESC,finderKey";
   const rows=db.prepare(`${grouped} SELECT * FROM grouped WHERE (?='' OR lower(substr(name,1,1))=?) ORDER BY ${order} LIMIT ? OFFSET ?`).all(...args,p.limit+1,p.offset) as {finderKey:string;name:string;historyCount:number;lastDate:string}[];
   const items=rows.slice(0,p.limit).map(row=>{
     const unlinked=row.finderKey.startsWith("u:");const id=row.finderKey.slice(2);
     if(!unlinked){const exercise=summary(userId,id,filters)!;return {key:row.finderKey,kind:"exercise" as const,name:row.name,exercise,historyCount:row.historyCount,lastDate:row.lastDate,latest:exercise.latest,context:"Tracked exercise"};}
-    const latest=db.prepare(`WITH b AS (${b.sql}) SELECT * FROM b WHERE origin='unlinked' AND lower(trim(recordedName))=? ${pinSql} ORDER BY date DESC,sessionId DESC,sortOrder,setNumber,setId LIMIT 1`).get(...b.args,id,...pins) as BaseRow|undefined;
+    const latest=db.prepare(`WITH b AS (${b.sql}) SELECT * FROM b WHERE origin='unlinked' AND lower(trim(recordedName))=? ORDER BY date DESC,sessionId DESC,sortOrder,setNumber,setId LIMIT 1`).get(...b.args,id) as BaseRow|undefined;
     return {key:`u:${Buffer.from(id).toString("base64url")}`,kind:"unlinked" as const,name:row.name,exercise:null,historyCount:row.historyCount,lastDate:row.lastDate,latest:performance(latest),context:latest?.workoutName||"Recorded workouts"};
   });
   return {items,nextCursor:p.next(rows.length>p.limit),previousCursor:p.previous};
@@ -119,7 +119,13 @@ export function getProgressHome(userId:number,filters:ProgressFilters={},now=new
   // Recent is always a separate 12-week performed-date window, independent of the activity period.
   const candidates=listProgressExercises(userId,{from:shift(today,-83),to:today,sort:"recent",limit:7}).items;
   const recent=candidates.filter(row=>!row.exercise||!ids.includes(row.exercise.id)).slice(0,3);
-  return {pinned,recent,pinLimit:4,recentLimit:3,activity:{...activity,usesKilograms:!!activity.usesKilograms,emptySessions:empty.count,from:b.from,to:b.to??today}};
+  const all=base(userId,{});
+  const names=db.prepare(`WITH b AS (${all.sql}) SELECT DISTINCT recordedName,exerciseId FROM b`).all(...all.args) as {recordedName:string;exerciseId:string}[];
+  const primary:ProgressPrimaryExercise[]=([['squat','Squat'],['bench','Bench'],['deadlift','Deadlift']] as const).map(([key,name])=>{
+    const matches=[...new Set(names.filter(row=>exerciseNameKey(row.recordedName)===key).map(row=>row.exerciseId))];
+    return {key:`p:${key}`,name,hasHistory:matches.length>0,exercise:matches.length===1?summary(userId,matches[0]):null};
+  });
+  return {primary,pinned,recent,pinLimit:4,recentLimit:3,activity:{...activity,usesKilograms:!!activity.usesKilograms,emptySessions:empty.count,from:b.from,to:b.to??today}};
 }
 export function listProgressPrograms(userId:number,filters:ProgressFilters={}):ProgressPage<ProgressProgram> {
   const c=constraints(userId,{...filters,programId:undefined});const p=pagination(userId,"programs",filters,10);const q=(filters.search??"").trim().toLowerCase();
@@ -138,17 +144,19 @@ function candidatePage(userId:number,kind:string,filters:ProgressFilters,extra:s
 }
 export function listUnlinkedExercises(userId:number,groupKey:string,filters:ProgressFilters={}):ProgressPage<CandidateObservation> {
   const name=decodeGroup(groupKey);
-  const pins=getPinnedExerciseIds(userId);
-  const exclude=pins.length?` AND exerciseId NOT IN (${pins.map(()=>"?").join(",")})`:"";
-  return candidatePage(userId,`group:${groupKey}`,filters,`lower(trim(recordedName))=? AND exerciseId IN (SELECT id FROM exercise_catalog WHERE user_id=? AND origin='unlinked')${exclude}`,[name,userId,...pins]);
+  return candidatePage(userId,`group:${groupKey}`,filters,`lower(trim(recordedName))=? AND exerciseId IN (SELECT id FROM exercise_catalog WHERE user_id=? AND origin='unlinked')`,[name,userId]);
 }
 export function getExerciseCandidates(userId:number,exerciseId:string,filters:ProgressFilters={}):ProgressPage<CandidateObservation> {
-  return candidatePage(userId,`included:${exerciseId}`,filters,"exerciseId=?",[exerciseId]);
+  const requestedId=exerciseId;
+  exerciseId=resolveCatalogRedirect(db,userId,exerciseId);
+  return candidatePage(userId,`included:${requestedId}`,filters,"exerciseId=?",[exerciseId]);
 }
 const E1RM=`CASE WHEN weight>0 AND reps>0 THEN CASE WHEN reps=1 THEN weight ELSE weight*(1+reps/30.0) END END`;
 export function getExerciseDetail(userId:number,exerciseId:string,filters:ProgressFilters={}):ExerciseDetail|null {
+  const requestedId=exerciseId;
+  exerciseId=resolveCatalogRedirect(db,userId,exerciseId);
   const exercise=summary(userId,exerciseId,filters);if(!exercise)return null;
-  const b=base(userId,filters);const p=pagination(userId,`detail:${exerciseId}`,filters);
+  const b=base(userId,filters);const p=pagination(userId,`detail:${requestedId}`,filters);
   const source=`WITH b AS (${b.sql}), chosen AS (SELECT * FROM b WHERE exerciseId=?)`;
   const args=[...b.args,exerciseId];
   const totals=db.prepare(`${source} SELECT COUNT(DISTINCT sessionId) AS sessions,COALESCE(SUM(multiplicity),0) AS recordedSets,

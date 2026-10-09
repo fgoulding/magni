@@ -10,7 +10,7 @@ function revisionFour() {
   db.pragma("foreign_keys=ON");
   db.exec(fs.readFileSync(path.join(process.cwd(), "src/lib/db/schema.sql"), "utf8"));
   runMigrations(db);
-  for (const table of ["exercise_identity_changes", "exercise_set_sources", "exercise_sources", "exercise_catalog"]) db.exec(`DROP TABLE IF EXISTS ${table}`);
+  for (const table of ["exercise_name_aliases", "exercise_catalog_redirects", "exercise_identity_changes", "exercise_set_sources", "exercise_sources", "exercise_catalog"]) db.exec(`DROP TABLE IF EXISTS ${table}`);
   db.pragma("user_version=4");
   db.exec(`INSERT INTO users(id,email,password_hash) VALUES (1,'owner@example.test','hash'),(2,'other@example.test','hash');
     INSERT INTO program_runs(id,user_id,name) VALUES (1,1,'Saved run');
@@ -31,20 +31,20 @@ function revisionFour() {
   return db;
 }
 
-describe("schema 4 to 5 exercise identities", () => {
-  it("retains every original historical/progression row and attaches only proven lineage", () => {
+describe("schema 4 through 6 exercise identities", () => {
+  it("retains every original historical/progression row and consolidates compatible identities", () => {
     const db = revisionFour();
     try {
       const tables = ["sessions", "session_sets", "program_editor_progression_state", "program_editor_progression_events", "workout_corrections"];
       const before = tables.map(table => db.prepare(`SELECT * FROM ${table} ORDER BY rowid`).all());
       runMigrations(db);
-      expect(db.pragma("user_version", { simple: true })).toBe(5);
+      expect(db.pragma("user_version", { simple: true })).toBe(6);
       expect(tables.map(table => db.prepare(`SELECT * FROM ${table} ORDER BY rowid`).all())).toEqual(before);
       const rows = db.prepare(`SELECT x.session_set_id,s.exercise_id FROM exercise_set_sources x JOIN exercise_sources s USING(user_id,source_key) ORDER BY x.session_set_id`).all() as { session_set_id: number; exercise_id: string }[];
       expect(rows).toHaveLength(6);
       expect(rows[0].exercise_id).toBe(rows[1].exercise_id);
-      expect(rows[2].exercise_id).not.toBe(rows[0].exercise_id);
-      expect(rows[3].exercise_id).not.toBe(rows[4].exercise_id);
+      expect(rows[2].exercise_id).toBe(rows[0].exercise_id);
+      expect(rows[3].exercise_id).toBe(rows[4].exercise_id);
       expect(rows[5].exercise_id).not.toBe(rows[0].exercise_id);
       const identityRows = db.prepare("SELECT * FROM exercise_sources ORDER BY user_id,source_key").all();
       runMigrations(db);

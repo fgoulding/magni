@@ -72,7 +72,7 @@ test("quick workout preserves pending edits, recovers failed writes, and counts 
   await expect(page.getByText(/400 lb total/)).toBeVisible();
   await screenshot("recap");
   await page.getByRole("navigation").getByRole("link", { name: "Progress" }).click();
-  await expect(page.getByRole("heading", { name: "Progress" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Progress", exact: true })).toBeVisible();
   await page.getByText("Recorded activity", { exact: true }).click();
   await expect(page.getByRole("group", { name: "400 lb recorded volume", exact: true })).toBeVisible();
   await expect(page.getByRole("group", { name: "1 recorded sets", exact: true })).toBeVisible();

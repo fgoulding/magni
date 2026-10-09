@@ -50,6 +50,6 @@ export function runProgressMigration(db: Database.Database): void {
     `);
     const sessions = db.prepare(`SELECT DISTINCT s.id,s.user_id FROM sessions s JOIN session_sets ss ON ss.session_id=s.id
       LEFT JOIN exercise_set_sources x ON x.session_set_id=ss.id WHERE x.session_set_id IS NULL ORDER BY s.id`).all() as { id: number; user_id: number }[];
-    for (const session of sessions) attachSessionExerciseSources(db, session.user_id, session.id);
+    for (const session of sessions) attachSessionExerciseSources(db, session.user_id, session.id, undefined, false);
   }).immediate();
 }

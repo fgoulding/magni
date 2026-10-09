@@ -5,7 +5,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 const queries = vi.hoisted(() => ({ listProgressExercises: vi.fn(), listProgressPrograms: vi.fn(), getProgressHome: vi.fn(), getExerciseDetail: vi.fn(), listUnlinkedExercises: vi.fn(), resolveUnlinkedExerciseId: vi.fn() }));
 vi.mock("@/features/progress/queries", () => queries);
 vi.mock("@/lib/auth", () => ({ requireUser: async () => ({ id: 7 }) }));
-vi.mock("next/navigation", () => ({ redirect: (href: string) => { throw new Error(`REDIRECT ${href}`); } }));
+vi.mock("next/navigation", () => ({ useRouter: () => ({ refresh: vi.fn() }), redirect: (href: string) => { throw new Error(`REDIRECT ${href}`); } }));
 import FinderPage from "@/app/history/exercises/page";
 import ProgressPage from "@/app/history/page";
 import LegacyPage from "@/app/history/[lift]/page";
@@ -41,7 +41,7 @@ describe("Progress page discovery boundaries", () => {
     expect(queries.getProgressHome).not.toHaveBeenCalled();
   });
   it("uses an owned explicit catalog selection and bounds its workout observations to two", async () => {
-    queries.getProgressHome.mockReturnValue({ pinned: [{ id: "first" }], recent: [] });
+    queries.getProgressHome.mockReturnValue({ primary: [], pinned: [{ id: "first" }], recent: [] });
     queries.getExerciseDetail.mockReturnValue({ exercise: { name: "Selected row" } });
     const result = await ProgressPage({ searchParams: Promise.resolve({ exercise: "e:chosen", period: "4w" }) });
     expect(queries.getExerciseDetail).toHaveBeenCalledWith(7, "chosen", { period: "4w", limit: 2 });
@@ -49,7 +49,7 @@ describe("Progress page discovery boundaries", () => {
     expect(result.props.currentHref).toBe("/history?exercise=e%3Achosen&period=4w");
   });
   it("opens a single recorded exercise from an existing name-group URL without requiring grouping", async () => {
-    queries.getProgressHome.mockReturnValue({ pinned: [], recent: [] });
+    queries.getProgressHome.mockReturnValue({ primary: [], pinned: [], recent: [] });
     queries.resolveUnlinkedExerciseId.mockReturnValue("single-row");
     const detail = { exercise: { name: "Single leg abducted DL" } };
     queries.getExerciseDetail.mockReturnValue(detail);
@@ -68,27 +68,52 @@ describe("Progress page discovery boundaries", () => {
     expect(queries.resolveUnlinkedExerciseId).toHaveBeenCalledWith(7, "u:cm93");
     expect(queries.listUnlinkedExercises).not.toHaveBeenCalled();
   });
-  it("defaults to the first pin, then a proven recent exercise, without merging an unlinked name group", async () => {
-    queries.getProgressHome.mockReturnValue({ pinned: [{ id: "favorite" }], recent: [] });
-    expect((await ProgressPage({ searchParams: Promise.resolve({}) })).props.selectedKey).toBe("e:favorite");
-    queries.getProgressHome.mockReturnValue({ pinned: [], recent: [{ key: "u:Um93", kind: "unlinked", name: "Row", exercise: null }, { key: "e:proven", kind: "exercise", exercise: { origin: "lineage" } }] });
-    expect((await ProgressPage({ searchParams: Promise.resolve({}) })).props.selectedKey).toBe("e:proven");
-    queries.getExerciseDetail.mockClear();
-    queries.getProgressHome.mockReturnValue({ pinned: [], recent: [{ key: "u:Um93", kind: "unlinked", name: "Row", exercise: null }] });
-    const unlinked = await ProgressPage({ searchParams: Promise.resolve({}) });
-    expect(unlinked.props.selectedKey).toBe("u:Um93");
-    expect(unlinked.props.detail).toBeNull();
+  it("defaults to all history and the first recorded primary lift, ignoring pin/recent order", async () => {
+    queries.getProgressHome.mockReturnValue({ pinned: [{ id: "favorite" }], recent: [{ key: "e:recent" }], primary: [{ key: "p:squat", name: "Squat", hasHistory: false, exercise: { id: "squat", recordedSets: 0 } }, { key: "p:bench", name: "Bench", hasHistory: true, exercise: { id: "bench", recordedSets: 3 } }, { key: "p:deadlift", name: "Deadlift", hasHistory: true, exercise: { id: "deadlift", recordedSets: 10 } }] });
+    const result = await ProgressPage({ searchParams: Promise.resolve({}) });
+    expect(queries.getProgressHome).toHaveBeenCalledWith(7, { period: "all" });
+    expect(result.props.selectedKey).toBe("e:bench");
+    expect(result.props.period).toBe("all");
+    expect(queries.getExerciseDetail).toHaveBeenCalledWith(7, "bench", { period: "all", limit: 2 });
+  });
+  it("defaults to the first primary with history even when its variations are intentionally separate", async () => {
+    queries.getProgressHome.mockReturnValue({ pinned: [], recent: [], primary: [{ key: "p:squat", name: "Squat", hasHistory: true, exercise: null }, { key: "p:bench", name: "Bench", hasHistory: true, exercise: { id: "bench", recordedSets: 3 } }] });
+    const result = await ProgressPage({ searchParams: Promise.resolve({ period: "4w", metric: "load:kg" }) });
+    expect(result.props.selectedKey).toBe("p:squat");
+    expect(result.props.selectedName).toBe("Squat");
+    expect(result.props.selectionError).toBeUndefined();
+    expect(result.props.detail).toBeNull();
+    expect(result.props.currentHref).toBe("/history?exercise=p%3Asquat&period=4w&metric=load%3Akg");
     expect(queries.getExerciseDetail).not.toHaveBeenCalled();
   });
+  it("waits for a choice when no primary lift has recorded history", async () => {
+    queries.getProgressHome.mockReturnValue({ pinned: [{ id: "favorite" }], recent: [{ key: "e:recent" }], primary: [{ key: "p:squat", name: "Squat", hasHistory: false, exercise: null }, { key: "p:bench", name: "Bench", hasHistory: false, exercise: null }, { key: "p:deadlift", name: "Deadlift", hasHistory: false, exercise: null }] });
+    const result = await ProgressPage({ searchParams: Promise.resolve({}) });
+    expect(result.props.selectedKey).toBe("");
+    expect(result.props.detail).toBeNull();
+    expect(queries.getExerciseDetail).not.toHaveBeenCalled();
+  });
+  it("preserves an explicit empty primary choice and resolves it when history becomes available", async () => {
+    queries.getProgressHome.mockReturnValue({ pinned: [], recent: [], primary: [{ key: "p:squat", name: "Squat", hasHistory: false, exercise: null }, { key: "p:bench", name: "Bench", hasHistory: false, exercise: null }, { key: "p:deadlift", name: "Deadlift", hasHistory: false, exercise: null }] });
+    const empty = await ProgressPage({ searchParams: Promise.resolve({ exercise: "p:bench", period: "12w" }) });
+    expect(empty.props.selectedKey).toBe("p:bench");
+    expect(empty.props.selectedName).toBe("Bench");
+    expect(empty.props.selectionError).toBeUndefined();
+    expect(empty.props.period).toBe("12w");
+    queries.getProgressHome.mockReturnValue({ pinned: [], recent: [], primary: [{ key: "p:bench", name: "Bench", hasHistory: true, exercise: { id: "bench", recordedSets: 1 } }] });
+    const recorded = await ProgressPage({ searchParams: Promise.resolve({ exercise: "p:bench" }) });
+    expect(recorded.props.selectedKey).toBe("e:bench");
+    expect(queries.getExerciseDetail).toHaveBeenCalledWith(7, "bench", { period: "all", limit: 2 });
+  });
   it("shows an unavailable explicit selection instead of silently choosing a different exercise", async () => {
-    queries.getProgressHome.mockReturnValue({ pinned: [{ id: "favorite" }], recent: [] });
+    queries.getProgressHome.mockReturnValue({ primary: [], pinned: [{ id: "favorite" }], recent: [] });
     const result = await ProgressPage({ searchParams: Promise.resolve({ exercise: "e:someone-elses" }) });
     expect(result.props.selectionError).toContain("unavailable");
     expect(result.props.selectedKey).toBe("e:someone-elses");
     expect(result.props.detail).toBeNull();
   });
   it("retains only a valid chart metric in source return context", async () => {
-    queries.getProgressHome.mockReturnValue({ pinned: [{ id: "favorite" }], recent: [] });
+    queries.getProgressHome.mockReturnValue({ primary: [], pinned: [{ id: "favorite" }], recent: [] });
     const result = await ProgressPage({ searchParams: Promise.resolve({ metric: "load:kg" }) });
     expect(result.props.initialMetric).toBe("load:kg");
     expect(result.props.currentHref).toContain("metric=load%3Akg");
@@ -104,4 +129,32 @@ describe("Progress page discovery boundaries", () => {
     expect(document.querySelector('input[name="returnTo"]')).toHaveValue(returnTo);
   });
 
+});
+
+describe("exercise history descriptions", () => {
+  it("presents separate variations by exercise name with a direct history choice", async () => {
+    queries.listUnlinkedExercises.mockReturnValue({ items: [{ id: 1, sessionId: 2, date: "2026-06-01", recordedName: "Row", workoutName: "Pull day", programName: "Dumbbell program", exerciseId: "row-a", exerciseName: "Row", latest: null, recordedSets: 1 }], nextCursor: null });
+    render(await ExercisePage({ params: Promise.resolve({ key: "u:Um93" }), searchParams: Promise.resolve({}) }));
+    expect(screen.getByText("Choose a variation")).toBeVisible();
+    expect(screen.getByRole("link", { name: "Combine exercise history" })).toBeVisible();
+    expect(screen.getByRole("link", { name: "View exercise history" })).toHaveAttribute("href", expect.stringContaining("/history/exercises/e%3Arow-a"));
+    expect(screen.getByText("Dumbbell program")).toBeVisible();
+  });
+  it("shows plain exercise names in search even when variations need review", async () => {
+    queries.listProgressExercises.mockReturnValue({ items: [{ key: "u:Um93", kind: "unlinked", name: "Row", historyCount: 2, lastDate: "2026-06-01", latest: null, context: "Dumbbell / barbell" }], nextCursor: null });
+    render(await FinderPage({ searchParams: Promise.resolve({ q: "row" }) }));
+    expect(screen.getByRole("heading", { name: "Row" })).toBeVisible();
+    expect(screen.getByText(/Choose a variation/)).toHaveTextContent("Dumbbell / barbell");
+    expect(screen.queryByText(/Records named/)).not.toBeInTheDocument();
+  });
+  it("offers all exercise history when custom date filters hide every workout", async () => {
+    queries.getProgressHome.mockReturnValue({ pinned: [] });
+    queries.getExerciseDetail.mockReturnValue({ exercise: { id: "row", name: "Row", origin: "confirmed", pinned: false }, observations: { items: [], nextCursor: null }, chart: { points: [], truncated: false } });
+    render(await ExercisePage({ params: Promise.resolve({ key: "e:row" }), searchParams: Promise.resolve({ from: "2026-09-01", to: "2026-09-30", returnTo: "/history?exercise=e%3Arow&period=4w" }) }));
+    expect(screen.getByText("No Row workouts in this range")).toBeVisible();
+    const all = new URL(screen.getByRole("link", { name: "Show all history" }).getAttribute("href")!, "https://magni.test");
+    expect(all.searchParams.get("from")).toBeNull();
+    expect(all.searchParams.get("to")).toBeNull();
+    expect(all.searchParams.get("returnTo")).toBe("/history?exercise=e%3Arow&period=4w");
+  });
 });

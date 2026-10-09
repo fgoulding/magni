@@ -1,5 +1,6 @@
 import { createHash, randomUUID } from "node:crypto";
 import { db } from "@/lib/db";
+import { blockExerciseAliases, exerciseAliasStates, restoreExerciseAliases, resolveCatalogRedirect, type ExerciseAliasState } from "./aliases";
 import type { CandidateObservation, IdentityChangeInput, IdentityChangePreview, IdentityChangeResult } from "./types";
 export { PROGRESS_SET_JOINS, attachSessionExerciseSources } from "./source-links";
 
@@ -13,6 +14,7 @@ export function resolveSetExerciseIdentities(userId:number,sessionId:number):Map
 }
 export function requireOwnedExercise(userId:number,id:string):{id:string;name:string;origin:string;revision:number} {
   if(typeof id!=="string"||id.length>100) fail("Exercise not found.",404);
+  id=resolveCatalogRedirect(db,userId,id);
   return db.prepare("SELECT id,name,origin,revision FROM exercise_catalog WHERE id=? AND user_id=?").get(id,userId) as {id:string;name:string;origin:string;revision:number}|undefined ?? fail("Exercise not found.",404);
 }
 export const CANDIDATE_CTE = `WITH candidates AS (
@@ -44,7 +46,7 @@ function selected(userId:number,ids:unknown):CandidateRow[] {
 }
 type LinkState={setId:number;exerciseId:string;revision:number};
 type CatalogState={id:string;origin:string;revision:number};
-type AuditState={sets:LinkState[];catalogs:CatalogState[]};
+type AuditState={sets:LinkState[];catalogs:CatalogState[];aliases?:ExerciseAliasState[]};
 function auditState(json:string):AuditState {
   const value=JSON.parse(json) as AuditState|LinkState[];
   return Array.isArray(value)?{sets:value,catalogs:[]}:value;
@@ -68,13 +70,14 @@ function prepare(userId:number,input:IdentityChangeInput) {
   const name=input.mode==="detach"?"Separate selected workouts":target?.name??(typeof input.name==="string"?input.name.trim():"");
   if(!name||name.length>140) fail("Enter an exercise name from 1 to 140 characters.");
   const before=mappings(userId,rows);
-  const token=hash([userId,input.mode??"link",target,name,rows,before]);
-  return {rows,target,name,before,token};
+  const aliases=exerciseAliasStates(db,userId,{exerciseIds:[...new Set(before.map(row=>row.exerciseId))]});
+  const token=hash([userId,input.mode??"link",target,name,rows,before,aliases]);
+  return {rows,target,name,before,aliases,token};
 }
 export function previewExerciseLink(userId:number,input:IdentityChangeInput):IdentityChangePreview {
   const p=prepare(userId,input);
   return {token:p.token,targetExerciseId:p.target?.id??null,targetName:p.name,observations:p.rows.map(decorateCandidate),observationCount:p.rows.length,
-    sessionCount:new Set(p.rows.map(row=>row.sessionId)).size,explanation:"Only these selected workouts change grouping. Future workouts, recorded sets and program progression stay unchanged."};
+    sessionCount:new Set(p.rows.map(row=>row.sessionId)).size,explanation:"Only selected workouts change grouping. Recorded sets and program progression stay unchanged. Choose the saved exercise when adding future workouts to keep the history you want."};
 }
 function requestKey(key:unknown):asserts key is string { if(typeof key!=="string"||key.length<8||key.length>120) fail("Use a valid retry key."); }
 function prior(userId:number,key:string,request:string):IdentityChangeResult|null {
@@ -97,6 +100,7 @@ export function applyExerciseLink(userId:number,input:IdentityChangeInput&{previ
     const cached=prior(userId,input.requestKey,request); if(cached) return cached;
     const p=prepare(userId,input); if(input.previewToken!==p.token) fail("These workout records changed. Review a fresh preview.",409);
     const targetId=input.mode==="detach"?null:p.target?.id??randomUUID();
+    blockExerciseAliases(db,userId,[...new Set(p.before.map(row=>row.exerciseId))]);
     const beforeCatalogs=p.target?[catalogState(userId,p.target.id)]:[];
     if(targetId&&!p.target) db.prepare("INSERT INTO exercise_catalog(id,user_id,name,origin) VALUES (?,?,?,'confirmed')").run(targetId,userId,p.name);
     if(targetId) db.prepare("UPDATE exercise_catalog SET origin='confirmed',revision=revision+1 WHERE id=? AND user_id=?").run(targetId,userId);
@@ -106,8 +110,8 @@ export function applyExerciseLink(userId:number,input:IdentityChangeInput&{previ
       db.prepare(`UPDATE exercise_set_sources SET exercise_id=?,revision=revision+1 WHERE user_id=? AND observation_key=?
         AND session_set_id IN (SELECT id FROM session_sets WHERE session_id=?)`).run(id,userId,row.observationKey,row.sessionId);
     }
-    return record(userId,input.requestKey,request,{sets:p.before,catalogs:beforeCatalogs},
-      {sets:mappings(userId,p.rows),catalogs:p.target?[catalogState(userId,p.target.id)]:[]},
+    return record(userId,input.requestKey,request,{sets:p.before,catalogs:beforeCatalogs,aliases:p.aliases},
+      {sets:mappings(userId,p.rows),catalogs:p.target?[catalogState(userId,p.target.id)]:[],aliases:exerciseAliasStates(db,userId,{aliases:p.aliases})},
       {targetExerciseId:targetId,observationCount:p.rows.length,undone:false});
   }).immediate();
 }
@@ -128,6 +132,7 @@ export function undoExerciseLink(userId:number,input:{changeId:number;requestKey
       const current=catalogState(userId,row.id);
       if(current.origin!==row.origin||current.revision!==row.revision)fail("This exercise grouping changed again. Review included workouts before editing.",409);
     }
+    if(after.aliases&&hash(exerciseAliasStates(db,userId,{aliases:after.aliases}))!==hash(after.aliases)) fail("This exercise matching changed again. Review included workouts before editing.",409);
     const restored:LinkState[]=[];
     for(const row of before.sets) {
       const last=after.sets.find(item=>item.setId===row.setId)!;
@@ -139,7 +144,9 @@ export function undoExerciseLink(userId:number,input:{changeId:number;requestKey
       db.prepare("UPDATE exercise_catalog SET origin=?,revision=revision+1 WHERE id=? AND user_id=?").run(row.origin,row.id,userId);
       restoredCatalogs.push(catalogState(userId,row.id));
     }
-    return record(userId,input.requestKey,request,after,{sets:restored,catalogs:restoredCatalogs},{targetExerciseId:null,observationCount:(JSON.parse(change.result_json) as IdentityChangeResult).observationCount,undone:true});
+    if(before.aliases) restoreExerciseAliases(db,userId,before.aliases);
+    const restoredAliases=before.aliases?exerciseAliasStates(db,userId,{aliases:before.aliases}):undefined;
+    return record(userId,input.requestKey,request,after,{sets:restored,catalogs:restoredCatalogs,aliases:restoredAliases},{targetExerciseId:null,observationCount:(JSON.parse(change.result_json) as IdentityChangeResult).observationCount,undone:true});
   }).immediate();
 }
 const PIN_KEY="progress_pins_v1";
@@ -147,12 +154,12 @@ export function getPinnedExerciseIds(userId:number):string[] {
   const saved=db.prepare("SELECT value FROM user_settings WHERE user_id=? AND key=?").get(userId,PIN_KEY) as {value:string}|undefined;
   let ids:unknown;try{ids=JSON.parse(saved?.value??"[]");}catch{return [];}
   if(!Array.isArray(ids))return [];
-  return [...new Set(ids.filter((id):id is string=>typeof id==="string"))].filter(id=>!!db.prepare("SELECT id FROM exercise_catalog WHERE user_id=? AND id=?").get(userId,id)).slice(0,4);
+  return [...new Set(ids.filter((id):id is string=>typeof id==="string").map(id=>resolveCatalogRedirect(db,userId,id)))].filter(id=>!!db.prepare("SELECT id FROM exercise_catalog WHERE user_id=? AND id=?").get(userId,id)).slice(0,4);
 }
 export function updateExercisePin(userId:number,input:{exerciseId:string;pinned:boolean;replaceExerciseId?:string}):string[] {
   if(typeof input.pinned!=="boolean")fail("Choose pin or unpin.");
   return db.transaction(()=>{
-    requireOwnedExercise(userId,input.exerciseId);
+    input={...input,exerciseId:requireOwnedExercise(userId,input.exerciseId).id,replaceExerciseId:input.replaceExerciseId?requireOwnedExercise(userId,input.replaceExerciseId).id:undefined};
     let ids=getPinnedExerciseIds(userId);
     if(!input.pinned) ids=ids.filter(id=>id!==input.exerciseId);
     else if(!ids.includes(input.exerciseId)) {

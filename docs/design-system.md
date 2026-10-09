@@ -233,7 +233,9 @@ decorative. Never emoji.
 They're pure/server-safe inline SVG+CSS and take their hue from `currentColor`,
 so set the color with a `text-*` token class (e.g. `className="text-brand"`).
 Progress (`/history`) starts with one selected exercise chart, a searchable
-exercise chooser and at most three favorite shortcuts. Show two recent workout
+exercise chooser led by Squat, Bench and Deadlift, followed by search. Keep
+favorites in their management view. Default to all history and the first primary
+lift with recorded history; preserve explicit exercise/date choices. Show two recent workout
 records beneath it, with full history available on demand. The home screen must
 not grow with the exercise library. Search and deliberate browsing replace a
 bounded page of results; never append an infinite exercise list.
@@ -241,8 +243,12 @@ bounded page of results; never append an infinite exercise list.
 Chart original recorded units separately, keep workout dates on the horizontal
 axis and label estimates as estimates. Missing loads and unsuccessful attempts
 must not become estimated maxes. Provide dated values and source workout links.
-Matching exercise names alone are not proof that records belong in one graph;
-historical linking requires an explicit review. Activity totals are secondary.
+Normalize exact names and approved whole-name equivalents into an owned durable
+exercise identity when measurement families are compatible. Preserve named
+variants and explicit historical separations; offer a variation choice for those
+histories, never a false empty state. Pinning is only a navigation preference.
+Keep date labels spaced when workouts cluster within a long chart range.
+Activity totals are secondary.
 Progress queries and identity live in `src/features/progress`; prior-performance
 and training summaries also use `src/features/programs/training-stats.ts`.
 

@@ -23,6 +23,10 @@ describe("Progress navigation", () => {
     expect(decodeProgressKey("e%3A5d92572c-c020-4ba7-ada6-21b34174fe02")).toBe("e:5d92572c-c020-4ba7-ada6-21b34174fe02");
     expect(decodeProgressKey("u%3AYmFuZCByb3c")).toBe("u:YmFuZCByb3c");
     expect(decodeProgressKey("e:abc")).toBe("e:abc");
+    expect(decodeProgressKey("p%3Asquat")).toBe("p:squat");
+    expect(decodeProgressKey("p:bench")).toBe("p:bench");
+    expect(decodeProgressKey("p:deadlift")).toBe("p:deadlift");
+    expect(decodeProgressKey("p:row")).toBeNull();
     expect(decodeProgressKey("e%253Aabc")).toBeNull();
     expect(decodeProgressKey("%broken")).toBeNull();
     expect(decodeProgressKey("e%3A..%2Fother")).toBeNull();

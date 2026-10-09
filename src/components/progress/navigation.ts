@@ -33,5 +33,5 @@ export function workoutEvidenceHref(sessionId: number, currentHref: string): str
 
 /** Next's dynamic route parameter is encoded in this installed runtime. Decode once. */
 export function decodeProgressKey(raw: string): string | null {
-  try { const key = decodeURIComponent(raw); return /^(e:[A-Za-z0-9-]+|u:[A-Za-z0-9_-]+)$/.test(key) ? key : null; } catch { return null; }
+  try { const key = decodeURIComponent(raw); return /^(e:[A-Za-z0-9-]+|u:[A-Za-z0-9_-]+|p:(?:squat|bench|deadlift))$/.test(key) ? key : null; } catch { return null; }
 }

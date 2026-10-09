@@ -27,6 +27,10 @@ test("one quick exercise shows its result without asking to group records, inclu
   const sessionId = await completedWorkout(page, "Quick Workout", recentDate, [name], 60, 3, "lb");
   const before = await (await page.request.get(`/api/sessions/${sessionId}`)).json();
   await page.goto("/history");
+  await page.getByRole("button", { name: "Choose exercise", exact: true }).click();
+  await page.getByRole("dialog", { name: "Choose exercise" }).getByRole("searchbox", { name: "Search exercises" }).fill(name);
+  await expect(page.getByTestId("exercise-choice")).toHaveCount(1);
+  await page.getByTestId("exercise-choice").click();
   await expect(page.getByRole("button", { name: "Choose exercise", exact: true })).toContainText(name);
   await expect(page.getByRole("region", { name: "Exercise chart", exact: true })).toBeVisible();
   await expect(page.getByText("One recorded workout", { exact: true })).toBeVisible();
@@ -63,12 +67,14 @@ test("one quick exercise shows its result without asking to group records, inclu
   await expect(page.getByRole("region", { name: "Exercise chart", exact: true })).toBeVisible();
   expect(await (await page.request.get(`/api/sessions/${sessionId}`)).json()).toEqual(before);
 
-  // A separate older identity still requires review even with just one recent record visible.
-  await completedWorkout(page, "Different old variation", "2020-01-02", [name], 20);
+  // An older same-name workout joins the exercise, while an explicit date filter still applies.
+  await completedWorkout(page, "Older workout", "2020-01-02", [name], 20);
   await page.goto(`/history?exercise=${encodeURIComponent(oldKey)}&period=4w`);
-  await expect(page.getByText("Keep matching records separate", { exact: true })).toBeVisible();
-  await expect(page.getByRole("region", { name: "Exercise chart", exact: true })).toHaveCount(0);
+  await expect(page.getByText("Keep matching records separate", { exact: true })).toHaveCount(0);
+  await expect(page.getByRole("region", { name: "Exercise chart", exact: true })).toBeVisible();
   await expect(page.getByRole("list", { name: "Recent exercise workouts" }).getByRole("listitem")).toHaveCount(1);
+  await page.getByRole("combobox", { name: "Period", exact: true }).selectOption("all");
+  await expect(page.getByRole("list", { name: "Recent exercise workouts" }).getByRole("listitem")).toHaveCount(2);
 });
 
 test("Progress stays bounded while finder pages replace and old names are directly searchable", async ({ page }, info) => {
@@ -91,11 +97,14 @@ test("Progress stays bounded while finder pages replace and old names are direct
   await expect(page.getByTestId("exercise-choice")).toContainText("Old exercise 0999");
   await screenshot(page, info, "old-exercise-chooser");
   await page.getByTestId("exercise-choice").click();
-  await expect(page).toHaveURL(/exercise=e%3A.*period=12w/);
+  await expect(page).toHaveURL(/exercise=e%3A.*period=all/);
   await expect(page.getByRole("button", { name: "Choose exercise", exact: true })).toContainText("Old exercise 0999");
   await expect(page.getByRole("button", { name: "Choose exercise", exact: true })).toBeFocused();
-  await expect(page.getByRole("region", { name: "Exercise chart" })).toContainText("No recorded sets in this period.");
-  await page.getByRole("combobox", { name: "Period" }).selectOption("all");
+  await expect(page.getByRole("list", { name: "Recent exercise workouts" }).getByRole("listitem")).toHaveCount(1);
+  await page.getByRole("combobox", { name: "Period" }).selectOption("4w");
+  await expect(page).toHaveURL(/period=4w/);
+  await expect(page.getByText(/No Old exercise 0999.*workouts in this range/)).toBeVisible();
+  await page.getByRole("button", { name: "Show all history", exact: true }).click();
   await expect(page.getByRole("list", { name: "Recent exercise workouts" }).getByRole("listitem")).toHaveCount(1);
   await page.getByRole("button", { name: "Choose exercise", exact: true }).click();
   await page.getByRole("link", { name: "Browse all exercises" }).click();
@@ -138,11 +147,21 @@ test("explicit selected workouts connect, survive a lost save, pin, and separate
   const first = await completedWorkout(page, "First row workout", firstDate, [name], 0);
   const second = await completedWorkout(page, "Second row workout", secondDate, [name], 0);
   const before = await Promise.all([first, second].map(async id => (await page.request.get(`/api/sessions/${id}`)).json()));
+  // Set up a deliberate separation through the actual preview/apply API. Ordinary
+  // same-name entries now connect automatically; explicit decisions remain reviewable.
+  const discovered = await (await page.request.get(`/api/progress/exercises?q=${encodeURIComponent(name)}`)).json();
+  const exerciseId = discovered.items[0].exercise.id;
+  const candidates = await (await page.request.get(`/api/progress/exercises?exerciseId=${exerciseId}&candidates=1`)).json();
+  const separate = { mode: "detach", observationIds: [candidates.items.find((item: { sessionId: number }) => item.sessionId === second).id] };
+  const previewResponse = await page.request.post("/api/progress/identity", { data: { action: "preview", ...separate } });
+  expect(previewResponse.ok()).toBe(true);
+  const preview = await previewResponse.json();
+  expect((await page.request.post("/api/progress/identity", { data: { action: "apply", ...separate, previewToken: preview.token, requestKey: randomUUID() } })).ok()).toBe(true);
   await page.goto(`/history/exercises?q=${encodeURIComponent(name)}`);
   await expect(page.getByTestId("progress-exercise-row")).toHaveCount(1);
   await page.getByTestId("progress-exercise-row").getByRole("link").click();
   await expect(page.getByRole("table")).toHaveCount(0);
-  await page.getByRole("link", { name: "Follow as one exercise" }).click();
+  await page.getByRole("link", { name: "Combine exercise history", exact: true }).click();
   await expect(page.getByRole("button", { name: "Review selected workouts" })).toBeDisabled();
   await page.getByRole("button", { name: "Select these 2 records" }).click();
   await page.getByLabel("Exercise label", { exact: true }).fill("Band row — deliberate comparison");
@@ -168,6 +187,8 @@ test("explicit selected workouts connect, survive a lost save, pin, and separate
   await expect(page.getByRole("button", { name: "Undo grouping change" })).toBeVisible();
   await page.getByRole("link", { name: "View exercise", exact: true }).click();
   await expect(page.getByRole("heading", { name: "Band row — deliberate comparison", exact: true })).toBeVisible();
+  await expect(page).toHaveURL(/\/history\/exercises\/e%3A/);
+  const selectedKey = decodeURIComponent(new URL(page.url()).pathname.split("/").at(-1)!);
   await expect(page.getByRole("combobox", { name: "Chart metric" })).toHaveValue("reps");
   await expect(page.getByText("10 reps · 0 kg", { exact: true })).toHaveCount(2);
   await page.getByText("Dated chart values", { exact: true }).click();
@@ -184,9 +205,8 @@ test("explicit selected workouts connect, survive a lost save, pin, and separate
   await expect(page.getByRole("heading", { name: "Grouping change undone" })).toBeVisible();
   const after = await Promise.all([first, second].map(async id => (await page.request.get(`/api/sessions/${id}`)).json()));
   expect(after).toEqual(before);
-  await page.goto("/history");
+  await page.goto(`/history?exercise=${encodeURIComponent(selectedKey)}&period=12w`);
   await expect(page.getByRole("region", { name: "Exercise chart" })).toBeVisible();
-  await expect(page.getByRole("navigation", { name: "Favorite exercises" }).getByRole("button")).toHaveCount(1);
   await expect(page.getByRole("list", { name: "Recent exercise workouts" }).getByRole("listitem")).toHaveCount(2);
   await page.getByRole("combobox", { name: "Period" }).focus();
   await page.getByRole("combobox", { name: "Period" }).selectOption("all");

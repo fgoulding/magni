@@ -2,6 +2,7 @@ import { beforeAll, describe, expect, it } from "vitest";
 import { db } from "@/lib/db";
 import { getLastPerformanceByExercise, getSessionPrs, getUserTrainingStats } from "./training-stats";
 import * as workouts from "@/features/workouts/history-service";
+import { applyExerciseLink, previewExerciseLink } from "@/features/progress/identity";
 
 let owner: number;
 let outsider: number;
@@ -34,9 +35,13 @@ describe("historical records and previous performance", () => {
     expect(getLastPerformanceByExercise(outsider, middle.id)).toEqual({});
   });
 
-  it("does not merge unrelated variants with identical labels", () => {
-    record("2026-08-01", 40, { name: "Same label" });
+  it("compares repeated names but respects explicitly separated histories with identical labels", () => {
+    const first = record("2026-08-01", 40, { name: "Same label" });
     const different = record("2026-08-02", 80, { name: "Same label" });
+    expect(getSessionPrs(owner, different.id)).toEqual([{ exercise: "Same label", e1rm: 80, weight: 80, reps: 1 }]);
+    expect(getLastPerformanceByExercise(owner, different.id)[String(different.sets[0].id)]).toMatchObject({ sessionId: first.id, topWeight: 40 });
+    const separation = { mode: "detach" as const, observationIds: [different.sets[0].id] };
+    applyExerciseLink(owner, { ...separation, previewToken: previewExerciseLink(owner, separation).token, requestKey: crypto.randomUUID() });
     expect(getSessionPrs(owner, different.id)).toEqual([]);
     expect(getLastPerformanceByExercise(owner, different.id)).toEqual({});
   });

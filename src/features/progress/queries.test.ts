@@ -12,6 +12,10 @@ function quickRecord(owner:number,name:string,date="2026-10-06",catalogExerciseI
  history.finishQuickSession(owner,session.id);
  return {sessionId:session.id,exerciseId:identity.resolveSetExerciseIdentities(owner,session.id).get(added.sets[0].id)!.exerciseId};
 }
+// Deliberately separate histories are the exceptional discovery path after schema 6.
+function separateName(owner:number,name:string){
+ database.db.prepare("INSERT INTO exercise_name_aliases(user_id,name_key,family_key,exercise_id,state) VALUES (?,?, 'unknown',NULL,'blocked') ON CONFLICT(user_id,name_key,family_key) DO UPDATE SET exercise_id=NULL,state='blocked'").run(owner,name.toLowerCase());
+}
 beforeAll(async()=>{
  dir=fs.mkdtempSync(path.join(os.tmpdir(),"magni-progress-queries-"));vi.stubEnv("DB_PATH",path.join(dir,"test.sqlite"));
  database=await import("@/lib/db");history=await import("@/features/workouts/history-service");identity=await import("./identity");queries=await import("./queries");
@@ -37,6 +41,7 @@ it("opens a single quick exercise directly even when the workout has multiple re
 });
 it("does not resolve distinct same-name identities when a date filter shows only one workout",()=>{
  const owner=Number(database.db.prepare("INSERT INTO users(email,password_hash) VALUES ('single-filtered@example.test','hash')").run().lastInsertRowid);
+ separateName(owner,"band row");
  for(const [date,name] of [["2026-01-01","Band row"],["2026-10-06","band row"]] as const){
   const session=history.createQuickSession({userId:owner,newWorkout:true,date}).session;
   const added=history.addQuickExercise({userId:owner,sessionId:session.id,name,sets:[{reps:10,weight:10}]});
@@ -51,7 +56,7 @@ it("resolves only owned recorded history without changing any saved identities",
  const owner=Number(database.db.prepare("INSERT INTO users(email,password_hash) VALUES ('single-owned@example.test','hash')").run().lastInsertRowid);
  const other=Number(database.db.prepare("INSERT INTO users(email,password_hash) VALUES ('single-unrelated@example.test','hash')").run().lastInsertRowid);
  const known=quickRecord(owner,"Lateral raise");
- quickRecord(other,"Lateral raise");quickRecord(other,"Lateral raise");
+ separateName(other,"lateral raise");quickRecord(other,"Lateral raise");quickRecord(other,"Lateral raise");
  const empty=history.createQuickSession({userId:owner,newWorkout:true,date:"2026-10-06"}).session;
  history.addQuickExercise({userId:owner,sessionId:empty.id,name:"Lateral raise",sets:[{reps:10,weight:40}]});
  history.finishQuickSession(owner,empty.id);
@@ -70,6 +75,7 @@ it("resolves only owned recorded history without changing any saved identities",
 });
 it("counts exercise identities rather than workouts when two same-name exercises share a session",()=>{
  const owner=Number(database.db.prepare("INSERT INTO users(email,password_hash) VALUES ('single-session-distinct@example.test','hash')").run().lastInsertRowid);
+ separateName(owner,"row");
  const session=history.createQuickSession({userId:owner,newWorkout:true,date:"2026-10-06"}).session;
  for(let index=0;index<2;index++){
   const added=history.addQuickExercise({userId:owner,sessionId:session.id,name:"Row",sets:[{reps:10,weight:40}]});
@@ -96,23 +102,23 @@ it("keeps one reused identity together before paging when its frozen recorded la
  expect(second.nextCursor).toBeNull();
  expect(queries.listProgressExercises(owner,{sort:"name",limit:1,cursor:second.previousCursor!}).items).toEqual(first.items);
 });
-it("uses the same pin exclusions for singleton resolution and recorded-name candidates",()=>{
+it("keeps deliberately separate identities and candidates unchanged by pinning",()=>{
  const owner=Number(database.db.prepare("INSERT INTO users(email,password_hash) VALUES ('single-pinned@example.test','hash')").run().lastInsertRowid);
+ separateName(owner,"cable row");
  const first=quickRecord(owner,"Cable row");const second=quickRecord(owner,"Cable row");
- expect(queries.resolveUnlinkedExerciseId(owner,groupKey("cable row"))).toBeNull();
- identity.updateExercisePin(owner,{exerciseId:first.exerciseId,pinned:true});
- expect(queries.resolveUnlinkedExerciseId(owner,groupKey("cable row"))).toBe(second.exerciseId);
- expect(queries.listUnlinkedExercises(owner,groupKey("cable row")).items.map(row=>row.exerciseId)).toEqual([second.exerciseId]);
- expect(queries.listProgressExercises(owner).items.map(row=>row.key).sort()).toEqual([`e:${first.exerciseId}`,`e:${second.exerciseId}`].sort());
- identity.updateExercisePin(owner,{exerciseId:second.exerciseId,pinned:true});
- expect(queries.resolveUnlinkedExerciseId(owner,groupKey("cable row"))).toBeNull();
- expect(queries.listProgressExercises(owner).items).toHaveLength(2);
+ const before=queries.listProgressExercises(owner).items.map(({key,kind,historyCount})=>({key,kind,historyCount}));
+ for(const exerciseId of [first.exerciseId,second.exerciseId]) {
+  identity.updateExercisePin(owner,{exerciseId,pinned:true});
+  expect(queries.resolveUnlinkedExerciseId(owner,groupKey("cable row"))).toBeNull();
+  expect(new Set(queries.listUnlinkedExercises(owner,groupKey("cable row")).items.map(row=>row.exerciseId))).toEqual(new Set([first.exerciseId,second.exerciseId]));
+  expect(queries.listProgressExercises(owner).items.map(({key,kind,historyCount})=>({key,kind,historyCount}))).toEqual(before);
+ }
 });
 it("keeps a sole pinned exercise reachable from its previous recorded-name URL",()=>{
  const owner=Number(database.db.prepare("INSERT INTO users(email,password_hash) VALUES ('single-pinned-url@example.test','hash')").run().lastInsertRowid);
  const known=quickRecord(owner,"Single leg abducted DL");
  identity.updateExercisePin(owner,{exerciseId:known.exerciseId,pinned:true});
- expect(queries.listUnlinkedExercises(owner,groupKey("single leg abducted dl")).items).toEqual([]);
+ expect(queries.listUnlinkedExercises(owner,groupKey("single leg abducted dl")).items).toHaveLength(1);
  expect(queries.resolveUnlinkedExerciseId(owner,groupKey("single leg abducted dl"))).toBe(known.exerciseId);
 });
 it("keeps an existing recorded-name URL after an exercise is reused with its known identity",()=>{
@@ -132,11 +138,12 @@ it("only resolves an old recorded-name URL after confirmed linking when one iden
  expect(queries.resolveUnlinkedExerciseId(owner,groupKey("row"))).toBe(linked.targetExerciseId);
  const extra=quickRecord(owner,"Row");
  identity.updateExercisePin(owner,{exerciseId:extra.exerciseId,pinned:true});
- expect(queries.listUnlinkedExercises(owner,groupKey("row")).items).toEqual([]);
- expect(queries.resolveUnlinkedExerciseId(owner,groupKey("row"))).toBeNull();
+ expect(queries.listUnlinkedExercises(owner,groupKey("row")).items).toMatchObject([{exerciseId:extra.exerciseId}]);
+ expect(queries.resolveUnlinkedExerciseId(owner,groupKey("row"))).toBe(extra.exerciseId);
 });
 it("retains ambiguity outside a program filter or catalog-name search",()=>{
  const owner=Number(database.db.prepare("INSERT INTO users(email,password_hash) VALUES ('single-program-filter@example.test','hash')").run().lastInsertRowid);
+ separateName(owner,"row");
  const first=quickRecord(owner,"Row");const second=quickRecord(owner,"Row");
  const program=Number(database.db.prepare("INSERT INTO programs(user_id,name,is_active) VALUES (?,'Saved program',0)").run(owner).lastInsertRowid);
  database.db.prepare("UPDATE sessions SET program_id=? WHERE id=?").run(program,first.sessionId);
@@ -162,6 +169,7 @@ it("bounds home, search and alphabetical pages with 1000 exercise names",()=>{
 });
 it("groups unlinked labels for discovery only and returns exact observation candidates",()=>{
  const owner=Number(database.db.prepare("INSERT INTO users(email,password_hash) VALUES ('group-owner@example.test','hash')").run().lastInsertRowid);
+ separateName(owner,"same label");
  for(let i=0;i<25;i++) {const session=history.createQuickSession({userId:owner,newWorkout:true,date:"2026-10-01"}).session;
  const added=history.addQuickExercise({userId:owner,sessionId:session.id,name:i%2?"Same label":"same label",sets:[{reps:10,weight:0}]});
  history.saveActualSet({userId:owner,sessionId:session.id,setId:added.sets[0].id,actualReps:10,actualWeight:0});history.finishQuickSession(owner,session.id);}
@@ -170,8 +178,8 @@ it("groups unlinked labels for discovery only and returns exact observation cand
  expect(queries.listUnlinkedExercises(owner,rows[0].key,{cursor:candidates.nextCursor!}).items).toHaveLength(5);
  identity.updateExercisePin(owner,{exerciseId:candidates.items[0].exerciseId,pinned:true});
  const remaining=queries.listProgressExercises(owner,{search:"same label"}).items.find(row=>row.kind==="unlinked")!;
- expect(remaining.historyCount).toBe(24);
- expect(queries.listUnlinkedExercises(owner,remaining.key).items.some(row=>row.id===candidates.items[0].id)).toBe(false);
+ expect(remaining.historyCount).toBe(25);
+ expect(queries.listUnlinkedExercises(owner,remaining.key).items.some(row=>row.id===candidates.items[0].id)).toBe(true);
 });
 it("retains distinct same-day sessions, missing load and zero-load attempts after explicit linking",()=>{
  const owner=Number(database.db.prepare("INSERT INTO users(email,password_hash) VALUES ('detail-owner@example.test','hash')").run().lastInsertRowid);
