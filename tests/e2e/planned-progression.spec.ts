@@ -26,7 +26,8 @@ async function nextScheduledWorkout(page: Page) {
 async function saveSet(page: Page, number: number, reps: string) {
   await page.getByRole("spinbutton", { name: `Dumbbell row set ${number} reps`, exact: true }).fill(reps);
   await page.getByRole("button", { name: `Save set ${number}`, exact: true }).click();
-  await expect(page.getByRole("button", { name: `Save set ${number}`, exact: true })).toHaveAttribute("aria-pressed", "true");
+  await expect(page.getByRole("button", { name: `Save set ${number}`, exact: true })).toHaveCount(0);
+  await expect(page.getByRole("button", { name: `Undo set ${number}`, exact: true })).toBeEnabled();
 }
 
 test("custom set drafts recover and double progression advances once from real UI logging", async ({ page, context }, info) => {

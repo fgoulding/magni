@@ -157,7 +157,11 @@ entered values. Closed summaries still show pending, saving, failure or conflict
 states. Saving the final set leaves its controls and Undo visible.
 
 Set rows have visible Reps and Weight (unit) labels above generously sized numeric
-inputs, separate save feedback and an explicit Undo action. Fields and actions
+inputs, separate save feedback and an explicit Undo action. A saved row replaces
+its Save control with text Undo in the same action slot; editing a saved row
+shows Save and Undo together. At normal phone sizes, inputs and actions share
+one line. Keep the controls mounted across state changes to preserve focus.
+Fields and actions
 wrap when space is tight or text is enlarged; never squeeze decimal digits behind
 native input steppers. Use `text-muted` for meaningful secondary labels and at
 least 44px targets. Keep authored targets, roles, effort, rest, tempo, notes,
@@ -175,7 +179,14 @@ Put Today and the arrows together on the next row. Week arrows move one week
 and cross month boundaries; Month arrows move one month and stay in Month mode.
 Today returns to the account's current date while keeping the selected view.
 Omit global selection and undo controls from this compact toolbar. Keep Month as a separate grid. Icon controls stay at least 44px without taking
-space away from names when text is enlarged.
+space away from names when text is enlarged. Tight Week rows show at most two
+title lines, with the full name available on opening. Days with several workouts
+open a complete day list instead of stretching the overview. Month cells use one
+whole-cell target: single-workout days open that workout, multiple-workout days
+open the day list, and empty dates open their week. Date and status/count fit
+inside a roughly 56px cell. Normal Week and six-row Month overviews must fit an
+iPhone 16 browser viewport without scrolling; enlarged text and open details
+may scroll normally instead of clipping content.
 
 **Program creation:** `/programs/editor` is a dedicated workspace designed for a
 desktop screen. At desktop widths, use a wide canvas with a week/day outline

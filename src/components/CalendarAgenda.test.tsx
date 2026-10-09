@@ -1,13 +1,27 @@
 // @vitest-environment jsdom
-import { cleanup, fireEvent, render, screen, within } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen, within } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { CalendarAgenda, type AgendaEvent } from "./CalendarAgenda";
 vi.mock("next/navigation",()=>({useRouter:()=>({refresh:vi.fn()})}));
 vi.mock("next/link",()=>({default:({children,href}:{children:React.ReactNode;href:string})=><a href={href}>{children}</a>}));
 const source:AgendaEvent={key:"occurrence-1",occurrenceId:1,revision:1,date:"2090-06-05",title:"Lower",dayName:"Lower",href:"/calendar?workout=occurrence-1",status:"scheduled"};
-beforeEach(()=>{HTMLDialogElement.prototype.showModal=function(){this.setAttribute("open","");};vi.stubGlobal("fetch",vi.fn());});
+beforeEach(()=>{HTMLDialogElement.prototype.showModal=function(){this.setAttribute("open","");};HTMLDialogElement.prototype.close=function(){this.removeAttribute("open");};vi.stubGlobal("fetch",vi.fn());});
 afterEach(()=>{cleanup();vi.unstubAllGlobals();});
 describe("Calendar occupied-date choices",()=>{
+  it.each(["button", "escape"])("keeps a pending action and later failure visible after %s dismissal", async method=>{
+    let resolve!: (value: Response) => void;
+    vi.mocked(fetch).mockReturnValue(new Promise<Response>(done=>{resolve=done;}));
+    render(<CalendarAgenda compact weekStart="2090-06-05" today="2090-06-05" events={[source]}/>);
+    fireEvent.click(screen.getByRole("button",{name:"More options for Lower"}));
+    fireEvent.click(screen.getByRole("button",{name:"Skip this workout"}));
+    const dialog=screen.getByRole("dialog");
+    if(method==="button")fireEvent.click(within(dialog).getByRole("button",{name:"Close calendar action"}));
+    else fireEvent(dialog,new Event("cancel",{bubbles:false,cancelable:true}));
+    expect(dialog.hasAttribute("open")).toBe(true);
+    await act(async()=>resolve(new Response(JSON.stringify({error:"Temporary save failure"}),{status:503})));
+    expect(within(screen.getByRole("dialog")).getByRole("alert").textContent).toBe("Temporary save failure");
+    expect((screen.getByRole("button",{name:"Skip this workout"}) as HTMLButtonElement).disabled).toBe(false);
+  });
   it("collapses workout descriptions while retaining names and rearrangement actions",()=>{
     render(<CalendarAgenda compact weekStart="2090-06-05" today="2090-06-05" events={[{...source,programName:"Build program",summary:"Squat 3 by 5 at 200 lb"}]}/>);
     expect(screen.getByText("Lower")).toBeTruthy();

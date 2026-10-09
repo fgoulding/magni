@@ -1,5 +1,5 @@
-/* Keep containment around stable controls, outside conditional save/Undo UI.
-   Chromium can lose sibling layout when a contained row inserts recovery actions. */
+/* The entry/action tree stays mounted. Conditional recovery content sits outside
+   containment because Chromium can lose layout when contained children remount. */
 .entryContainer {
   container-type: inline-size;
 }
@@ -8,11 +8,35 @@
   display: grid;
   grid-template-columns: minmax(0, 1fr);
   align-items: end;
-  gap: 0.5rem;
+  gap: 6px;
 }
 
 .entries input {
   font-size: max(16px, 1rem);
+}
+
+.actions {
+  grid-column: 1 / -1;
+  justify-self: end;
+  display: flex;
+  align-items: end;
+  gap: 6px;
+}
+
+.actions [hidden],
+.concealed {
+  display: none;
+}
+
+.save {
+  width: 44px;
+  height: 44px;
+}
+
+.undo {
+  min-width: 4rem;
+  min-height: 44px;
+  padding: 0.25rem 0.375rem;
 }
 
 @container (min-width: 14rem) {
@@ -21,19 +45,21 @@
   }
 }
 
-.save {
-  grid-column: 1 / -1;
-  justify-self: end;
-  width: 44px;
-  height: 44px;
+/* Reserve space for decimal digits and native steppers before adding actions. */
+@container (min-width: 18rem) {
+  .entries[data-action-count="1"] {
+    grid-template-columns: minmax(80px, 1fr) minmax(100px, 1.2fr) auto;
+  }
+  .entries[data-action-count="1"] .actions {
+    grid-column: auto;
+  }
 }
 
-/* Text-relative threshold: keep numeric content roomy when text is enlarged. */
-@container (min-width: 18rem) {
-  .entries {
-    grid-template-columns: minmax(90px, 1fr) minmax(100px, 1fr) 44px;
+@container (min-width: 19.125rem) {
+  .entries[data-action-count="2"] {
+    grid-template-columns: minmax(80px, 1fr) minmax(100px, 1.2fr) auto;
   }
-  .save {
+  .entries[data-action-count="2"] .actions {
     grid-column: auto;
   }
 }

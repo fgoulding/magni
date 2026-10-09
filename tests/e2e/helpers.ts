@@ -170,7 +170,8 @@ export async function completeVisibleWorkout(page: Page, startButtonName = "Star
   for (const number of [1, 2, 3]) {
     const save = page.getByRole("button", { name: `Save set ${number}`, exact: true });
     await save.click();
-    await expect(save).toHaveAttribute("aria-pressed", "true");
+    await expect(save).toHaveCount(0);
+    await expect(page.getByRole("button", { name: `Undo set ${number}`, exact: true })).toBeEnabled();
   }
   await expect(page.getByRole("button", { name: /^Undo set \d+$/ })).toHaveCount(3);
   await page.getByRole("button", { name: "Finish Workout" }).click();

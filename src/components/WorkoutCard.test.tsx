@@ -97,7 +97,8 @@ describe("WorkoutCard", () => {
     await act(async () => acknowledge(jsonResponse({ success: true })));
     expect(squat).toHaveAttribute("aria-expanded", "true");
     expect(screen.getByRole("button", { name: "Expand Bench Press" })).toHaveAttribute("aria-expanded", "false");
-    expect(within(squat.closest("section")!).getByRole("button", { name: "Save set 1" })).toHaveAttribute("aria-pressed", "true");
+    expect(within(squat.closest("section")!).queryByRole("button", { name: "Save set 1" })).not.toBeInTheDocument();
+    expect(within(squat.closest("section")!).getByRole("button", { name: "Undo set 1" })).toBeEnabled();
   });
   it("offers an explicit unchanged-max finish only after a missing-template response", async () => {
     const user = userEvent.setup();

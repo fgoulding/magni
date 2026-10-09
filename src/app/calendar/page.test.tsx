@@ -7,6 +7,7 @@ import { createUnexpiredAuthSession } from "@/__tests__/auth-fixture";
 import { WorkoutReuse } from "@/components/WorkoutReuse";
 import { WorkoutCard } from "@/components/WorkoutCard";
 import { CalendarAgenda } from "@/components/CalendarAgenda";
+import { CalendarDayButton } from "@/components/CalendarDayButton";
 import { SessionRecapView } from "@/components/SessionRecapView";
 
 const cookieMock = vi.hoisted(() => {
@@ -511,7 +512,7 @@ describe("CalendarPage", () => {
     const rendered = await calendarPage.default({
       searchParams: Promise.resolve({ month: "2026-06" }),
     });
-    const links = collectLinks(rendered);
+    const links = [...collectLinks(rendered), ...collectComponentProps(rendered, CalendarDayButton).flatMap(day => day.events.map(event => event.href))];
 
     const heldSlots = occurrences.getOccurrences(userId).filter(row => row.program_id === heldProgram.programId);
     expect(heldSlots.map(row => [row.day_name, row.scheduled_date])).toEqual([

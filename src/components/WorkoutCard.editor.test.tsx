@@ -24,6 +24,12 @@ function session(logged = false, unit = "lb"): SessionResponse {
   })) };
 }
 const edit = (name: string, value: string) => fireEvent.change(screen.getByRole("spinbutton", { name }), { target: { value } });
+async function expectSetSaved(number: number) {
+  await waitFor(() => {
+    expect(screen.queryByRole("button", { name: `Save set ${number}` })).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: `Undo set ${number}` })).toBeEnabled();
+  });
+}
 function mockServer(initial = session(), save: (url: string, init?: RequestInit) => Promise<Response> = async () => response({ success: true })) {
   const fetchMock = vi.fn((url: string, init?: RequestInit) => url.includes("/sessions/current") ? Promise.resolve(response(initial)) : save(url, init));
   vi.stubGlobal("fetch", fetchMock);
@@ -57,7 +63,7 @@ describe("custom workout set logging and draft recovery", () => {
     await screen.findByRole("spinbutton", { name: "Row set 1 reps" });
     edit("Row set 1 reps", "10");
     fireEvent.click(screen.getByRole("button", { name: "Save set 1" }));
-    await waitFor(() => expect(screen.getByRole("button", { name: "Save set 1" })).toHaveAttribute("aria-pressed", "true"));
+    await expectSetSaved(1);
     expect(save).toHaveBeenCalledTimes(1);
     expect(JSON.parse(save.mock.calls[0][1]!.body as string)).toEqual({ setId: 1, actualReps: 10, actualWeight: 40, expectedActual: { reps: null, weight: null } });
     fireEvent.click(screen.getByRole("button", { name: "Finish Workout" }));
@@ -96,7 +102,7 @@ describe("custom workout set logging and draft recovery", () => {
     expect(screen.getByRole("spinbutton", { name: "Row set 1 reps" })).toHaveValue(8);
     expect(screen.getByRole("button", { name: "Save set 1" })).toHaveAttribute("aria-pressed", "false");
     fireEvent.click(screen.getByRole("button", { name: "Save set 1" }));
-    await waitFor(() => expect(screen.getByRole("button", { name: "Save set 1" })).toHaveAttribute("aria-pressed", "true"));
+    await expectSetSaved(1);
     expect(JSON.parse(save.mock.calls[1][1]!.body as string)).toMatchObject({ actualReps: 8, expectedActual: { reps: 7, weight: 40 } });
   });
 
@@ -113,7 +119,7 @@ describe("custom workout set logging and draft recovery", () => {
     render(<WorkoutCard {...props} />);
     expect(await screen.findByRole("spinbutton", { name: "Row set 2 reps" })).toHaveValue(11);
     fireEvent.click(screen.getByRole("button", { name: "Save set 2" }));
-    await waitFor(() => expect(screen.getByRole("button", { name: "Save set 2" })).toHaveAttribute("aria-pressed", "true"));
+    await expectSetSaved(2);
     expect(JSON.parse(save.mock.calls[1][1].body)).toEqual({ setId: 2, actualReps: 11, actualWeight: 42.5, expectedActual: { reps: null, weight: null } });
   });
 
@@ -152,7 +158,7 @@ describe("custom workout set logging and draft recovery", () => {
     expect(screen.getByRole("spinbutton", { name: "Pull-up set 1 weight (kg)" })).toHaveValue(5);
     edit("Pull-up set 1 reps", "10");
     fireEvent.click(screen.getByRole("button", { name: "Save set 1" }));
-    await waitFor(() => expect(screen.getByRole("button", { name: "Save set 1" })).toHaveAttribute("aria-pressed", "true"));
+    await expectSetSaved(1);
     fireEvent.click(screen.getByRole("button", { name: "Finish Workout" }));
     expect(await screen.findByText("50 kg total")).toBeInTheDocument();
   });
@@ -187,7 +193,7 @@ describe("custom workout set logging and draft recovery", () => {
     expect(await screen.findByRole("spinbutton", { name: "Row set 1 reps" })).toHaveValue(10);
     expect(screen.getByText(/Device storage is unavailable/)).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "Save set 1" }));
-    await waitFor(() => expect(screen.getByRole("button", { name: "Save set 1" })).toHaveAttribute("aria-pressed", "true"));
+    await expectSetSaved(1);
   });
 
   it("does not acknowledge a truncated successful completion response", async () => {
@@ -239,7 +245,7 @@ describe("custom workout set logging and draft recovery", () => {
     expect(screen.getByRole("spinbutton", { name: "Row set 1 reps" })).toHaveValue(8);
     expect(saves[0]).toMatchObject({ expectedActual: { reps: 9, weight: 40 } });
     fireEvent.click(screen.getByRole("button", { name: "Keep my set 1 edits" }));
-    await waitFor(() => expect(screen.getByRole("button", { name: "Save set 1" })).toHaveAttribute("aria-pressed", "true"));
+    await expectSetSaved(1);
     expect(saves[1]).toMatchObject({ actualReps: 8, expectedActual: { reps: 11, weight: 40 } });
   });
 

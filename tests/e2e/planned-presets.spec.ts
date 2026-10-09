@@ -78,13 +78,18 @@ async function start(page: Page, fromCalendar = false): Promise<PlannedSession> 
 
 async function perform(page: Page, actualReps?: number[]): Promise<Completion> {
   const reps = page.getByRole("spinbutton", { name: / set \d+ reps$/ });
-  const saves = page.getByRole("button", { name: /^Save set \d+$/ });
+  const rows = page.locator("[data-set-log-row]");
   const count = await reps.count();
   expect(count).toBeGreaterThan(0);
+  await expect(rows).toHaveCount(count);
   for (let index = 0; index < count; index++) {
     if (actualReps) await reps.nth(index).fill(String(actualReps[index]));
-    await saves.nth(index).click();
-    await expect(saves.nth(index)).toHaveAttribute("aria-pressed", "true");
+    const row = rows.nth(index);
+    const save = row.getByRole("button", { name: /^Save set \d+$/ });
+    await save.click();
+    await expect(save).toHaveCount(0);
+    await expect(row.getByText("Saved", { exact: true })).toBeVisible();
+    await expect(row.getByRole("button", { name: /^Undo set \d+$/ })).toBeEnabled();
   }
   const fromCalendar = new URL(page.url()).pathname === "/calendar";
   const response = page.waitForResponse(item => item.url().endsWith("/complete-and-advance") && item.request().method() === "POST");

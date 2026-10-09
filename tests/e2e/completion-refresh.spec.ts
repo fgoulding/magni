@@ -20,7 +20,8 @@ async function loggedWorkout(page: Page, preset = "linear", fromEditor = false) 
   for (let index = 0; index < 3; index++) {
     const save = page.getByRole("button", { name: `Save set ${index + 1}`, exact: true });
     await save.click();
-    await expect(save).toHaveAttribute("aria-pressed", "true");
+    await expect(save).toHaveCount(0);
+    await expect(page.getByRole("button", { name: `Undo set ${index + 1}`, exact: true })).toBeEnabled();
   }
 }
 

@@ -100,7 +100,11 @@ test("Calendar touch drag offers the same explicit occupied-date choice",async({
   // Model the next separate human tap, rather than that browser-generated click.
   await page.waitForTimeout(60);
   await page.getByRole("button",{name:"Move here · keep both"}).click();
-  await expect(page.locator('[data-calendar-date="2090-06-06"]').locator("article")).toHaveCount(2);
+  await page.getByRole("button",{name:"2 workouts on Tue, Jun 6",exact:true}).click();
+  const dayList=page.getByRole("dialog",{name:"Workouts on Tue, Jun 6",exact:true});
+  await expect(dayList.getByRole("link",{name:/^Scheduled:/})).toHaveCount(2);
+  await expect(dayList.getByRole("link",{name:/Lower/})).toBeVisible();
+  await expect(dayList.getByRole("link",{name:/Upper/})).toBeVisible();
 });
 
 test("Calendar retry keeps the same command ID after a lost save response",async({page})=>{
@@ -122,6 +126,9 @@ test("Calendar retry keeps the same command ID after a lost save response",async
 test("Calendar Add returns to the selected week and departure scroll",async({page},info)=>{
   await fixture(page);
   const returnTo="/calendar?month=2090-06&date=2090-06-05";
+  // Normal phone calendars fit without scrolling. Enlarged text supplies a real
+  // scrollable page while preserving the return-to-departure-position coverage.
+  await page.evaluate(()=>{document.documentElement.style.fontSize="32px";});
   const add=page.getByRole("link",{name:"Add workout on 2090-06-11"});
   await add.scrollIntoViewIfNeeded();
   // Hydration can reveal the iPhone install hint after scrolling into view.
@@ -208,7 +215,7 @@ test("Week uses one compact header and opens workout details, with a separate Mo
   const month=page.getByRole("region",{name:"Month calendar",exact:true});
   await expect(month).toBeVisible();
   await expect(page.getByRole("region",{name:"Week calendar",exact:true})).toHaveCount(0);
-  const date=month.getByRole("link",{name:"See week containing 2090-06-06"});
+  const date=month.getByRole("link",{name:"See week containing 2090-06-09"});
   const box=await date.boundingBox();expect(box!.width).toBeGreaterThanOrEqual(44);expect(box!.height).toBeGreaterThanOrEqual(44);
   await month.getByRole("link",{name:"Scheduled: Calendar strength - Lower on 2090-06-05",exact:true}).click();
   await expect(page.getByRole("dialog")).toBeVisible();
@@ -221,7 +228,7 @@ test("Week uses one compact header and opens workout details, with a separate Mo
   await page.screenshot({path:info.outputPath("calendar-month-dark-large.png"),fullPage:true,animations:"disabled"});
   await date.click();
   await expect(switcher.getByRole("link",{name:"Week",exact:true})).toHaveAttribute("aria-current","page");
-  await expect(page).toHaveURL("/calendar?month=2090-06&date=2090-06-06");
+  await expect(page).toHaveURL("/calendar?month=2090-06&date=2090-06-09");
   await expect(page.getByRole("link",{name:"Expand details",exact:true})).toHaveCount(0);
   expect(await page.evaluate(()=>document.documentElement.scrollWidth<=window.innerWidth)).toBe(true);
   expect(await lower.getByRole("heading",{name:"Lower",exact:true}).evaluate(heading=>heading.getBoundingClientRect().height/parseFloat(getComputedStyle(heading).lineHeight))).toBeLessThanOrEqual(1.1);

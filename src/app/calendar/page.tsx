@@ -18,6 +18,7 @@ import { CalendarNavigation } from "@/components/CalendarNavigation";
 import { withCalendarReturn } from "@/features/calendar/navigation";
 import { CalendarAgenda } from "@/components/CalendarAgenda";
 import { CalendarStatus } from "@/components/CalendarStatus";
+import { CalendarDayButton } from "@/components/CalendarDayButton";
 
 type CalendarPageProps = {
   searchParams?: Promise<{ month?: string | string[]; date?: string | string[]; train?: string | string[]; workout?: string | string[]; view?: string | string[]; compact?: string | string[] }>;
@@ -286,7 +287,7 @@ export default async function CalendarPage({ searchParams }: CalendarPageProps) 
   };
 
   return (
-    <div className="safe-x flex flex-col gap-4 py-5">
+    <div data-calendar-page className="safe-x flex flex-col gap-2 py-2">
       <CalendarNavigation returnTo={returnTo} />
       <header className="flex items-center justify-between gap-2">
         <h1 className={`display min-w-0 ${view === "week" ? "text-2xl leading-tight" : "text-3xl"}`}>{view === "week" ? `${WEEK_DATE_FORMATTER.format(weekStart)} – ${WEEK_DATE_FORMATTER.format(weekEnd)}` : MONTH_FORMATTER.format(monthStart)}</h1>
@@ -309,63 +310,53 @@ export default async function CalendarPage({ searchParams }: CalendarPageProps) 
       </section>
 
       <section aria-label="Month calendar" hidden={view !== "month"} className="overflow-hidden rounded-xl border border-line bg-surface shadow-sm">
-        <p className="border-b border-line px-3 py-2 text-sm text-muted">Open a workout, or tap a date to see its week.</p>
+        <p className="sr-only">Open a workout, or tap an empty date to see its week. Days with several workouts open a list.</p>
         <div className="grid grid-cols-7 border-b border-line bg-surface-muted">
           {WEEKDAY_LABELS.map((label) => (
-            <div key={label} className="px-2 py-2 text-center text-xs font-semibold text-muted">
+            <div key={label} className="py-1 text-center text-xs font-semibold text-muted">
               {label}
             </div>
           ))}
         </div>
         <div className="grid grid-cols-7">
           {Array.from({ length: leadingBlanks }, (_, index) => (
-            <div key={`blank-${index}`} className="min-h-24 border-b border-r border-line bg-surface-muted" />
+            <div key={`blank-${index}`} className="min-h-14 border-b border-r border-line bg-surface-muted" />
           ))}
           {monthDays.map((date) => {
             const dateKey = toLocalDateKey(date);
             const dayEvents = eventsByDate.get(dateKey) ?? [];
             const summaries = summarizeDayEvents(dayEvents);
             const isToday = dateKey === todayKey;
+            const cellClass = "touch-target flex min-h-14 w-full min-w-0 flex-col items-center justify-center gap-1 rounded-lg py-1 text-center focus-visible:outline-2 focus-visible:outline-offset-[-2px] focus-visible:outline-brand";
+            const cellContents = <>
+              <span className={`flex h-6 min-w-6 items-center justify-center rounded-full font-display text-sm font-semibold ${isToday ? "bg-brand text-white" : "text-muted"}`}>{date.getDate()}</span>
+              {dayEvents.length > 0 ? <span aria-hidden="true" className="flex min-h-4 items-center justify-center gap-1">
+                <CalendarStatus status={dayEvents[0].kind}/>{dayEvents.length > 1 ? <span className="text-xs font-semibold text-muted">{dayEvents.length}</span> : null}
+              </span> : <span aria-hidden="true" className="h-4"/>}
+              {dayEvents.length > 0 ? <span className="sr-only">{summaries.map(summary=>summary.label).join(", ")}</span> : null}
+            </>;
 
             return (
               <div
                 key={dateKey}
-                className={`min-h-24 min-w-0 border-b border-r border-line ${isToday ? "bg-brand-soft" : ""}`}
+                data-month-date={dateKey}
+                className={`min-h-14 min-w-0 border-b border-r border-line ${isToday ? "bg-brand-soft" : ""}`}
               >
-                <Link prefetch={false}
-                  href={`${monthHref(monthStart)}&date=${dateKey}`}
+                {dayEvents.length > 1 ? <CalendarDayButton date={dateKey} events={dayEvents.map(event=>({...event,href:`${calendarHref(monthStart,event.key)}${viewSuffix}`}))} returnTo={returnTo} className={cellClass}>{cellContents}</CalendarDayButton> : <Link prefetch={false}
+                  href={dayEvents.length===1 ? `${calendarHref(monthStart,dayEvents[0].key)}${viewSuffix}` : `${monthHref(monthStart)}&date=${dateKey}`}
                   scroll={false}
-                  aria-label={`See week containing ${dateKey}`}
-                  className={`touch-target flex w-full items-center justify-center text-sm font-display font-semibold ${
-                    isToday ? "rounded-full bg-brand text-white" : "text-muted"
-                  }`}
+                  aria-label={dayEvents.length===1 ? `${dayEvents[0].title} on ${dateKey}` : `See week containing ${dateKey}`}
+                  className={cellClass}
                 >
-                  {date.getDate()}
-                </Link>
-                <div className="flex flex-wrap justify-center gap-0" aria-label={`${dateKey} workouts`}>
-                  {dayEvents.map((event) => (
-                    <Link prefetch={false}
-                      key={event.key}
-                      href={`${calendarHref(monthStart, event.key)}${viewSuffix}`}
-                      scroll={false}
-                      title={event.title}
-                      aria-label={`${event.title} on ${event.date}`}
-                      className="touch-target inline-flex items-center justify-center rounded-full border border-transparent hover:border-line focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-brand"
-                    >
-                      <CalendarStatus status={event.kind} />
-                    </Link>
-                  ))}
-                  {dayEvents.length === 0 ? null : (
-                    <span className="sr-only">{summaries.map((summary) => summary.label).join(", ")}</span>
-                  )}
-                </div>
+                  {cellContents}
+                </Link>}
               </div>
             );
           })}
         </div>
       </section>
 
-      <div className="flex flex-wrap items-center gap-x-4 gap-y-2 px-1">
+      {visibleEvents.length===0 ? <p className="px-1 text-sm text-muted">No workouts scheduled for this {view}.</p> : <div className="flex flex-wrap items-center gap-x-3 gap-y-1 px-1">
         {[
           { label: "Done", status: "completed" },
           { label: "Scheduled", status: "scheduled" },
@@ -377,7 +368,7 @@ export default async function CalendarPage({ searchParams }: CalendarPageProps) 
             {item.label}
           </span>
         ))}
-      </div>
+      </div>}
 
       {selectedEvent ? (
         <div className="fixed inset-0 z-[60] flex items-end justify-center bg-black/35 px-3 pt-[calc(0.75rem+env(safe-area-inset-top))] pb-[calc(5.5rem+env(safe-area-inset-bottom))] sm:items-center sm:py-3">
@@ -443,11 +434,6 @@ export default async function CalendarPage({ searchParams }: CalendarPageProps) 
         </div>
       ) : null}
 
-      {visibleEvents.length === 0 ? (
-        <section className="rounded-xl border border-line bg-surface p-4 text-sm leading-6 text-muted shadow-sm">
-          No workouts scheduled for this {view}.
-        </section>
-      ) : null}
     </div>
   );
 }
