@@ -20,7 +20,16 @@ async function screenshot(page: Page, info: TestInfo, name: string) {
   await page.screenshot({ path: info.outputPath(`${name}.png`), fullPage: true, animations: "disabled", caret: "initial" });
 }
 
-test("one quick exercise shows its result without asking to group records, including old links", async ({ page }, info) => {
+test("one quick exercise shows its result without asking to group records, including old links", async ({ page: initialPage }, info) => {
+  let page = initialPage;
+  async function openLegacyLink(href: string) {
+    // These are saved inbound URLs. Start each in a fresh authenticated tab so
+    // a development HMR client cannot reload the departing page during compile.
+    const incoming = await page.context().newPage();
+    await page.close();
+    page = incoming;
+    await page.goto(href);
+  }
   await registerViaApi(page, "single-exercise-progress");
   const name = "Single leg abducted DL";
   const recentDate = new Date(Date.now() - 2 * 86_400_000).toISOString().slice(0, 10);
@@ -48,10 +57,10 @@ test("one quick exercise shows its result without asking to group records, inclu
 
   const oldKey = `u:${Buffer.from(name.toLowerCase()).toString("base64url")}`;
   const returnTo = `/history?exercise=${encodeURIComponent(oldKey)}&period=all&metric=load%3Alb`;
-  await page.goto(returnTo);
+  await openLegacyLink(returnTo);
   await expect(page.getByRole("region", { name: "Exercise chart", exact: true })).toBeVisible();
   await expect(page.getByRole("combobox", { name: "Chart metric", exact: true })).toHaveValue("load:lb");
-  await page.goto(`/history/exercises/${encodeURIComponent(oldKey)}?cursor=old-name-page&returnTo=${encodeURIComponent(returnTo)}`);
+  await openLegacyLink(`/history/exercises/${encodeURIComponent(oldKey)}?cursor=old-name-page&returnTo=${encodeURIComponent(returnTo)}`);
   await expect(page).toHaveURL(/\/history\/exercises\/e%3A/);
   expect(new URL(page.url()).searchParams.has("cursor")).toBe(false);
   await expect(page.getByRole("heading", { name, exact: true })).toBeVisible();
@@ -59,7 +68,7 @@ test("one quick exercise shows its result without asking to group records, inclu
   // The separate grouping journey below exercises the pin button interaction.
   const exerciseId = decodeURIComponent(new URL(page.url()).pathname.split("/").at(-1)!).slice(2);
   expect((await page.request.post("/api/progress/pins", { data: { exerciseId, pinned: true } })).ok()).toBe(true);
-  await page.goto(`/history/exercises/${encodeURIComponent(oldKey)}?returnTo=${encodeURIComponent(returnTo)}`);
+  await openLegacyLink(`/history/exercises/${encodeURIComponent(oldKey)}?returnTo=${encodeURIComponent(returnTo)}`);
   await expect(page).toHaveURL(/\/history\/exercises\/e%3A/);
   await expect(page.getByRole("button", { name: "Unpin exercise", exact: true })).toBeVisible();
   expect((await page.request.post("/api/progress/pins", { data: { exerciseId, pinned: false } })).ok()).toBe(true);
@@ -69,7 +78,7 @@ test("one quick exercise shows its result without asking to group records, inclu
 
   // An older same-name workout joins the exercise, while an explicit date filter still applies.
   await completedWorkout(page, "Older workout", "2020-01-02", [name], 20);
-  await page.goto(`/history?exercise=${encodeURIComponent(oldKey)}&period=4w`);
+  await openLegacyLink(`/history?exercise=${encodeURIComponent(oldKey)}&period=4w`);
   await expect(page.getByText("Keep matching records separate", { exact: true })).toHaveCount(0);
   await expect(page.getByRole("region", { name: "Exercise chart", exact: true })).toBeVisible();
   await expect(page.getByRole("list", { name: "Recent exercise workouts" }).getByRole("listitem")).toHaveCount(1);
@@ -133,9 +142,15 @@ test("Progress stays bounded while finder pages replace and old names are direct
   await page.getByRole("button", { name: "Search", exact: true }).click();
   await expect(page.getByText("No matches for “no-matching-exercise” in this scope.")).toBeVisible();
   await screenshot(page, info, "no-matches");
-  await page.goto("/history?lift=Exercise%20001");
-  await expect(page).toHaveURL(/\/history\/exercises\?q=Exercise%20001/);
-  await expect(page.getByTestId("progress-exercise-row")).toHaveCount(1);
+  const legacyPage = await page.context().newPage();
+  await page.close();
+  try {
+    await legacyPage.goto("/history?lift=Exercise%20001");
+    await expect(legacyPage).toHaveURL(/\/history\/exercises\?q=Exercise%20001/);
+    await expect(legacyPage.getByTestId("progress-exercise-row")).toHaveCount(1);
+  } finally {
+    await legacyPage.close();
+  }
 });
 
 test("explicit selected workouts connect, survive a lost save, pin, and separate without changing actuals", async ({ page }, info) => {
