@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { expect, test, type Page, type TestInfo } from "@playwright/test";
+import { expect, test, type Page, type Request, type TestInfo } from "@playwright/test";
 import { registerViaApi } from "./helpers";
 
 async function completedWorkout(page: Page, name: string, date: string, names: string[], weight = 20, numberOfSets = 1, unit: "kg" | "lb" = "kg") {
@@ -199,13 +199,60 @@ test("explicit selected workouts connect, survive a lost save, pin, and separate
   await page.getByRole("link", { name: "Edit included workouts" }).click();
   await page.getByRole("checkbox").first().check();
   await page.getByRole("button", { name: "Review selected workouts" }).click();
+  const isFollowRefresh = (request: Request) => new URL(request.url()).pathname === "/history/follow"
+    && request.headers().rsc === "1" && request.headers()["next-router-prefetch"] !== "1";
+  const separateRefresh = page.waitForResponse(response => isFollowRefresh(response.request()));
   await page.getByRole("button", { name: "Keep selected records separate" }).click();
   await expect(page.getByRole("heading", { name: "Selected records kept separate" })).toBeVisible();
-  await page.getByRole("button", { name: "Undo grouping change" }).click();
-  await expect(page.getByRole("heading", { name: "Grouping change undone" })).toBeVisible();
+  expect(await (await separateRefresh).finished()).toBeNull();
+
+  // Exercise the real navigation while Undo's refresh is still pending. A
+  // browser-level goto bypasses Next's navigation queue and can abort the
+  // refresh into its full-page fallback in WebKit.
+  let releaseRefresh!: () => void;
+  let markRefreshHeld!: () => void;
+  const refreshGate = new Promise<void>(resolve => { releaseRefresh = resolve; });
+  const refreshHeld = new Promise<void>(resolve => { markRefreshHeld = resolve; });
+  await page.route("**/history/follow?**", async route => {
+    if (!isFollowRefresh(route.request())) return route.continue();
+    markRefreshHeld();
+    await refreshGate;
+    await route.continue();
+  });
+  const undoRefresh = page.waitForResponse(response => isFollowRefresh(response.request()));
+  const navigationPaths: string[] = [];
+  let leftFollow = false;
+  page.on("framenavigated", frame => {
+    if (frame !== page.mainFrame()) return;
+    const pathname = new URL(frame.url()).pathname;
+    if (pathname !== "/history/follow") leftFollow = true;
+    if (leftFollow) navigationPaths.push(pathname);
+  });
+  try {
+    await page.getByRole("button", { name: "Undo grouping change" }).click();
+    await refreshHeld;
+    await expect(page.getByRole("heading", { name: "Grouping change undone" })).toBeVisible();
+    await page.getByRole("link", { name: "Back to records", exact: true }).first().click();
+    releaseRefresh();
+    const response = await undoRefresh;
+    expect(response.ok()).toBe(true);
+    expect(await response.finished()).toBeNull();
+    await expect(page.getByRole("heading", { name: "Band row — deliberate comparison", exact: true })).toBeVisible();
+    await expect(page.getByText("10 reps · 0 kg", { exact: true })).toHaveCount(2);
+  } finally {
+    releaseRefresh();
+    await page.unroute("**/history/follow?**");
+  }
   const after = await Promise.all([first, second].map(async id => (await page.request.get(`/api/sessions/${id}`)).json()));
   expect(after).toEqual(before);
-  await page.goto(`/history?exercise=${encodeURIComponent(selectedKey)}&period=12w`);
+  await page.getByRole("navigation", { name: "Main navigation" }).getByRole("link", { name: "Progress", exact: true }).click();
+  await page.getByRole("button", { name: "Choose exercise", exact: true }).click();
+  const chooser = page.getByRole("dialog");
+  await chooser.getByRole("searchbox", { name: "Search exercises" }).fill("Band row — deliberate comparison");
+  await chooser.getByTestId("exercise-choice").filter({ hasText: "Band row — deliberate comparison" }).click();
+  await expect(page).toHaveURL(url => url.pathname === "/history" && url.searchParams.get("exercise") === selectedKey);
+  await page.getByRole("combobox", { name: "Period" }).selectOption("12w");
+  await expect(page).toHaveURL(/period=12w/);
   await expect(page.getByRole("region", { name: "Exercise chart" })).toBeVisible();
   await expect(page.getByRole("list", { name: "Recent exercise workouts" }).getByRole("listitem")).toHaveCount(2);
   await page.getByRole("combobox", { name: "Period" }).focus();
@@ -225,4 +272,5 @@ test("explicit selected workouts connect, survive a lost save, pin, and separate
   await expect(page.getByRole("combobox", { name: "Period" })).toHaveValue("all");
   await expect(page.getByRole("combobox", { name: "Chart metric" })).toHaveValue("load:kg");
   await expect(page.getByRole("region", { name: "Exercise chart" })).toBeVisible();
+  expect(navigationPaths).not.toContain("/history/follow");
 });
