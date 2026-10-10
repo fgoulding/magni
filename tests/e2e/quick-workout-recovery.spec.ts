@@ -17,6 +17,7 @@ test("quick workout preserves pending edits, recovers failed writes, and counts 
   await expect(page.getByText("Unsaved", { exact: true })).toBeVisible();
   await expect(page.getByRole("button", { name: "Finish workout", exact: true })).toBeDisabled();
   await page.getByRole("navigation").getByRole("link", { name: "Programs" }).click();
+  await expect(page.getByRole("heading", { name: "Programs", exact: true })).toBeVisible();
   await page.getByRole("navigation").getByRole("link", { name: "Today" }).click();
   await expect(page.getByRole("spinbutton", { name: "Reps for set 1" })).toHaveValue("7");
   await page.reload();

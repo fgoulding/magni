@@ -58,6 +58,11 @@ const nextConfig: NextConfig = {
     ? process.env.DEV_ORIGIN.split(",").map((origin) => origin.trim()).filter(Boolean)
     : [],
   devIndicators: false,
+  // The disposable browser suite precompiles routes once. Keep those entries
+  // resident through the run so HMR does not consume user-journey deadlines.
+  ...(process.env.MAGNI_E2E_KEEP_ROUTES === "1" && !isProd
+    ? { onDemandEntries: { maxInactiveAge: 60 * 60 * 1000, pagesBufferLength: 128 } }
+    : {}),
   async headers() {
     return [{ source: "/:path*", headers: securityHeaders }];
   },

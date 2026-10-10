@@ -33,6 +33,7 @@ export function createE2EServerOptions({ cwd = process.cwd(), env = process.env 
     env: {
       ...env,
       NODE_ENV: "development",
+      MAGNI_E2E_KEEP_ROUTES: "1",
       DB_PATH: path.join(directory, "e2e.sqlite"),
       REGISTER_ALLOWLIST: "",
       NEXT_TELEMETRY_DISABLED: "1",
