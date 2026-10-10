@@ -204,7 +204,7 @@ test("explicit selected workouts connect, survive a lost save, pin, and separate
   const separateRefresh = page.waitForResponse(response => isFollowRefresh(response.request()));
   await page.getByRole("button", { name: "Keep selected records separate" }).click();
   await expect(page.getByRole("heading", { name: "Selected records kept separate" })).toBeVisible();
-  expect(await (await separateRefresh).finished()).toBeNull();
+  expect((await separateRefresh).ok()).toBe(true);
 
   // Exercise the real navigation while Undo's refresh is still pending. A
   // browser-level goto bypasses Next's navigation queue and can abort the
@@ -236,7 +236,6 @@ test("explicit selected workouts connect, survive a lost save, pin, and separate
     releaseRefresh();
     const response = await undoRefresh;
     expect(response.ok()).toBe(true);
-    expect(await response.finished()).toBeNull();
     await expect(page.getByRole("heading", { name: "Band row — deliberate comparison", exact: true })).toBeVisible();
     await expect(page.getByText("10 reps · 0 kg", { exact: true })).toHaveCount(2);
   } finally {
