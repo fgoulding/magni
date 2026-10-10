@@ -62,6 +62,40 @@ function makeCardProps(overrides?: Partial<Parameters<typeof WorkoutCard>[0]>) {
 }
 
 describe("WorkoutCard", () => {
+  it("counts physical saved sets through save, edits and Undo without counting skipped lifts", async () => {
+    const user = userEvent.setup();
+    const calls = vi.fn().mockResolvedValueOnce(jsonResponse({ id: 442, sets: [
+      { id: 407, exercise_name: "Squat", reps: 5, sets: 3, set_number: 1, rep_out_target: 5, calculated_weight: 225, actual_reps: null, actual_weight: null },
+      { id: 408, exercise_name: "Bench Press", reps: 5, sets: 2, set_number: 1, rep_out_target: 5, calculated_weight: 185, actual_reps: null, actual_weight: null },
+    ] })).mockResolvedValueOnce(jsonResponse({ success: true }))
+      .mockResolvedValueOnce(jsonResponse({ success: true }))
+      .mockResolvedValueOnce(jsonResponse({ actual_reps: null, actual_weight: null }));
+    stubFetch(calls);
+    render(<WorkoutCard {...makeCardProps({ focusMode: true })} />);
+    await user.click(screen.getByRole("button", { name: "Start Workout" }));
+    const progress = await screen.findByRole("progressbar", { name: "Saved sets" });
+    expect(progress).toHaveAttribute("aria-valuemax", "5");
+    expect(progress).toHaveAttribute("aria-valuenow", "0");
+    expect(screen.getByText("0 of 5 sets saved")).toBeVisible();
+    const squat = within(screen.getByRole("button", { name: "Collapse Squat" }).closest("section")!);
+    await user.click(squat.getByRole("button", { name: "Save 3-set log" }));
+    expect(progress).toHaveAttribute("aria-valuenow", "3");
+    expect(screen.getByText("3 of 5 sets saved")).toBeVisible();
+    const bench = within(screen.getByRole("button", { name: "Collapse Bench Press" }).closest("section")!);
+    await user.click(bench.getByRole("button", { name: "Skip lift" }));
+    expect(progress).toHaveAttribute("aria-valuenow", "3");
+    const reps = squat.getByRole("spinbutton", { name: "Squat set 1 reps" });
+    await user.clear(reps); await user.type(reps, "7");
+    expect(progress).toHaveAttribute("aria-valuenow", "0");
+    expect(screen.getByRole("button", { name: "Finish Workout" })).toBeDisabled();
+    await user.click(squat.getByRole("button", { name: "Save 3-set log" }));
+    expect(progress).toHaveAttribute("aria-valuenow", "3");
+    await user.click(squat.getByRole("button", { name: "Undo 3-set log" }));
+    expect(progress).toHaveAttribute("aria-valuenow", "0");
+    expect(reps).toHaveValue(7);
+    expect(calls).toHaveBeenCalledTimes(4);
+  });
+
   it("keeps Today secondary actions behind More and skips the same occurrence", async () => {
     const user = userEvent.setup();
     const calls = vi.fn().mockResolvedValue(jsonResponse({ success: true }));

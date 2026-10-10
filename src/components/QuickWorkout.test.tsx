@@ -23,6 +23,59 @@ beforeEach(() => {
 afterEach(() => { cleanup(); vi.restoreAllMocks(); vi.unstubAllGlobals(); });
 
 describe("QuickWorkout save recovery", () => {
+  it("shows the acknowledged date after an edit moves a Today workout to another day", async () => {
+    const session = { ...initialSession, name: "Today rows", date: "2026-10-10", unit: "lb" as const, revision: 1 };
+    const fetchMock = vi.fn().mockResolvedValue(response({ ...session, date: "2026-10-09", revision: 2 }));
+    vi.stubGlobal("fetch", fetchMock);
+    render(<QuickWorkout initialSession={session} todayOnly todayDate="2026-10-10" />);
+    expect(screen.queryByText("2026-10-10 · lb")).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Edit workout" }));
+    fireEvent.change(screen.getByLabelText("Workout date"), { target: { value: "2026-10-09" } });
+    fireEvent.click(screen.getByRole("button", { name: "Save workout changes" }));
+    expect(await screen.findByText("2026-10-09 · lb")).toBeVisible();
+    expect(JSON.parse(fetchMock.mock.calls[0][1].body)).toMatchObject({ date: "2026-10-09", expectedRevision: 1 });
+    expect(screen.queryByLabelText("Workout date")).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Edit workout" })).toHaveFocus();
+  });
+
+  it("keeps the saved date visible when the account's Today date is unknown", () => {
+    render(<QuickWorkout initialSession={{ ...initialSession, date: "2026-10-09", unit: "kg" }} todayOnly />);
+    expect(screen.getByText("2026-10-09 · kg")).toBeVisible();
+  });
+
+  it("keeps saved-set progress truthful for legacy batches, pending edits and acknowledged Undo", async () => {
+    const batch = { ...initialSession, id: 542, sets: [{ ...initialSession.sets[0], id: 507, sets: 3 }] };
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValueOnce(response({ actual_reps: 7, actual_weight: 40 })).mockResolvedValueOnce(response({ actual_reps: null, actual_weight: null })));
+    render(<QuickWorkout initialSession={batch} />);
+    const progress = screen.getByRole("progressbar", { name: "Saved sets" });
+    expect(screen.getByRole("region", { name: "Workout progress" })).toHaveTextContent("3 of 3 sets saved");
+    expect(progress).toHaveAttribute("aria-valuenow", "3");
+    expect(progress).toHaveAttribute("aria-valuemax", "3");
+    editReps("7");
+    expect(progress).toHaveAttribute("aria-valuenow", "0");
+    fireEvent.click(screen.getByRole("button", { name: "Save 3-set log" }));
+    await waitFor(() => expect(progress).toHaveAttribute("aria-valuenow", "3"));
+    fireEvent.click(screen.getByRole("button", { name: "Undo 3-set log" }));
+    await waitFor(() => expect(screen.getByRole("button", { name: "Save 3-set log" })).toBeEnabled());
+    expect(progress).toHaveAttribute("aria-valuenow", "0");
+    expect(screen.getByRole("spinbutton", { name: "Reps for set 1" })).toHaveValue(7);
+  });
+
+  it("keeps destructive discard under More while Add exercise stays directly available", async () => {
+    const fetchMock = vi.fn().mockResolvedValue(response({ success: true }));
+    vi.stubGlobal("fetch", fetchMock);
+    render(<QuickWorkout initialSession={initialSession} todayOnly />);
+    expect(screen.getByRole("button", { name: "Add exercise" })).toBeVisible();
+    expect(screen.getByRole("button", { name: "Discard" })).not.toBeVisible();
+    await userEvent.setup().click(screen.getByText("More", { exact: true }));
+    expect(screen.getByRole("button", { name: "Discard" })).toBeVisible();
+    fireEvent.click(screen.getByRole("button", { name: "Discard" }));
+    expect(fetchMock).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByRole("button", { name: "Confirm discard" }));
+    expect(await screen.findByRole("button", { name: "Quick workout" })).toBeVisible();
+    expect(fetchMock).toHaveBeenCalledWith("/api/sessions/42", { method: "DELETE" });
+  });
+
   it("resolves a lost older start without opening it on Today and uses a fresh key for today", async () => {
     localStorage.setItem("magni.quick.start.today", JSON.stringify({ name: "Quick Workout", date: "", unit: "lb", requestKey: "original-start" }));
     const fetchMock = vi.fn()
@@ -60,7 +113,9 @@ describe("QuickWorkout save recovery", () => {
     fireEvent.click(screen.getByRole("button", { name: /Save set 1/ }));
     expect(screen.getByText("Saving…")).toBeInTheDocument();
     editReps("8");
+    expect(screen.getByRole("progressbar", { name: "Saved sets" })).toHaveAttribute("aria-valuenow", "0");
     await act(async () => resolve(response({ actual_reps: 7, actual_weight: 40 })));
+    expect(screen.getByRole("progressbar", { name: "Saved sets" })).toHaveAttribute("aria-valuenow", "0");
     expect(screen.getByText("Unsaved")).toBeInTheDocument();
     expect(screen.getByRole("spinbutton", { name: "Reps for set 1" })).toHaveValue(8);
   });

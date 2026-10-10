@@ -1,5 +1,5 @@
 "use client";
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState, type ReactNode } from "react";
 import type { WorkoutSession } from "@/features/workouts/types";
 import type { QuickSession } from "./QuickWorkout";
 import { useWorkoutDraft, workoutButton, workoutPrimaryButton, workoutInput, workoutRequest, WorkoutRequestError } from "./quick-workout-utils";
@@ -8,7 +8,7 @@ type EditValues = { name: string; date: string; names: Record<number, string>; o
 type EditBody = { name: string; date?: string; expectedRevision?: number; order: number[]; removeSetIds: number[]; exerciseNames: Record<number, string>; requestKey: string };
 type EditDraft = EditValues & { revision?: number; requestKey?: string; baseName?: string; baseDate?: string; pending?: { body: EditBody; values: EditValues } };
 const editValues = ({ name, date, names, order, removed }: EditValues): EditValues => ({ name, date, names, order, removed });
-export function QuickWorkoutEditor({ session, disabled, onChanged, onError }: { session: QuickSession; disabled: boolean; onChanged: (session: WorkoutSession) => void; onError: (message: string) => void }) {
+export function QuickWorkoutEditor({ session, disabled, onChanged, onError, heading }: { heading?: ReactNode; session: QuickSession; disabled: boolean; onChanged: (session: WorkoutSession) => void; onError: (message: string) => void }) {
   const [open, setOpen] = useState(false);
   const [busy, setBusy] = useState(false);
   const [draft, store] = useWorkoutDraft<EditDraft>(`magni.quick.${session.id}.structure`, { name: session.name ?? "Quick Workout", date: session.date ?? "", names: {}, order: session.sets.map((set) => set.id), removed: [], revision: session.revision });
@@ -92,8 +92,8 @@ export function QuickWorkoutEditor({ session, disabled, onChanged, onError }: { 
     } catch (error) { onError(error instanceof Error ? error.message : "Could not add set."); }
     finally { setBusy(false); }
   }
-  return <div className="border-b border-line px-4 pb-3">
-    <button ref={toggleButton} className={`${workoutButton} w-full`} disabled={disabled || busy} onClick={() => setOpen(!open)}>{open ? "Hide workout editor" : "Edit workout"}</button>
+  return <div className="border-b border-line px-4 py-2">
+    <div className="flex flex-wrap items-center justify-between gap-x-3 gap-y-1">{heading}<button ref={toggleButton} type="button" aria-label={open ? "Hide workout editor" : "Edit workout"} aria-expanded={open} className={`${workoutButton} shrink-0 border-transparent text-muted`} disabled={disabled || busy} onClick={() => setOpen(!open)}>{open ? "Close editor" : "Edit"}</button></div>
     {open && <div className="mt-3 flex flex-col gap-3">
       <p className="text-sm text-muted">Changes stay on this device until you save. Save workout edits before adding more sets.</p>
       <label className="text-xs text-muted">Workout name<input ref={nameInput} aria-label="Workout name" disabled={busy} className={`${workoutInput} mt-1 w-full`} value={draft.name} onChange={(e) => change({ ...draft, name: e.target.value })} /></label>

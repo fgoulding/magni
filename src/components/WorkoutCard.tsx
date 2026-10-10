@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation";
 import Link from "next/link";
 import { type ReactNode, useEffect, useMemo, useState, useSyncExternalStore, useTransition } from "react";
 import { ExerciseLogCard, SetLogRow } from "./ExerciseLogCard";
+import { WorkoutSaveStatus } from "./WorkoutSaveStatus";
 import { AddSessionExerciseForm } from "@/components/AddSessionExerciseForm";
 import { ErrorBanner } from "@/components/ErrorBanner";
 import { WorkoutTmEditor, type TmUpdatedSet } from "@/components/WorkoutTmEditor";
@@ -134,11 +135,9 @@ export function WorkoutCard({
   const totalTonnage = summaryRows.reduce((sum, row) => sum + row.tonnage, 0);
   const totalSets = (session?.sets ?? []).filter(set => completedSetIds.has(set.id)).reduce((sum, set) => sum + Math.max(1, set.sets), 0);
   const liftCount = summaryRows.length;
-  // A lift is "resolved" once it's logged or deliberately skipped — both let the
-  // progress bar advance and the workout reach a finishable state.
-  const resolvedGroupCount = groups.filter(
-    (group) => allSetsInGroupLogged(group) || isGroupSkipped(group),
-  ).length;
+  function isSetSaved(set: WorkoutSet): boolean {
+    return completedSetIds.has(set.id) && !isPending(drafts[set.id]) && !savingIds.has(set.id);
+  }
 
   // Load a session into the card, restoring any already-logged sets (a set with
   // actual_reps is logged) and jumping to the first unfinished group. Used both
@@ -464,7 +463,7 @@ export function WorkoutCard({
   function skipLift(group: WorkoutGroup) { setSkippedGroupKeys(prev => new Set(prev).add(groupKey(group))); }
   function unskipLift(group: WorkoutGroup) { setSkippedGroupKeys(prev => { const next = new Set(prev); next.delete(groupKey(group)); return next; }); }
   function allSetsInGroupLogged(group: WorkoutGroup): boolean {
-    return group.sets.every(set => completedSetIds.has(set.id) && !isPending(drafts[set.id]) && !savingIds.has(set.id));
+    return group.sets.every(isSetSaved);
   }
 
   const isLive = Boolean(session) && !finished && !skipped;
@@ -529,9 +528,9 @@ export function WorkoutCard({
                 </div>}
                 <div className="flex flex-col gap-2.5">
                   {nextLifts.map((lift, index) => (
-                    <div key={`${lift.name}-${index}`} className="flex items-center justify-between gap-3 text-sm">
-                      <span className="font-semibold">{lift.name}</span>
-                      <span className="text-right font-display text-base tracking-tight text-muted">{lift.detail}</span>
+                    <div key={`${lift.name}-${index}`} className="flex flex-wrap items-baseline justify-between gap-x-3 gap-y-1 text-sm">
+                      <span className="min-w-0 flex-[1_1_8rem] break-words font-semibold">{lift.name}</span>
+                      <span className="min-w-0 flex-[1_1_7rem] font-display text-base tracking-tight text-muted">{lift.detail}</span>
                     </div>
                   ))}
                 </div>
@@ -600,7 +599,7 @@ export function WorkoutCard({
               </p>
               <ul className="mt-2.5 flex flex-col gap-2">
                 {prs.map((pr) => (
-                  <li key={pr.exercise} className="flex items-center justify-between gap-3 text-sm">
+                  <li key={pr.exercise} className="flex flex-wrap items-baseline justify-between gap-x-3 gap-y-1 text-sm">
                     <span className="font-semibold">{pr.exercise}</span>
                     <span className="font-display tracking-tight text-muted">
                       {pr.weight} × {pr.reps} · e1RM{" "}
@@ -638,7 +637,7 @@ export function WorkoutCard({
               type="button"
               disabled={submitting}
               onClick={startSession}
-              className="touch-target flex-1 rounded-xl bg-brand px-4 py-3 text-base font-semibold text-white transition-colors active:bg-brand-strong disabled:opacity-50"
+              className="touch-target flex-1 rounded-xl bg-foreground px-4 py-3 text-base font-semibold text-background transition-colors active:opacity-90 disabled:opacity-50"
             >
               {submitting ? "Loading…" : startLabel}
             </button>
@@ -662,16 +661,11 @@ export function WorkoutCard({
         </div>
       ) : (
         <fieldset disabled={completing || refreshingCompletion} className="min-w-0 border-0 border-t border-line p-0">
-          <div className="px-4 py-3">
-            <p className="text-sm text-muted">{formatTonnage(totalTonnage)} {unit} · {totalSets} {totalSets === 1 ? "set" : "sets"}</p>
-            <div className="mt-2 h-1.5 overflow-hidden rounded-full bg-surface-muted" aria-label={`${resolvedGroupCount} of ${groups.length} lifts complete or skipped`}>
-              <div className="h-full bg-brand" style={{ width: `${groups.length ? (resolvedGroupCount / groups.length) * 100 : 0}%` }} />
-            </div>
-          </div>
+          <WorkoutSaveStatus sets={session.sets} isSaved={isSetSaved} unit={unit} />
           {storageWarning || isDraftVolatile(session.id) ? <p role="status" className="px-4 pb-3 text-sm text-muted">Device storage is unavailable. Keep this page open until your pending sets are saved.</p> : null}
           {error ? <div className="px-4 pb-3"><ErrorBanner message={error} /></div> : null}
           {groups.map(group => {
-            const savedCount = group.sets.filter(set => completedSetIds.has(set.id) && !isPending(drafts[set.id]) && !savingIds.has(set.id)).reduce((sum, set) => sum + Math.max(1, set.sets), 0);
+            const savedCount = group.sets.filter(isSetSaved).reduce((sum, set) => sum + Math.max(1, set.sets), 0);
             const status = group.sets.some(set => conflicts[set.id]) ? "Resolve conflicting changes" : group.sets.some(set => savingIds.has(set.id)) ? "Saving…" : group.sets.some(set => drafts[set.id]?.intent === "undo") ? "Undo unconfirmed" : group.sets.some(set => failedIds.has(set.id)) ? "Save failed" : group.sets.some(set => isPending(drafts[set.id])) ? "Unsaved changes" : isGroupSkipped(group) ? "Skipped" : undefined;
             const first = group.sets[0];
             return <ExerciseLogCard key={groupKey(group)} name={groupExerciseNames(group).join(" + ")} saved={savedCount} total={group.sets.reduce((sum, set) => sum + Math.max(1, set.sets), 0)} status={status}>
@@ -688,7 +682,7 @@ export function WorkoutCard({
                 const pending = isPending(draft);
                 const rowSaving = savingIds.has(set.id);
                 const logged = completedSetIds.has(set.id);
-                const saved = logged && !pending && !rowSaving;
+                const saved = isSetSaved(set);
                 const editor = editorMetadata(set);
                 const spec = editor?.set;
                 const role = spec?.role ?? (set.rep_out_target > set.reps ? "amrap" : "work");

@@ -44,7 +44,10 @@ for (const format of ["quick", "planned", "focus"] as const) describe(`${format}
     expect(await screen.findByRole("spinbutton", { name: weightLabel })).toHaveValue(null);
     expect(screen.getByText("Saved · load not recorded")).toBeInTheDocument();
     expect(screen.getByRole("button", { name: finish })).toBeEnabled();
-    if (format !== "quick") expect(screen.getByText("0 lb · 1 set")).toBeInTheDocument();
+    const progress = screen.getByRole("region", { name: "Workout progress" });
+    expect(progress).toHaveTextContent("1 of 1 sets saved");
+    expect(progress).toHaveTextContent("Recorded volume: load not recorded (lb)");
+    expect(progress).not.toHaveTextContent("0 lb");
   });
   it("persists the acknowledged baseline before undoing an older draft without one", async () => {
     const key = `magni.${format === "quick" ? "quick" : "planned"}-workout.42.draft.v1`;

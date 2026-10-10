@@ -60,6 +60,10 @@ for (const pendingDraft of [false, true]) test(`active quick workout gates early
   try {
     await expect(page.getByRole("spinbutton", { name: "Reps for set 1", exact: true })).toBeDisabled();
     await expect(page.getByRole("spinbutton", { name: "Weight for set 1", exact: true })).toBeDisabled();
+    await expect(page.getByRole("button", { name: "Discard", exact: true })).toBeHidden();
+    // Native disclosure remains usable before JavaScript; revealing it must
+    // never bypass the destructive action's existing hydration guard.
+    await page.getByText("More", { exact: true }).click();
     for (const name of ["Edit workout", "Add exercise", "Undo set 1", "Finish workout", "Discard"]) await expect(page.getByRole("button", { name, exact: true })).toBeDisabled();
   } finally { release(); }
   await expect(page.getByRole("spinbutton", { name: "Reps for set 1", exact: true })).toBeEnabled();

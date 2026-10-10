@@ -148,6 +148,15 @@ Today/date header with access to workout history.
 Lead the workout card with its authored workout name, then muted program/week
 context. Use a plain lift list and one prominent Start/Resume action. Idle Pause
 and Skip actions live under More. Show dates only when they add new context.
+Use a quiet History link in the Today header. On an empty day, give Quick workout
+the primary action and keep choosing a program secondary; avoid repeating History.
+
+Active workout status leads with `N of M sets saved` and a labeled progress bar.
+Count physical sets using the same saved/unsaved state as their rows; pending edits
+and skipped lifts do not increase saved progress. Recorded volume is secondary,
+uses acknowledged actuals and retains each original unit. Quick workout uses one
+title, a compact Edit action, and omits the repeated date when embedded in Today.
+Keep Add exercise directly accessible and destructive actions under More.
 
 **Active workout exercises:** Quick Workout, planned Today, Calendar details and
 planned resume share the same exercise disclosure and set-row presentation.

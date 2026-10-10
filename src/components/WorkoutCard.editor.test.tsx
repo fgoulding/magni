@@ -221,7 +221,8 @@ describe("custom workout set logging and draft recovery", () => {
     render(<WorkoutCard {...props} />);
     fireEvent.click(await screen.findByRole("button", { name: "Collapse Row" }));
     fireEvent.click(screen.getByRole("button", { name: "Expand Row" }));
-    expect(screen.getByText("400 lb · 1 set")).toBeInTheDocument();
+    expect(screen.getByRole("region", { name: "Workout progress" })).toHaveTextContent("1 of 1 sets saved");
+    expect(screen.getByRole("region", { name: "Workout progress" })).toHaveTextContent("Recorded volume: 400 lb·reps");
     expect(screen.getByRole("spinbutton", { name: "Row set 1 reps" })).toHaveValue(10);
   });
 

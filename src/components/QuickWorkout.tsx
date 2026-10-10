@@ -4,6 +4,7 @@ import Link from "next/link";
 import { LineChart, Zap } from "lucide-react";
 import { useMemo, useState, useSyncExternalStore } from "react";
 import { ExerciseLogCard, SetLogRow } from "./ExerciseLogCard";
+import { WorkoutSaveStatus } from "./WorkoutSaveStatus";
 import { QuickExercisePicker } from "./QuickExercisePicker";
 import { QuickWorkoutEditor } from "./QuickWorkoutEditor";
 import { buildQuickGroups, useWorkoutDraft, workoutInput, workoutRequest } from "./quick-workout-utils";
@@ -22,7 +23,7 @@ type Recap = {
 /** Inline "Quick Workout" card for the Today tab: start a program-less session,
  *  add exercises on the fly, log each set, and finish. Reuses the program-agnostic
  *  session routes (POST /api/sessions, POST/PUT .../sets, PATCH/DELETE the session). */
-export function QuickWorkout({ initialSession, initialDate, todayOnly = false }: { initialSession: QuickSession | null; initialDate?: string; todayOnly?: boolean }) {
+export function QuickWorkout({ initialSession, initialDate, todayOnly = false, todayDate, prominentStart = false }: { initialSession: QuickSession | null; initialDate?: string; todayOnly?: boolean; todayDate?: string; prominentStart?: boolean }) {
   // The HTML preview must not accept edits before draft change handlers are attached.
   const hydrated = useSyncExternalStore(subscribeHydration, () => true, () => false);
   const [startDraft, storeStart] = useWorkoutDraft<{ name: string; date: string; unit: "lb" | "kg"; requestKey?: string }>(`magni.quick.start.${initialDate ?? "today"}`, { name: "Quick Workout", date: initialDate ?? "", unit: "lb" });
@@ -256,7 +257,7 @@ export function QuickWorkout({ initialSession, initialDate, todayOnly = false }:
           type="button"
           onClick={start}
           disabled={!hydrated || starting}
-          className="touch-target flex w-full items-center justify-center gap-1.5 rounded-xl border border-dashed border-line py-3 text-sm font-semibold text-muted transition-colors active:bg-surface-muted disabled:opacity-50"
+          className={`touch-target flex w-full items-center justify-center gap-1.5 rounded-xl border py-3 text-sm font-semibold transition-colors disabled:opacity-50 ${prominentStart ? "border-foreground bg-foreground text-background active:opacity-90" : "border-dashed border-line text-muted active:bg-surface-muted"}`}
         >
           <Zap aria-hidden="true" size={16} />
           {starting ? "Starting…" : startDraft.requestKey ? "Retry starting workout" : "Quick workout"}
@@ -270,16 +271,14 @@ export function QuickWorkout({ initialSession, initialDate, todayOnly = false }:
   // --- Active logging surface ----------------------------------------------
   const groups = buildQuickGroups(session.sets);
   const hasPendingChanges = session.sets.some((set) => isPending(drafts[set.id]));
+  const isSetSaved = (set: WorkoutSet) => set.actual_reps != null && !isPending(drafts[set.id]) && !savingIds.has(set.id);
 
   return (
     <section className="card overflow-hidden">
-      <div className="border-b border-line px-4 py-3">
-        <p className="eyebrow text-[11px] text-brand-strong">Quick workout</p>
-        <h2 className="display text-2xl">{session.name ?? "Today"}</h2>
-        {session.date && <p className="mt-1 text-sm text-muted">{session.date} · {session.unit ?? "lb"}</p>}
-      </div>
-
-      <QuickWorkoutEditor session={session} disabled={!hydrated || hasPendingChanges || savingIds.size > 0 || finishing || discarding} onChanged={setSession} onError={setError} />
+      <QuickWorkoutEditor session={session} disabled={!hydrated || hasPendingChanges || savingIds.size > 0 || finishing || discarding} onChanged={setSession} onError={setError} heading={
+        <div className="min-w-0 flex-[1_1_10rem]"><h2 className="display break-words text-2xl leading-tight">{session.name || "Quick Workout"}</h2>{session.date && !(todayOnly && session.date === todayDate) && <p className="mt-1 text-xs text-muted">{session.date} · {session.unit ?? "lb"}</p>}</div>
+      } />
+      {session.sets.length > 0 && <WorkoutSaveStatus sets={session.sets} isSaved={isSetSaved} unit={session.unit ?? "lb"} />}
 
       {groups.length === 0 ? (
         <p className="px-4 py-4 text-sm text-muted">Add your first exercise to start logging.</p>
@@ -287,7 +286,7 @@ export function QuickWorkout({ initialSession, initialDate, todayOnly = false }:
         <div>
           {groups.map(group => {
             const rows = group.sets;
-            const saved = rows.filter(set => set.actual_reps != null && !isPending(drafts[set.id]) && !savingIds.has(set.id)).reduce((sum, set) => sum + Math.max(1, set.sets), 0);
+            const saved = rows.filter(isSetSaved).reduce((sum, set) => sum + Math.max(1, set.sets), 0);
             const status = rows.some(set => conflicts[set.id]) ? "Resolve conflicting changes" : rows.some(set => savingIds.has(set.id)) ? "Saving…" : rows.some(set => drafts[set.id]?.intent === "undo") ? "Undo unconfirmed" : rows.some(set => failedIds.has(set.id)) ? "Save failed" : rows.some(set => isPending(drafts[set.id])) ? "Unsaved changes" : undefined;
             return <ExerciseLogCard disabled={!hydrated} key={rows[0].id} name={rows[0].exercise_name} saved={saved} total={rows.reduce((sum, set) => sum + Math.max(1, set.sets), 0)} status={status}>
               {rows.map((set, i) => {
@@ -296,7 +295,7 @@ export function QuickWorkout({ initialSession, initialDate, todayOnly = false }:
                 const values = inputValues(set);
                 const saving = savingIds.has(set.id);
                 const logged = set.actual_reps != null;
-                const saved = logged && !pending && !saving;
+                const saved = isSetSaved(set);
                 return <SetLogRow key={set.id} number={i + 1} count={set.sets} reps={values.reps} weight={values.weight} unit={session.unit ?? "lb"}
                   repsLabel={`Reps for set ${i + 1}`} weightLabel={`Weight for set ${i + 1}`} saved={saved} logged={logged} pending={pending} saving={saving}
                   failed={failedIds.has(set.id)} missingWeight={set.actual_reps != null && set.actual_weight == null} undoPending={draft?.intent === "undo"} disabled={!hydrated || finishing || discarding || !!structureDraft}
@@ -332,6 +331,9 @@ export function QuickWorkout({ initialSession, initialDate, todayOnly = false }:
         >
           {finishing ? "Finishing…" : "Finish workout"}
         </button>
+        <details className="flex-[0_0_auto] open:flex-[1_0_100%]" onToggle={event => { if (!event.currentTarget.open) setConfirmingDiscard(false); }}>
+          <summary className="touch-target flex cursor-pointer items-center justify-center rounded-xl border border-line px-3 text-sm font-semibold text-muted">More</summary>
+          <div className="mt-2 rounded-xl border border-line bg-surface p-2">
         {confirmingDiscard ? (
           <button
             type="button"
@@ -351,6 +353,8 @@ export function QuickWorkout({ initialSession, initialDate, todayOnly = false }:
             Discard
           </button>
         )}
+          </div>
+        </details>
       </div>
     </section>
   );
