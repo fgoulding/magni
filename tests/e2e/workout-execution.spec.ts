@@ -19,6 +19,8 @@ test("starts, logs, completes, and records a scheduled workout", async ({ page }
   await completeVisibleWorkout(page);
 
   await goToTab(page, "Progress");
+  await expect(page.getByRole("region", { name: "Big three chart", exact: true })).toBeVisible();
+  await page.getByRole("link", { name: "View Squat progress", exact: true }).click();
   await expect(page.getByRole("button", { name: "Choose exercise", exact: true })).toContainText("Squat");
   await expect(page.getByRole("region", { name: "Exercise chart", exact: true })).toBeVisible();
 
@@ -105,6 +107,8 @@ test("trains a missed calendar workout today and records it on the day it is don
   await expect(page.getByRole("dialog")).toHaveCount(0);
 
   await goToTab(page, "Progress");
+  await expect(page.getByRole("region", { name: "Big three chart", exact: true })).toBeVisible();
+  await page.getByRole("link", { name: "View Squat progress", exact: true }).click();
   await expect(page.getByRole("button", { name: "Choose exercise", exact: true })).toContainText("Squat");
   await expect(page.getByRole("region", { name: "Exercise chart", exact: true })).toBeVisible();
 
