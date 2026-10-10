@@ -11,7 +11,19 @@ export type ProgressProgram = { id: number; name: string; sessionCount: number; 
 export type ProgressWorkout = { sessionId: number; name: string; date: string; unit: "lb" | "kg"; status: "in_progress" | "completed" | "skipped"; programId: number | null; programName: string; loggedSets: number; totalSets: number; volume: number; missingWeightSets: number };
 export type ExerciseObservation = { sessionId: number; date: string; unit: "lb" | "kg"; workoutName: string; programName: string; programId: number | null; recordedNames: string[]; sets: ProgressSet[]; recordedSets: number; totalReps: number; volume: number; missingWeightSets: number; bestE1rm: number | null; topWeight: number | null };
 export type ExerciseChartPoint = { sessionId: number; date: string; unit: "lb" | "kg"; bestE1rm: number | null; bestE1rmLb: number | null; topWeight?: number | null; totalReps: number; recordedSets: number };
-export type ExerciseDetail = { exercise: ExerciseSummary; from: string | null; to: string | null; totals: { sessions: number; recordedSets: number; reps: number; volumeLb: number; missingWeightSets: number }; observations: ProgressPage<ExerciseObservation>; chart: { points: ExerciseChartPoint[]; truncated: boolean; totalObservations: number } };
+export type ExerciseMetric = "reps" | "estimate:lb" | "estimate:kg" | "load:lb" | "load:kg";
+export type ExerciseMetricEvidence = { value: number; sessionId: number; date: string; unit: "lb" | "kg"; recordedSets: number; totalReps: number };
+/** Full selected-range comparisons, independent of chart caps and observation paging. */
+export type ExerciseMetricSummary = {
+  metric: ExerciseMetric; count: number;
+  latest: ExerciseMetricEvidence | null; previous: ExerciseMetricEvidence | null;
+  first: ExerciseMetricEvidence | null; best: ExerciseMetricEvidence | null;
+};
+export type ExerciseTraining = {
+  activeWeeks: number; firstDate: string | null; lastDate: string | null;
+  volumeByUnit: { unit: "lb" | "kg"; volume: number; recordedSets: number; missingWeightSets: number }[];
+};
+export type ExerciseDetail = { exercise: ExerciseSummary; from: string | null; to: string | null; totals: { sessions: number; recordedSets: number; reps: number; volumeLb: number; missingWeightSets: number }; observations: ProgressPage<ExerciseObservation>; chart: { points: ExerciseChartPoint[]; truncated: boolean; totalObservations: number }; metricSummaries?: ExerciseMetricSummary[]; training?: ExerciseTraining };
 export type ExerciseSourceSummary = { sourceKey: string; exerciseId: string; name: string; kind: "editor" | "legacy" | "quick" | "unlinked"; revision: number; sessionCount: number; firstDate: string | null; lastDate: string | null; programName: string | null };
 export type CandidateObservation = { id: number; sessionId: number; date: string; recordedName: string; workoutName: string; programName: string; exerciseId: string; exerciseName: string; revision: number; latest: ProgressPerformance | null; recordedSets: number };
 export type IdentityChangeInput = { observationIds: number[]; targetExerciseId?: string; name?: string; mode?: "link" | "detach" };

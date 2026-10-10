@@ -3,7 +3,7 @@ import { db } from "@/lib/db";
 import { exerciseNameKey, resolveCatalogRedirect } from "./aliases";
 import { userDateKey } from "@/lib/user-date";
 import { CANDIDATE_CTE, decorateCandidate, getPinnedExerciseIds, ProgressError, PROGRESS_SET_JOINS } from "./identity";
-import type { CandidateObservation, ExerciseChartPoint, ExerciseDetail, ExerciseFinderItem, ExerciseObservation, ExerciseSummary, ProgressFilters, ProgressHome, ProgressPrimaryExercise, ProgressPage, ProgressPerformance, ProgressProgram, ProgressRoutine, ProgressWorkout } from "./types";
+import type { CandidateObservation, ExerciseChartPoint, ExerciseDetail, ExerciseFinderItem, ExerciseMetricEvidence, ExerciseMetricSummary, ExerciseObservation, ExerciseSummary, ExerciseTraining, ProgressFilters, ProgressHome, ProgressPrimaryExercise, ProgressPage, ProgressPerformance, ProgressProgram, ProgressRoutine, ProgressWorkout } from "./types";
 
 type Value=string|number|null;
 const KG_TO_LB=2.2046226218487757;
@@ -152,6 +152,36 @@ export function getExerciseCandidates(userId:number,exerciseId:string,filters:Pr
   return candidatePage(userId,`included:${requestedId}`,filters,"exerciseId=?",[exerciseId]);
 }
 const E1RM=`CASE WHEN weight>0 AND reps>0 THEN CASE WHEN reps=1 THEN weight ELSE weight*(1+reps/30.0) END END`;
+// Share metric eligibility between plotted values and full-range comparisons.
+const SESSION_METRICS=`SELECT sessionId,date,unit,MAX(${E1RM}) AS bestE1rm,
+  MAX(${E1RM})*CASE WHEN unit='kg' THEN ${KG_TO_LB} ELSE 1 END AS bestE1rmLb,
+  MAX(CASE WHEN reps>0 AND weight>=0 THEN weight END) AS topWeight,
+  SUM(reps*multiplicity) AS totalReps,SUM(multiplicity) AS recordedSets FROM chosen GROUP BY sessionId`;
+function fullRangeMetricSummaries(source:string,args:Value[]):ExerciseMetricSummary[] {
+  // Rank in SQLite and return at most four evidence rows per metric, even when
+  // the matching history has years of sessions. Nulls are missing, not zero.
+  const rows=db.prepare(`${source}, session_metrics AS (${SESSION_METRICS}), metric_values AS (
+      SELECT 'estimate:'||unit AS metric,bestE1rm AS value,sessionId,date,unit,recordedSets,totalReps FROM session_metrics WHERE bestE1rm IS NOT NULL
+      UNION ALL SELECT 'load:'||unit,topWeight,sessionId,date,unit,recordedSets,totalReps FROM session_metrics WHERE topWeight IS NOT NULL
+      UNION ALL SELECT 'reps',totalReps,sessionId,date,unit,recordedSets,totalReps FROM session_metrics
+    ), ranked AS (
+      SELECT *,COUNT(*) OVER (PARTITION BY metric) AS count,
+        ROW_NUMBER() OVER (PARTITION BY metric ORDER BY date DESC,sessionId DESC) AS latestRank,
+        ROW_NUMBER() OVER (PARTITION BY metric ORDER BY date,sessionId) AS firstRank,
+        ROW_NUMBER() OVER (PARTITION BY metric ORDER BY value DESC,date DESC,sessionId DESC) AS bestRank
+      FROM metric_values
+    ) SELECT * FROM ranked WHERE latestRank<=2 OR firstRank=1 OR bestRank=1 ORDER BY metric,latestRank`).all(...args) as
+    (ExerciseMetricEvidence&{metric:ExerciseMetricSummary["metric"];count:number;latestRank:number;firstRank:number;bestRank:number})[];
+  const summaries=new Map<ExerciseMetricSummary["metric"],ExerciseMetricSummary>();
+  for(const row of rows){
+    let item=summaries.get(row.metric);
+    if(!item){item={metric:row.metric,count:row.count,latest:null,previous:null,first:null,best:null};summaries.set(row.metric,item);}
+    const evidence:ExerciseMetricEvidence={value:row.value,sessionId:row.sessionId,date:row.date,unit:row.unit,recordedSets:row.recordedSets,totalReps:row.totalReps};
+    if(row.latestRank===1)item.latest=evidence;if(row.latestRank===2)item.previous=evidence;
+    if(row.firstRank===1)item.first=evidence;if(row.bestRank===1)item.best=evidence;
+  }
+  return [...summaries.values()];
+}
 export function getExerciseDetail(userId:number,exerciseId:string,filters:ProgressFilters={}):ExerciseDetail|null {
   const requestedId=exerciseId;
   exerciseId=resolveCatalogRedirect(db,userId,exerciseId);
@@ -159,9 +189,16 @@ export function getExerciseDetail(userId:number,exerciseId:string,filters:Progre
   const b=base(userId,filters);const p=pagination(userId,`detail:${requestedId}`,filters);
   const source=`WITH b AS (${b.sql}), chosen AS (SELECT * FROM b WHERE exerciseId=?)`;
   const args=[...b.args,exerciseId];
-  const totals=db.prepare(`${source} SELECT COUNT(DISTINCT sessionId) AS sessions,COALESCE(SUM(multiplicity),0) AS recordedSets,
+  const aggregate=db.prepare(`${source} SELECT COUNT(DISTINCT sessionId) AS sessions,COALESCE(SUM(multiplicity),0) AS recordedSets,
     COALESCE(SUM(reps*multiplicity),0) AS reps,COALESCE(SUM(reps*weightLb*multiplicity),0) AS volumeLb,
-    COALESCE(SUM(CASE WHEN weight IS NULL THEN multiplicity ELSE 0 END),0) AS missingWeightSets FROM chosen`).get(...args) as ExerciseDetail["totals"];
+    COALESCE(SUM(CASE WHEN weight IS NULL THEN multiplicity ELSE 0 END),0) AS missingWeightSets,
+    COUNT(DISTINCT date(date,'-'||((CAST(strftime('%w',date) AS INTEGER)+6)%7)||' days')) AS activeWeeks,
+    MIN(date) AS firstDate,MAX(date) AS lastDate FROM chosen`).get(...args) as ExerciseDetail["totals"]&Omit<ExerciseTraining,"volumeByUnit">;
+  const {activeWeeks,firstDate,lastDate,...totals}=aggregate;
+  const volumeByUnit=db.prepare(`${source} SELECT unit,COALESCE(SUM(reps*weight*multiplicity),0) AS volume,SUM(multiplicity) AS recordedSets,
+    COALESCE(SUM(CASE WHEN weight IS NULL THEN multiplicity ELSE 0 END),0) AS missingWeightSets
+    FROM chosen GROUP BY unit ORDER BY unit`).all(...args) as ExerciseTraining["volumeByUnit"];
+  const training:ExerciseTraining={activeWeeks,firstDate,lastDate,volumeByUnit};
   const sessionRows=db.prepare(`${source} SELECT sessionId,date FROM chosen GROUP BY sessionId ORDER BY date DESC,sessionId DESC LIMIT ? OFFSET ?`).all(...args,p.limit+1,p.offset) as {sessionId:number;date:string}[];
   const observations:ExerciseObservation[]=sessionRows.slice(0,p.limit).map(session=>{
     const rows=db.prepare(`${source} SELECT * FROM chosen WHERE sessionId=? ORDER BY sortOrder,setNumber,setId`).all(...args,session.sessionId) as BaseRow[];
@@ -173,10 +210,8 @@ export function getExerciseDetail(userId:number,exerciseId:string,filters:Progre
       recordedNames:[...new Set(rows.map(row=>row.recordedName))],sets:rows.map(row=>({setId:row.setId,name:row.recordedName,reps:row.reps,weight:row.weight,unit:row.unit,count:row.multiplicity,role:row.role,loadMode:row.loadMode})),
       recordedSets,totalReps,volume,missingWeightSets,bestE1rm,topWeight};
   });
-  const chartRows=db.prepare(`${source} SELECT sessionId,date,unit,MAX(${E1RM}) AS bestE1rm,MAX(${E1RM})*CASE WHEN unit='kg' THEN ${KG_TO_LB} ELSE 1 END AS bestE1rmLb,
-    MAX(CASE WHEN reps>0 AND weight>=0 THEN weight END) AS topWeight,
-    SUM(reps*multiplicity) AS totalReps,SUM(multiplicity) AS recordedSets FROM chosen GROUP BY sessionId ORDER BY date DESC,sessionId DESC LIMIT 121`).all(...args) as ExerciseChartPoint[];
-  return {exercise,from:b.from,to:b.to,totals,observations:{items:observations,nextCursor:p.next(sessionRows.length>p.limit),previousCursor:p.previous},chart:{points:chartRows.slice(0,120).reverse(),truncated:chartRows.length>120,totalObservations:totals.sessions}};
+  const chartRows=db.prepare(`${source} ${SESSION_METRICS} ORDER BY date DESC,sessionId DESC LIMIT 121`).all(...args) as ExerciseChartPoint[];
+  return {exercise,from:b.from,to:b.to,totals,training,metricSummaries:fullRangeMetricSummaries(source,args),observations:{items:observations,nextCursor:p.next(sessionRows.length>p.limit),previousCursor:p.previous},chart:{points:chartRows.slice(0,120).reverse(),truncated:chartRows.length>120,totalObservations:totals.sessions}};
 }
 export function getProgressHistory(userId:number,filters:ProgressFilters&{status?:"all"|"in_progress"|"completed"|"skipped"}={}):ProgressPage<ProgressWorkout> {
   const c=constraints(userId,filters);const p=pagination(userId,`history:${filters.status??"all"}`,filters);const clauses=[c.where];const args=[...c.args];

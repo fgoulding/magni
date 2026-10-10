@@ -14,6 +14,27 @@ import ExercisePage from "@/app/history/exercises/[key]/page";
 afterEach(cleanup);
 beforeEach(() => { vi.clearAllMocks(); queries.listProgressExercises.mockReturnValue({ items: [], nextCursor: null }); queries.listProgressPrograms.mockReturnValue({ items: [], nextCursor: null }); queries.listUnlinkedExercises.mockReturnValue({ items: [], nextCursor: null }); queries.getExerciseDetail.mockReturnValue(null); queries.resolveUnlinkedExerciseId.mockReturnValue(null); });
 describe("Progress page discovery boundaries", () => {
+  it("defaults to Big three while querying only unambiguous owned primary lifts", async () => {
+    const primary = [{ key: "p:squat", name: "Squat", hasHistory: true, exercise: { id: "squat" } }, { key: "p:bench", name: "Bench", hasHistory: false, exercise: null }, { key: "p:deadlift", name: "Deadlift", hasHistory: true, exercise: null }];
+    queries.getProgressHome.mockReturnValue({ primary, pinned: [], recent: [] });
+    const result = await ProgressPage({ searchParams: Promise.resolve({ period: "4w", metric: "load:kg" }) });
+    expect(result.props.lifts).toHaveLength(3);
+    expect(queries.getExerciseDetail).toHaveBeenCalledTimes(1);
+    expect(queries.getExerciseDetail).toHaveBeenCalledWith(7, "squat", { period: "4w", limit: 2 });
+    expect(result.props.currentHref).toBe("/history?exercise=e%3Asquat&period=4w&metric=load%3Akg&view=big-three");
+    expect(queries.listUnlinkedExercises).not.toHaveBeenCalled();
+  });
+  it("keeps an explicit exercise in single view and preserves it when opening Big three", async () => {
+    queries.getProgressHome.mockReturnValue({ primary: [{ key: "p:squat", name: "Squat", hasHistory: true, exercise: { id: "squat" } }], pinned: [], recent: [] });
+    const single = await ProgressPage({ searchParams: Promise.resolve({ exercise: "e:custom", metric: "reps", period: "12w" }) });
+    expect(single.props.selectedKey).toBe("e:custom");
+    expect(single.props.lifts).toBeUndefined();
+    queries.getExerciseDetail.mockClear();
+    const comparison = await ProgressPage({ searchParams: Promise.resolve({ exercise: "e:custom", metric: "reps", period: "12w", view: "big-three" }) });
+    expect(comparison.props.currentHref).toBe("/history?exercise=e%3Acustom&period=12w&metric=reps&view=big-three");
+    expect(queries.getExerciseDetail).toHaveBeenCalledTimes(1);
+    expect(queries.getExerciseDetail).toHaveBeenCalledWith(7, "squat", { period: "12w", limit: 2 });
+  });
   it("does not request or render the full library on initial finder entry", async () => {
     render(await FinderPage({ searchParams: Promise.resolve({}) }));
     expect(queries.listProgressExercises).not.toHaveBeenCalled();
@@ -70,7 +91,7 @@ describe("Progress page discovery boundaries", () => {
   });
   it("defaults to all history and the first recorded primary lift, ignoring pin/recent order", async () => {
     queries.getProgressHome.mockReturnValue({ pinned: [{ id: "favorite" }], recent: [{ key: "e:recent" }], primary: [{ key: "p:squat", name: "Squat", hasHistory: false, exercise: { id: "squat", recordedSets: 0 } }, { key: "p:bench", name: "Bench", hasHistory: true, exercise: { id: "bench", recordedSets: 3 } }, { key: "p:deadlift", name: "Deadlift", hasHistory: true, exercise: { id: "deadlift", recordedSets: 10 } }] });
-    const result = await ProgressPage({ searchParams: Promise.resolve({}) });
+    const result = await ProgressPage({ searchParams: Promise.resolve({ view: "exercise" }) });
     expect(queries.getProgressHome).toHaveBeenCalledWith(7, { period: "all" });
     expect(result.props.selectedKey).toBe("e:bench");
     expect(result.props.period).toBe("all");
@@ -78,17 +99,17 @@ describe("Progress page discovery boundaries", () => {
   });
   it("defaults to the first primary with history even when its variations are intentionally separate", async () => {
     queries.getProgressHome.mockReturnValue({ pinned: [], recent: [], primary: [{ key: "p:squat", name: "Squat", hasHistory: true, exercise: null }, { key: "p:bench", name: "Bench", hasHistory: true, exercise: { id: "bench", recordedSets: 3 } }] });
-    const result = await ProgressPage({ searchParams: Promise.resolve({ period: "4w", metric: "load:kg" }) });
+    const result = await ProgressPage({ searchParams: Promise.resolve({ view: "exercise", period: "4w", metric: "load:kg" }) });
     expect(result.props.selectedKey).toBe("p:squat");
     expect(result.props.selectedName).toBe("Squat");
     expect(result.props.selectionError).toBeUndefined();
     expect(result.props.detail).toBeNull();
-    expect(result.props.currentHref).toBe("/history?exercise=p%3Asquat&period=4w&metric=load%3Akg");
+    expect(result.props.currentHref).toBe("/history?exercise=p%3Asquat&period=4w&metric=load%3Akg&view=exercise");
     expect(queries.getExerciseDetail).not.toHaveBeenCalled();
   });
   it("waits for a choice when no primary lift has recorded history", async () => {
     queries.getProgressHome.mockReturnValue({ pinned: [{ id: "favorite" }], recent: [{ key: "e:recent" }], primary: [{ key: "p:squat", name: "Squat", hasHistory: false, exercise: null }, { key: "p:bench", name: "Bench", hasHistory: false, exercise: null }, { key: "p:deadlift", name: "Deadlift", hasHistory: false, exercise: null }] });
-    const result = await ProgressPage({ searchParams: Promise.resolve({}) });
+    const result = await ProgressPage({ searchParams: Promise.resolve({ view: "exercise" }) });
     expect(result.props.selectedKey).toBe("");
     expect(result.props.detail).toBeNull();
     expect(queries.getExerciseDetail).not.toHaveBeenCalled();
@@ -114,10 +135,10 @@ describe("Progress page discovery boundaries", () => {
   });
   it("retains only a valid chart metric in source return context", async () => {
     queries.getProgressHome.mockReturnValue({ primary: [], pinned: [{ id: "favorite" }], recent: [] });
-    const result = await ProgressPage({ searchParams: Promise.resolve({ metric: "load:kg" }) });
+    const result = await ProgressPage({ searchParams: Promise.resolve({ view: "exercise", metric: "load:kg" }) });
     expect(result.props.initialMetric).toBe("load:kg");
     expect(result.props.currentHref).toContain("metric=load%3Akg");
-    const invalid = await ProgressPage({ searchParams: Promise.resolve({ metric: "unrecognised" }) });
+    const invalid = await ProgressPage({ searchParams: Promise.resolve({ view: "exercise", metric: "unrecognised" }) });
     expect(invalid.props.initialMetric).toBeUndefined();
     expect(invalid.props.currentHref).not.toContain("metric=");
   });

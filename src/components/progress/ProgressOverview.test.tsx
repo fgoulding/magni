@@ -13,6 +13,26 @@ const exercise = (id: number): ExerciseSummary => ({ id: String(id), name: `Exer
 const home: ProgressHome = { primary: [{ key: "p:squat", name: "Squat", hasHistory: true, exercise: exercise(0) }, { key: "p:bench", name: "Bench", hasHistory: false, exercise: null }, { key: "p:deadlift", name: "Deadlift", hasHistory: false, exercise: null }], pinLimit: 4, recentLimit: 3, pinned: Array.from({ length: 4 }, (_, i) => exercise(i)), recent: [4, 5, 6].map(i => asFinderItem(exercise(i))), activity: { from: "2026-09-14", to: "2026-10-06", sessions: 12, emptySessions: 0, usesKilograms: true, recordedSets: 40, volumeLb: 0, missingWeightSets: 5 } };
 const detail: ExerciseDetail = { exercise: exercise(0), from: "2026-09-14", to: "2026-10-06", totals: { sessions: 1, recordedSets: 1, reps: 12, volumeLb: 0, missingWeightSets: 0 }, observations: { items: [], nextCursor: null }, chart: { points: [{ sessionId: 1, date: "2026-10-01", unit: "kg", bestE1rm: null, bestE1rmLb: null, totalReps: 12, recordedSets: 1 }], truncated: false, totalObservations: 1 } };
 describe("graph-first Progress", () => {
+  it("shows selected exercise training in original units without substituting global activity", () => {
+    const trainingDetail: ExerciseDetail = { ...detail, totals: { ...detail.totals, sessions: 3, recordedSets: 4, missingWeightSets: 1 }, training: { activeWeeks: 2, firstDate: "2026-09-14", lastDate: "2026-10-01", volumeByUnit: [{ unit: "lb", volume: 4200, recordedSets: 3, missingWeightSets: 0 }, { unit: "kg", volume: 0, recordedSets: 1, missingWeightSets: 1 }] } };
+    render(<ProgressOverview home={home} period="all" currentHref="/history?exercise=e%3A0&period=all" selectedKey="e:0" detail={trainingDetail} />);
+    const training = screen.getByRole("region", { name: "Training in this range" });
+    expect(within(training).getByRole("group", { name: "3 workouts" })).toBeVisible();
+    expect(within(training).getByRole("group", { name: "4 recorded sets" })).toBeVisible();
+    expect(training).toHaveTextContent("4,200 lb·reps");
+    expect(training).toHaveTextContent("— kg·reps");
+    expect(training).toHaveTextContent("2 active weeks");
+    expect(training).toHaveTextContent("Load not recorded for 1 set");
+    expect(training).not.toHaveTextContent("lb equiv");
+  });
+  it("keeps true zero volume distinct from entirely missing loads", () => {
+    const trainingDetail: ExerciseDetail = { ...detail, training: { activeWeeks: 1, firstDate: "2026-10-01", lastDate: "2026-10-01", volumeByUnit: [{ unit: "kg", volume: 0, recordedSets: 1, missingWeightSets: 0 }] } };
+    render(<ProgressOverview home={home} period="all" currentHref="/history?exercise=e%3A0&period=all" selectedKey="e:0" detail={trainingDetail} />);
+    const training = screen.getByRole("region", { name: "Training in this range" });
+    expect(training).toHaveTextContent("0 kg·reps");
+    expect(training).toHaveTextContent("1 active week");
+    expect(within(training).queryByText(/Load not recorded/)).not.toBeInTheDocument();
+  });
   it("shows one chart without favorite clutter and offers three primary choices", () => {
     render(<ProgressOverview home={home} period="12w" currentHref="/history?exercise=e%3A0&period=12w" selectedKey="e:0" detail={detail} />);
     expect(screen.getByRole("region", { name: "Exercise chart" })).toBeVisible();

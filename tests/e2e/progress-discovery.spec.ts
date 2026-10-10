@@ -36,13 +36,14 @@ test("one quick exercise shows its result without asking to group records, inclu
   const sessionId = await completedWorkout(page, "Quick Workout", recentDate, [name], 60, 3, "lb");
   const before = await (await page.request.get(`/api/sessions/${sessionId}`)).json();
   await page.goto("/history");
+  await page.getByRole("link", { name: "One exercise", exact: true }).click();
   await page.getByRole("button", { name: "Choose exercise", exact: true }).click();
   await page.getByRole("dialog", { name: "Choose exercise" }).getByRole("searchbox", { name: "Search exercises" }).fill(name);
   await expect(page.getByTestId("exercise-choice")).toHaveCount(1);
   await page.getByTestId("exercise-choice").click();
   await expect(page.getByRole("button", { name: "Choose exercise", exact: true })).toContainText(name);
   await expect(page.getByRole("region", { name: "Exercise chart", exact: true })).toBeVisible();
-  await expect(page.getByText("One recorded workout", { exact: true })).toBeVisible();
+  await expect(page.getByText("One comparable result in this range", { exact: true })).toBeVisible();
   await expect(page.getByText("Keep matching records separate", { exact: true })).toHaveCount(0);
   await expect(page.getByText("Matching records · choose which belong together", { exact: true })).toHaveCount(0);
   await page.getByRole("combobox", { name: "Chart metric", exact: true }).selectOption("load:lb");
@@ -94,6 +95,7 @@ test("Progress stays bounded while finder pages replace and old names are direct
   await completedWorkout(page, "Large recorded workout", recentDate, Array.from({ length: 22 }, (_, index) => `Exercise ${String(index + 1).padStart(3, "0")}`));
   await completedWorkout(page, "Old mobility", "2020-01-02", ["Old exercise 0999 — forearm rotation with a long distinguishing equipment description"]);
   await page.goto("/history");
+  await page.getByRole("link", { name: "One exercise", exact: true }).click();
   await expect(page.getByRole("heading", { name: "Progress", exact: true })).toBeVisible();
   await expect(page.getByTestId("progress-exercise-row")).toHaveCount(0);
   await page.getByRole("button", { name: "Choose exercise", exact: true }).click();
@@ -260,6 +262,7 @@ test("explicit selected workouts connect, survive a lost save, pin, and separate
   const after = await Promise.all([first, second].map(async id => (await page.request.get(`/api/sessions/${id}`)).json()));
   expect(after).toEqual(before);
   await page.getByRole("navigation", { name: "Main navigation" }).getByRole("link", { name: "Progress", exact: true }).click();
+  await page.getByRole("link", { name: "One exercise", exact: true }).click();
   await page.getByRole("button", { name: "Choose exercise", exact: true }).click();
   const chooser = page.getByRole("dialog");
   await chooser.getByRole("searchbox", { name: "Search exercises" }).fill("Band row — deliberate comparison");

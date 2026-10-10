@@ -19,7 +19,7 @@ describe("bounded graph exercise chooser", () => {
   it("starts with exactly three primary lifts and focuses the heading without opening the keyboard", () => {
     render(<ExerciseChooser primary={primary} selectedKey="" onChoose={vi.fn()} onClose={vi.fn()} />);
     expect(screen.getAllByTestId("exercise-choice").map(row => row.textContent)).toEqual(["SquatNo recorded history", "BenchNo recorded history", "DeadliftNo recorded history"]);
-    expect(screen.getByRole("heading", { name: "Choose exercise" })).toHaveFocus();
+    expect(screen.getByRole("heading", { name: "Exercises" })).toHaveFocus();
     expect(screen.getByRole("searchbox")).not.toHaveFocus();
   });
   it("distinguishes saved separate histories from a genuinely empty primary lift", () => {

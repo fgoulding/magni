@@ -34,6 +34,7 @@ test("primary lifts lead the chooser without opening the keyboard or requiring f
   await record(page, "Deadlift", daysAgo(5), 225);
   await record(page, "Lateral raise", daysAgo(2), 15);
   await page.goto("/history");
+  await page.getByRole("link", { name: "One exercise", exact: true }).click();
   await capture(page, info, "primary-default");
   const trigger = page.getByRole("button", { name: "Choose exercise", exact: true });
   await expect(trigger).toContainText("Squat");
@@ -73,6 +74,7 @@ test("typed Deadlift history connects across dates without pins and future sessi
   const deadlift = found.items.find((item: { name: string }) => item.name.toLowerCase() === "deadlift");
   expect(deadlift).toMatchObject({ kind: "exercise", historyCount: 3, exercise: { sessionCount: 3, pinned: false } });
   await page.goto("/history");
+  await page.getByRole("link", { name: "One exercise", exact: true }).click();
   await capture(page, info, "connected-all-time");
   await expect(page.getByRole("button", { name: "Choose exercise", exact: true })).toContainText("Deadlift");
   await expect(page.getByRole("region", { name: "Exercise chart", exact: true })).toBeVisible();
@@ -121,7 +123,7 @@ test("deliberately separated primary histories stay discoverable instead of look
   const applied = await page.request.post("/api/progress/identity", { data: { action: "apply", ...separate, previewToken: preview.token, requestKey: randomUUID() } });
   expect(applied.ok()).toBe(true);
   const change = await applied.json();
-  await page.goto("/history?period=4w&metric=reps");
+  await page.goto("/history?view=exercise&period=4w&metric=reps");
   const trigger = page.getByRole("button", { name: "Choose exercise", exact: true });
   await expect(trigger).toContainText("Deadlift");
   await expect(page.getByRole("heading", { name: "Choose a variation", exact: true })).toBeVisible();
@@ -145,5 +147,6 @@ test("deliberately separated primary histories stay discoverable instead of look
   expect((await page.request.post("/api/progress/identity", { data: { action: "undo", changeId: change.changeId, requestKey: randomUUID() } })).ok()).toBe(true);
   await record(page, "Dead lift", daysAgo(0), 235);
   await page.goto("/history");
+  await page.getByRole("link", { name: "One exercise", exact: true }).click();
   await expect(page.getByRole("link", { name: "All recorded workouts (3)", exact: true })).toBeVisible();
 });

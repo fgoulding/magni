@@ -1,0 +1,10 @@
+import type { ProgressHome } from "@/features/progress/types";
+import { ProgressDate } from "./ProgressChrome";
+
+export function RecordedActivitySummary({ activity }: { activity: ProgressHome["activity"] }) {
+  const volume = Math.round(activity.volumeLb).toLocaleString();
+  const missingAllLoads = activity.recordedSets > 0 && activity.missingWeightSets === activity.recordedSets;
+  return (
+    <details className="mt-1 rounded-xl border border-line px-3"><summary className="touch-target cursor-pointer py-3 text-sm font-semibold text-muted">Recorded activity</summary><section className="pb-4" aria-label="Recorded activity"><dl className="grid grid-cols-[repeat(auto-fit,minmax(min(100%,6rem),1fr))] gap-3"><div role="group" aria-label={`${activity.sessions} recorded workouts`}><dt className="text-xs text-muted">Workouts</dt><dd className="display text-2xl">{activity.sessions}</dd></div><div role="group" aria-label={`${activity.recordedSets} recorded sets`}><dt className="text-xs text-muted">Recorded sets</dt><dd className="display text-2xl">{activity.recordedSets}</dd></div><div role="group" aria-label={missingAllLoads ? "No recorded load volume" : `${volume} ${activity.usesKilograms ? "lb equivalent" : "lb"} recorded volume`}><dt className="text-xs text-muted">Volume · {activity.usesKilograms ? "lb equiv." : "lb"}</dt><dd className="display break-words text-2xl">{missingAllLoads ? "—" : volume}</dd></div></dl><p className="mt-3 text-sm text-muted">{activity.from ? <><ProgressDate date={activity.from} />–</> : "All history through "}<ProgressDate date={activity.to} /></p>{activity.usesKilograms && <p className="mt-2 text-sm text-muted">Combined external-load volume uses lb equivalent. Workout details keep original units.</p>}{activity.missingWeightSets > 0 && <p className="mt-2 text-sm text-muted">Load not recorded for {activity.missingWeightSets} sets; excluded from volume.</p>}{activity.emptySessions > 0 && <p className="mt-2 text-sm text-muted">{activity.emptySessions} finished workouts have no recorded sets.</p>}</section></details>
+  );
+}

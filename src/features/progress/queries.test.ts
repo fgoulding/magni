@@ -288,3 +288,105 @@ it("keeps graph chooser reads bounded at 200 and 1000 exercise names",()=>{
  // Informational measurements only: runtime scheduling is not a correctness assertion.
  if(process.env.MAGNI_PROGRESS_QUERY_TIMINGS==="1")console.info("Progress query timings (local disposable SQLite, warmed reads):",JSON.stringify(timing));
 });
+
+function insightOwner(label:string) {
+ return Number(database.db.prepare("INSERT INTO users(email,password_hash) VALUES (?,'hash')").run(`${label}@example.test`).lastInsertRowid);
+}
+function insightWorkout(owner:number,date:string,unit:"lb"|"kg",sets:{reps:number|null;weight:number|null;count?:number}[],status="completed") {
+ const sessionId=Number(database.db.prepare("INSERT INTO sessions(user_id,week_number,date,unit,status,completed,day_name) VALUES (?,1,?,?,?,?,'Saved training')").run(owner,date,unit,status,status==="completed"?1:0).lastInsertRowid);
+ const setIds=sets.map(set=>Number(database.db.prepare("INSERT INTO session_sets(session_id,exercise_name,actual_reps,actual_weight,sets,editor_json) VALUES (?,'Insight row',?,?,?,?)")
+  .run(sessionId,set.reps,set.weight,set.count??1,JSON.stringify({exerciseId:"insight-row",set:{loadMode:"working",role:"work"}})).lastInsertRowid));
+ identity.attachSessionExerciseSources(database.db,owner,sessionId);
+ return {sessionId,setIds,exerciseId:identity.resolveSetExerciseIdentities(owner,sessionId).get(setIds[0])!.exerciseId};
+}
+
+it("summarizes the whole selected range when earlier bests and comparable results fall outside the chart cap",()=>{
+ const owner=insightOwner("insight-cap");
+ const earliest=insightWorkout(owner,"2025-01-01","lb",[{reps:1,weight:300}]);
+ const earlier=insightWorkout(owner,"2025-01-02","lb",[{reps:1,weight:200}]);
+ const kilo=insightWorkout(owner,"2025-01-03","kg",[{reps:1,weight:100}]);
+ database.db.transaction(()=>{for(let index=0;index<120;index++)insightWorkout(owner,"2026-01-01","lb",[{reps:10,weight:null}]);})();
+ const latest=insightWorkout(owner,"2026-01-02","lb",[{reps:1,weight:250}]);
+ const detail=queries.getExerciseDetail(owner,earliest.exerciseId,{limit:2})!;
+ expect(detail.chart.points).toHaveLength(120);expect(detail.chart.truncated).toBe(true);
+ expect(detail.chart.points.some(point=>point.sessionId===earlier.sessionId||point.sessionId===kilo.sessionId)).toBe(false);
+ expect(detail.metricSummaries).toEqual(expect.arrayContaining([
+  expect.objectContaining({metric:"estimate:lb",count:3,latest:expect.objectContaining({sessionId:latest.sessionId,value:250}),previous:expect.objectContaining({sessionId:earlier.sessionId,value:200}),first:expect.objectContaining({sessionId:earliest.sessionId,value:300}),best:expect.objectContaining({sessionId:earliest.sessionId,value:300})}),
+  expect.objectContaining({metric:"estimate:kg",count:1,latest:expect.objectContaining({sessionId:kilo.sessionId,value:100}),previous:null}),
+  expect.objectContaining({metric:"reps",count:124}),
+ ]));
+ expect(detail.metricSummaries).toHaveLength(5);
+ const next=queries.getExerciseDetail(owner,earliest.exerciseId,{limit:2,cursor:detail.observations.nextCursor!})!;
+ expect(next.metricSummaries).toEqual(detail.metricSummaries);expect(next.training).toEqual(detail.training);
+ const filtered=queries.getExerciseDetail(owner,earliest.exerciseId,{from:"2026-01-01",to:"2026-01-02"})!;
+ expect(filtered.metricSummaries?.find(summary=>summary.metric==="estimate:lb")).toMatchObject({count:1,previous:null,first:{sessionId:latest.sessionId},best:{sessionId:latest.sessionId}});
+ expect(filtered.metricSummaries?.some(summary=>summary.metric.endsWith(":kg"))).toBe(false);
+});
+
+it("keeps metric eligibility, original units, same-day ordering and best ties consistent with the chart",()=>{
+ const owner=insightOwner("insight-eligibility");
+ const first=insightWorkout(owner,"2026-10-05","lb",[{reps:10,weight:100,count:3},{reps:1,weight:110},{reps:0,weight:500},{reps:8,weight:null},{reps:null,weight:900}]);
+ const tied=insightWorkout(owner,"2026-10-05","lb",[{reps:10,weight:100}]);
+ const kilos=insightWorkout(owner,"2026-10-05","kg",[{reps:1,weight:60}]);
+ const zero=insightWorkout(owner,"2026-10-06","lb",[{reps:10,weight:0}]);
+ const failed=insightWorkout(owner,"2026-10-07","lb",[{reps:0,weight:900}]);
+ insightWorkout(owner,"2026-10-08","lb",[{reps:10,weight:1000}],"in_progress");
+ insightWorkout(owner,"2026-10-09","lb",[{reps:10,weight:1000}],"skipped");
+ const detail=queries.getExerciseDetail(owner,first.exerciseId)!;
+ const estimate=detail.metricSummaries?.find(summary=>summary.metric==="estimate:lb");
+ expect(estimate).toMatchObject({count:2,latest:{sessionId:tied.sessionId},previous:{sessionId:first.sessionId},first:{sessionId:first.sessionId},best:{sessionId:tied.sessionId}});
+ expect(estimate?.latest?.value).toBeCloseTo(100*(1+10/30));
+ expect(detail.metricSummaries?.find(summary=>summary.metric==="load:lb")).toMatchObject({count:3,latest:{sessionId:zero.sessionId,value:0},previous:{sessionId:tied.sessionId,value:100},best:{sessionId:first.sessionId,value:110}});
+ expect(detail.metricSummaries?.find(summary=>summary.metric==="estimate:kg")).toMatchObject({count:1,latest:{sessionId:kilos.sessionId,value:60,unit:"kg"},previous:null});
+ expect(detail.metricSummaries?.find(summary=>summary.metric==="reps")).toMatchObject({count:5,latest:{sessionId:failed.sessionId,value:0,recordedSets:1,totalReps:0},best:{sessionId:first.sessionId,value:39,recordedSets:6,totalReps:39}});
+ for(const summary of detail.metricSummaries!){
+  const point=detail.chart.points.find(point=>point.sessionId===summary.latest!.sessionId)!;
+  const value=summary.metric==="reps"?point.totalReps:summary.metric.startsWith("estimate:")?point.bestE1rm:point.topWeight;
+  expect(summary.latest!.value).toBe(value);
+ }
+});
+
+it("counts training weeks from Monday dates and keeps volume and missing loads in original units",()=>{
+ const owner=insightOwner("insight-training");
+ const first=insightWorkout(owner,"2026-10-04","lb",[{reps:10,weight:100,count:3},{reps:8,weight:null,count:2}]); // Sunday
+ insightWorkout(owner,"2026-10-05","lb",[{reps:0,weight:200},{reps:null,weight:500}]); // Monday, a new active week
+ insightWorkout(owner,"2026-10-11","kg",[{reps:10,weight:20},{reps:8,weight:null}]); // Same week as Monday
+ const last=insightWorkout(owner,"2026-10-12","kg",[{reps:5,weight:30}]);
+ insightWorkout(owner,"2026-10-19","lb",[{reps:null,weight:200}]); // Empty completed workout
+ const detail=queries.getExerciseDetail(owner,first.exerciseId)!;
+ expect(detail.training).toEqual({activeWeeks:3,firstDate:"2026-10-04",lastDate:"2026-10-12",volumeByUnit:[{unit:"kg",volume:350,recordedSets:3,missingWeightSets:1},{unit:"lb",volume:3000,recordedSets:6,missingWeightSets:2}]});
+ expect(detail.totals).toMatchObject({sessions:4,recordedSets:9,missingWeightSets:3});
+ const single=queries.getExerciseDetail(owner,first.exerciseId,{from:"2026-10-12",to:"2026-10-12"})!;
+ expect(single.training).toEqual({activeWeeks:1,firstDate:"2026-10-12",lastDate:"2026-10-12",volumeByUnit:[{unit:"kg",volume:150,recordedSets:1,missingWeightSets:0}]});
+ expect(single.metricSummaries?.every(summary=>summary.previous===null&&summary.first?.sessionId===last.sessionId)).toBe(true);
+ const empty=queries.getExerciseDetail(owner,first.exerciseId,{from:"2026-10-19",to:"2026-10-20"})!;
+ expect(empty.metricSummaries).toEqual([]);
+ expect(empty.training).toEqual({activeWeeks:0,firstDate:null,lastDate:null,volumeByUnit:[]});
+});
+
+it("distinguishes missing-only unit volume from recorded zero load",()=>{
+ const owner=insightOwner("insight-missing-only");
+ const first=insightWorkout(owner,"2026-10-05","lb",[{reps:10,weight:null,count:3}]);
+ insightWorkout(owner,"2026-10-06","kg",[{reps:10,weight:0,count:2}]);
+ const detail=queries.getExerciseDetail(owner,first.exerciseId)!;
+ expect(detail.training?.volumeByUnit).toEqual([{unit:"kg",volume:0,recordedSets:2,missingWeightSets:0},{unit:"lb",volume:0,recordedSets:3,missingWeightSets:3}]);
+ expect(detail.metricSummaries?.map(summary=>summary.metric)).toEqual(["load:kg","reps"]);
+ expect(detail.metricSummaries?.find(summary=>summary.metric==="load:kg")).toMatchObject({latest:{value:0},previous:null});
+});
+
+it("reflects actual corrections and date ordering without writing data or crossing ownership",()=>{
+ const owner=insightOwner("insight-correction"),other=insightOwner("insight-other");
+ const first=insightWorkout(owner,"2026-10-01","lb",[{reps:1,weight:200}]);
+ const second=insightWorkout(owner,"2026-10-02","lb",[{reps:1,weight:150}]);
+ const foreign=insightWorkout(other,"2026-10-03","lb",[{reps:1,weight:999}]);
+ const before=queries.getExerciseDetail(owner,first.exerciseId)!;
+ expect(before.metricSummaries?.find(summary=>summary.metric==="load:lb")).toMatchObject({latest:{sessionId:second.sessionId,value:150},best:{sessionId:first.sessionId,value:200}});
+ const current=history.getWorkout(owner,first.sessionId)!;
+ history.correctWorkout({userId:owner,sessionId:first.sessionId,expectedRevision:current.revision,requestKey:crypto.randomUUID(),reason:"Correct saved date and load",date:"2026-10-04",sets:[{setId:first.setIds[0],actualReps:1,actualWeight:100}]});
+ const changes=database.db.prepare("SELECT total_changes() AS count").get();
+ const after=queries.getExerciseDetail(owner,first.exerciseId)!;
+ expect(after.metricSummaries?.find(summary=>summary.metric==="load:lb")).toMatchObject({latest:{sessionId:first.sessionId,date:"2026-10-04",value:100},previous:{sessionId:second.sessionId,value:150},first:{sessionId:second.sessionId},best:{sessionId:second.sessionId,value:150}});
+ expect(after.training).toMatchObject({firstDate:"2026-10-02",lastDate:"2026-10-04"});
+ expect(queries.getExerciseDetail(other,first.exerciseId)).toBeNull();expect(queries.getExerciseDetail(owner,foreign.exerciseId)).toBeNull();
+ expect(database.db.prepare("SELECT total_changes() AS count").get()).toEqual(changes);
+});

@@ -232,11 +232,16 @@ decorative. Never emoji.
 `src/components/Charts.tsx` — `Sparkline`, `MiniBars`, `SplitBar`, `DotGrid`.
 They're pure/server-safe inline SVG+CSS and take their hue from `currentColor`,
 so set the color with a `text-*` token class (e.g. `className="text-brand"`).
-Progress (`/history`) starts with one selected exercise chart, a searchable
-exercise chooser led by Squat, Bench and Deadlift, followed by search. Keep
-favorites in their management view. Default to all history and the first primary
-lift with recorded history; preserve explicit exercise/date choices. Show two recent workout
-records beneath it, with full history available on demand. The home screen must
+Progress (`/history`) defaults to **Big three**: Squat, Bench and Deadlift on one
+date/value axis, with one metric and original unit. Distinguish the lifts with
+names, colors and line/marker styles. Keep latest values dated separately; do not
+invent same-day comparisons or a combined max. Each lift opens its individual
+view. Preserve explicit exercise links and **One exercise** view selection.
+The individual view has a searchable chooser led by Squat, Bench and Deadlift,
+followed by search. Keep favorites in their management view. Default to all
+history and the first primary lift with recorded history; preserve explicit
+exercise/date/metric choices. Show two recent workouts beneath the individual
+graph, with full history available on demand. The home screen must
 not grow with the exercise library. Search and deliberate browsing replace a
 bounded page of results; never append an infinite exercise list.
 
@@ -247,8 +252,14 @@ Normalize exact names and approved whole-name equivalents into an owned durable
 exercise identity when measurement families are compatible. Preserve named
 variants and explicit historical separations; offer a variation choice for those
 histories, never a false empty state. Pinning is only a navigation preference.
-Keep date labels spaced when workouts cluster within a long chart range.
-Activity totals are secondary.
+Keep date labels spaced when workouts cluster within a long chart range. Use
+readable rounded axis ticks while preserving actual load precision in summaries
+and evidence. Individual charts show dated latest/previous/best results over the
+full selected range even when plotted points are capped. Point selection has
+44px previous/next controls and source links; dated tables remain accessible.
+One compact selected-exercise training summary shows workouts, recorded sets,
+original-unit load volume and active Monday-based weeks. Missing loads are not
+zero; active weeks are not adherence. Whole-account activity stays secondary.
 Progress queries and identity live in `src/features/progress`; prior-performance
 and training summaries also use `src/features/programs/training-stats.ts`.
 
