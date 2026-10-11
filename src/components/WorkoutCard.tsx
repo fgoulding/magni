@@ -661,7 +661,7 @@ export function WorkoutCard({
         </div>
       ) : (
         <fieldset disabled={completing || refreshingCompletion} className="min-w-0 border-0 border-t border-line p-0">
-          <WorkoutSaveStatus sets={session.sets} isSaved={isSetSaved} unit={unit} />
+          <WorkoutSaveStatus sets={session.sets} isSaved={isSetSaved} />
           {storageWarning || isDraftVolatile(session.id) ? <p role="status" className="px-4 pb-3 text-sm text-muted">Device storage is unavailable. Keep this page open until your pending sets are saved.</p> : null}
           {error ? <div className="px-4 pb-3"><ErrorBanner message={error} /></div> : null}
           {groups.map(group => {

@@ -46,7 +46,7 @@ for (const format of ["quick", "planned", "focus"] as const) describe(`${format}
     expect(screen.getByRole("button", { name: finish })).toBeEnabled();
     const progress = screen.getByRole("region", { name: "Workout progress" });
     expect(progress).toHaveTextContent("1 of 1 sets saved");
-    expect(progress).toHaveTextContent("Recorded volume: load not recorded (lb)");
+    expect(progress).not.toHaveTextContent("Recorded volume");
     expect(progress).not.toHaveTextContent("0 lb");
   });
   it("persists the acknowledged baseline before undoing an older draft without one", async () => {

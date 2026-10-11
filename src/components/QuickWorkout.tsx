@@ -5,6 +5,7 @@ import { LineChart, Zap } from "lucide-react";
 import { useMemo, useState, useSyncExternalStore } from "react";
 import { ExerciseLogCard, SetLogRow } from "./ExerciseLogCard";
 import { WorkoutSaveStatus } from "./WorkoutSaveStatus";
+import { HoldToDeleteWorkout } from "./HoldToDeleteWorkout";
 import { QuickExercisePicker } from "./QuickExercisePicker";
 import { QuickWorkoutEditor } from "./QuickWorkoutEditor";
 import { buildQuickGroups, useWorkoutDraft, workoutInput, workoutRequest } from "./quick-workout-utils";
@@ -40,7 +41,6 @@ export function QuickWorkout({ initialSession, initialDate, todayOnly = false, t
   const [starting, setStarting] = useState(false);
   const [finishing, setFinishing] = useState(false);
   const [recap, setRecap] = useState<Recap | null>(null);
-  const [confirmingDiscard, setConfirmingDiscard] = useState(false);
   const [discarding, setDiscarding] = useState(false);
   const startLocked = !hydrated || starting || !!startDraft.requestKey;
 
@@ -187,18 +187,16 @@ export function QuickWorkout({ initialSession, initialDate, todayOnly = false, t
   }
 
   async function discard() {
-    if (!hydrated || !session) return;
+    if (!hydrated || !session || discarding || finishing || savingIds.size > 0) return;
     setDiscarding(true);
     setError("");
     try {
       const response = await fetch(`/api/sessions/${session.id}`, { method: "DELETE" });
       if (!response.ok) {
         const body = await readResponseJson<{ error?: string }>(response);
-        throw new Error(body?.error ?? "Could not discard workout");
+        throw new Error(body?.error ?? "Could not delete workout. Try again.");
       }
       reset();
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "Could not discard workout");
     } finally {
       setDiscarding(false);
     }
@@ -209,7 +207,6 @@ export function QuickWorkout({ initialSession, initialDate, todayOnly = false, t
     setSession(null);
     setSavingIds(new Set());
     setFailedIds(new Set());
-    setConfirmingDiscard(false);
     setRecap(null);
   }
 
@@ -278,7 +275,7 @@ export function QuickWorkout({ initialSession, initialDate, todayOnly = false, t
       <QuickWorkoutEditor session={session} disabled={!hydrated || hasPendingChanges || savingIds.size > 0 || finishing || discarding} onChanged={setSession} onError={setError} heading={
         <div className="min-w-0 flex-[1_1_10rem]"><h2 className="display break-words text-2xl leading-tight">{session.name || "Quick Workout"}</h2>{session.date && !(todayOnly && session.date === todayDate) && <p className="mt-1 text-xs text-muted">{session.date} · {session.unit ?? "lb"}</p>}</div>
       } />
-      {session.sets.length > 0 && <WorkoutSaveStatus sets={session.sets} isSaved={isSetSaved} unit={session.unit ?? "lb"} />}
+      {session.sets.length > 0 && <WorkoutSaveStatus sets={session.sets} isSaved={isSetSaved} />}
 
       {groups.length === 0 ? (
         <p className="px-4 py-4 text-sm text-muted">Add your first exercise to start logging.</p>
@@ -331,30 +328,7 @@ export function QuickWorkout({ initialSession, initialDate, todayOnly = false, t
         >
           {finishing ? "Finishing…" : "Finish workout"}
         </button>
-        <details className="flex-[0_0_auto] open:flex-[1_0_100%]" onToggle={event => { if (!event.currentTarget.open) setConfirmingDiscard(false); }}>
-          <summary className="touch-target flex cursor-pointer items-center justify-center rounded-xl border border-line px-3 text-sm font-semibold text-muted">More</summary>
-          <div className="mt-2 rounded-xl border border-line bg-surface p-2">
-        {confirmingDiscard ? (
-          <button
-            type="button"
-            onClick={discard}
-            disabled={!hydrated || discarding || finishing || savingIds.size > 0}
-            className="touch-target rounded-xl bg-danger-ink px-4 py-2.5 text-sm font-semibold text-background transition-opacity active:opacity-90 disabled:opacity-50"
-          >
-            {discarding ? "Discarding…" : "Confirm discard"}
-          </button>
-        ) : (
-          <button
-            type="button"
-            onClick={() => setConfirmingDiscard(true)}
-            disabled={!hydrated || finishing || savingIds.size > 0}
-            className="touch-target rounded-xl border border-line bg-surface px-4 py-2.5 text-sm font-semibold text-danger-ink transition-colors active:bg-danger-soft"
-          >
-            Discard
-          </button>
-        )}
-          </div>
-        </details>
+        <HoldToDeleteWorkout disabled={!hydrated || discarding || finishing || savingIds.size > 0} onDelete={discard} />
       </div>
     </section>
   );

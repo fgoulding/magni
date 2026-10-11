@@ -153,22 +153,27 @@ the primary action and keep choosing a program secondary; avoid repeating Histor
 
 Active workout status leads with `N of M sets saved` and a labeled progress bar.
 Count physical sets using the same saved/unsaved state as their rows; pending edits
-and skipped lifts do not increase saved progress. Recorded volume is secondary,
-uses acknowledged actuals and retains each original unit. Quick workout uses one
+and skipped lifts do not increase saved progress. Omit recorded volume from the
+active logger so the first save does not insert a new line. Quick workout uses one
 title, a compact Edit action, and omits the repeated date when embedded in Today.
-Keep Add exercise directly accessible and destructive actions under More.
+Keep Add exercise directly accessible. Quick workout's trash icon requires a
+hold to open a confirmation dialog; only its explicit Delete action deletes.
+Keyboard and assistive activation open the same dialog. Focus Cancel initially
+and return focus to the trash control when canceled. Planned More retains its
+other useful actions.
 
 **Active workout exercises:** Quick Workout, planned Today, Calendar details and
 planned resume share the same exercise disclosure and set-row presentation.
 Use a full-width header button with the exercise name, saved count and
 `aria-expanded`. Collapse is manual and does not mean completion; it preserves
 entered values. Closed summaries still show pending, saving, failure or conflict
-states. Saving the final set leaves its controls and Undo visible.
+states. Saving the final set leaves its controls visible.
 
 Set rows have visible Reps and Weight (unit) labels above generously sized numeric
-inputs, separate save feedback and an explicit Undo action. A saved row replaces
-its Save control with text Undo in the same action slot; editing a saved row
-shows Save and Undo together. At normal phone sizes, inputs and actions share
+inputs and separate save feedback. The same fixed-size check saves and unlogs a
+set: green and pressed after acknowledgement, with an accessible Undo action
+name. Do not replace the icon with text or change its width. Editing a saved row
+shows Save and a secondary Undo icon together. At normal phone sizes, inputs and actions share
 one line. Keep the controls mounted across state changes to preserve focus.
 Fields and actions
 wrap when space is tight or text is enlarged; never squeeze decimal digits behind

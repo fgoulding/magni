@@ -214,7 +214,7 @@ describe("custom workout set logging and draft recovery", () => {
     expect(await screen.findByRole("spinbutton", { name: "Row set 1 reps" })).toHaveValue(7);
   });
 
-  it("keeps acknowledged legacy volume when collapsing and reopening a lift", async () => {
+  it("keeps acknowledged legacy sets when collapsing and reopening a lift", async () => {
     const body = session(true);
     body.sets = [{ ...body.sets[0], editor_json: null, training_max: null }];
     mockServer(body);
@@ -222,7 +222,7 @@ describe("custom workout set logging and draft recovery", () => {
     fireEvent.click(await screen.findByRole("button", { name: "Collapse Row" }));
     fireEvent.click(screen.getByRole("button", { name: "Expand Row" }));
     expect(screen.getByRole("region", { name: "Workout progress" })).toHaveTextContent("1 of 1 sets saved");
-    expect(screen.getByRole("region", { name: "Workout progress" })).toHaveTextContent("Recorded volume: 400 lb·reps");
+    expect(screen.getByRole("region", { name: "Workout progress" })).not.toHaveTextContent("Recorded volume");
     expect(screen.getByRole("spinbutton", { name: "Row set 1 reps" })).toHaveValue(10);
   });
 

@@ -102,10 +102,8 @@ test("Quick Today keeps editing and secondary actions accessible without duplica
   const nav = (await page.getByRole("navigation", { name: "Main navigation" }).boundingBox())!;
   expect(first.y + first.height).toBeLessThanOrEqual(nav.y);
   await page.getByRole("button", { name: "Collapse Dumbbell lateral raise", exact: true }).click();
-  await expect(page.getByRole("button", { name: "Discard", exact: true })).toBeHidden();
-  await page.getByText("More", { exact: true }).click();
-  await expect(page.getByRole("button", { name: "Discard", exact: true })).toBeEnabled();
-  await page.getByText("More", { exact: true }).click();
+  await expect(page.getByRole("button", { name: "Delete workout", exact: true })).toBeEnabled();
+  await expect(page.getByText("More", { exact: true })).toHaveCount(0);
   await page.setViewportSize({ width: 393, height: 659 });
   await page.evaluate(() => { document.documentElement.dataset.theme = "dark"; document.documentElement.style.fontSize = "20px"; });
   await capture(page, info, "iphone16-quick-collapsed-large");

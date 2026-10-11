@@ -12,7 +12,7 @@ const defaults = () => ({
 });
 
 describe("compact set actions", () => {
-  it("replaces the redundant saved check with an explicit Undo action", () => {
+  it("makes the saved check an accessible Undo action", () => {
     const props = defaults();
     render(<SetLogRow {...props} saved logged />);
     expect(screen.getByText("Saved")).toBeVisible();

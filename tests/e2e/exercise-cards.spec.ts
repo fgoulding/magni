@@ -27,7 +27,7 @@ async function captureRows(page: Page, info: TestInfo, name: string) {
       expect(width).toBeGreaterThanOrEqual(90);
       expect(await weight.evaluate(input => Number.parseFloat(getComputedStyle(input).fontSize))).toBeGreaterThanOrEqual(textSize);
     }
-    for (const action of await page.getByRole("button", { name: /^(Finish workout|Discard)$/i }).all()) {
+    for (const action of await page.getByRole("button", { name: /^(Finish workout|Delete workout)$/i }).all()) {
       const size = await action.evaluate(button => ({ text: button.textContent, scroll: button.scrollWidth, client: button.clientWidth }));
       expect(size.scroll, JSON.stringify({ theme, textSize, ...size })).toBeLessThanOrEqual(size.client + 1);
     }

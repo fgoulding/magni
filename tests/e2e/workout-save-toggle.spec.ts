@@ -1,0 +1,142 @@
+import { expect, test } from "@playwright/test";
+import { randomUUID } from "node:crypto";
+import { registerViaApi } from "./helpers";
+
+test.use({ hasTouch: true });
+
+for (const [device, width, height] of [["mini", 375, 629], ["iphone16", 393, 659]] as const) {
+  test(`${device} saving and unlogging a Quick set keeps controls stationary`, async ({ page }, info) => {
+    await page.setViewportSize({ width, height });
+    await page.addInitScript(() => localStorage.setItem("install-help-dismissed", "1"));
+    await registerViaApi(page, `stable-save-${device}`);
+    const created = await page.request.post("/api/sessions", { data: { name: "Quick workout", date: "2026-10-11", newWorkout: true, requestKey: randomUUID() } });
+    expect(created.status()).toBe(201);
+    const session = await created.json();
+    expect((await page.request.post(`/api/sessions/${session.id}/sets`, { data: { name: "Dumbbell row", sets: 3, reps: 10, weight: 100, requestKey: randomUUID() } })).ok()).toBe(true);
+    await page.goto(`/workouts/${session.id}`);
+    const row = page.locator("[data-set-log-row]").first();
+    const save = row.getByRole("button", { name: "Log set 1", exact: true });
+    await expect(save).toBeEnabled();
+    await page.evaluate(() => document.fonts.ready);
+    const geometry = () => row.evaluate(element => [element, ...element.querySelectorAll("input,button:not([hidden])")].map(node => {
+      const box = node.getBoundingClientRect();
+      return { x: box.x, y: box.y + window.scrollY, width: box.width, height: box.height };
+    }));
+    await save.scrollIntoViewIfNeeded();
+    const before = await geometry();
+    await save.click();
+    const saved = row.getByRole("button", { name: "Undo set 1", exact: true });
+    await expect(row.getByText("Saved", { exact: true })).toBeVisible();
+    expect(await geometry()).toEqual(before);
+    await expect(saved).toHaveAttribute("aria-pressed", "true");
+    await expect(saved).toHaveText("");
+    await expect(saved.locator("svg")).toBeVisible();
+    await expect(page.getByText(/Recorded volume/)).toHaveCount(0);
+    const successColors = () => page.evaluate(() => {
+      const sample = document.createElement("span");
+      sample.style.cssText = "position:absolute;visibility:hidden;background:var(--success-soft);color:var(--success-ink)";
+      document.body.append(sample);
+      const styles = getComputedStyle(sample);
+      const colors = { background: styles.backgroundColor, ink: styles.color };
+      sample.remove();
+      return colors;
+    });
+    const light = await successColors();
+    await expect(saved).toHaveCSS("background-color", light.background);
+    await expect(saved).toHaveCSS("color", light.ink);
+    await page.screenshot({ path: info.outputPath(`${device}-saved.png`), fullPage: true, animations: "disabled" });
+    await saved.click();
+    await expect(save).toHaveAttribute("aria-pressed", "false");
+    expect(await geometry()).toEqual(before);
+    await page.reload();
+    await expect(save).toBeEnabled();
+    await expect(row.getByRole("spinbutton", { name: "Weight for set 1" })).toHaveValue("100");
+    const stored = await (await page.request.get(`/api/sessions/${session.id}`)).json();
+    expect(stored.sets[0]).toMatchObject({ actual_reps: null, actual_weight: null });
+    await page.evaluate(() => { document.documentElement.style.fontSize = "32px"; document.documentElement.dataset.theme = "dark"; });
+    await save.click();
+    await expect(saved).toHaveAttribute("aria-pressed", "true");
+    const dark = await successColors();
+    await expect(saved).toHaveCSS("background-color", dark.background);
+    await expect(saved).toHaveCSS("color", dark.ink);
+    expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
+    await page.screenshot({ path: info.outputPath(`${device}-saved-enlarged.png`), fullPage: true, animations: "disabled" });
+  });
+}
+
+test("Quick trash requires a hold and confirmation, supports cancel and retries failed deletion", async ({ page }, info) => {
+  await page.setViewportSize({ width: 375, height: 629 });
+  await page.addInitScript(() => localStorage.setItem("install-help-dismissed", "1"));
+  await registerViaApi(page, "hold-delete");
+  const created = await page.request.post("/api/sessions", { data: { name: "Temporary workout", date: "2026-10-11", newWorkout: true, requestKey: randomUUID() } });
+  expect(created.status()).toBe(201);
+  const session = await created.json();
+  await page.goto(`/workouts/${session.id}`);
+  const trash = page.getByRole("button", { name: "Delete workout", exact: true });
+  const dialog = page.getByRole("dialog", { name: "Delete workout?", exact: true });
+  const cancel = dialog.getByRole("button", { name: "Cancel", exact: true });
+  await expect(trash).toBeEnabled();
+  let deletes = 0;
+  await page.route(`**/api/sessions/${session.id}`, async route => {
+    if (route.request().method() !== "DELETE") return route.continue();
+    deletes++;
+    if (deletes === 1) return route.fulfill({ status: 500, contentType: "application/json", body: JSON.stringify({ error: "Please try again." }) });
+    await route.continue();
+  });
+  await trash.click();
+  await expect(dialog).toBeHidden();
+  await trash.scrollIntoViewIfNeeded();
+  const box = (await trash.boundingBox())!;
+  await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
+  await page.mouse.down();
+  await page.mouse.move(box.x - 25, box.y);
+  await page.waitForTimeout(700); // Past the hold threshold: moving must cancel it.
+  await page.mouse.up();
+  await expect(dialog).toBeHidden();
+  expect(deletes).toBe(0);
+  await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
+  await page.mouse.down();
+  await expect(dialog).toBeVisible();
+  await page.mouse.up();
+  await expect(cancel).toBeFocused();
+  await expect(dialog).toContainText("Are you sure you want to delete this workout?");
+  expect(deletes).toBe(0);
+  await page.screenshot({ path: info.outputPath("mini-delete-confirmation.png") });
+  await cancel.click();
+  await expect(dialog).toBeHidden();
+  await expect(trash).toBeFocused();
+  await trash.tap();
+  await expect(dialog).toBeHidden();
+  // Exercise touch pointer cancellation/hold in both engines. Playwright only
+  // offers native touch taps, so these long pointer sequences are dispatched;
+  // they do not claim to validate physical iOS gesture recognition.
+  const touch = { pointerId: 23, pointerType: "touch", button: 0, isPrimary: true, clientX: box.x + box.width / 2, clientY: box.y + box.height / 2 };
+  await trash.dispatchEvent("pointerdown", touch);
+  await trash.dispatchEvent("pointercancel", touch);
+  await page.waitForTimeout(700);
+  await expect(dialog).toBeHidden();
+  await trash.dispatchEvent("pointerdown", touch);
+  await expect(dialog).toBeVisible();
+  await trash.dispatchEvent("pointerup", touch);
+  await cancel.click();
+  expect(deletes).toBe(0);
+  await trash.press("Enter");
+  await expect(dialog).toBeVisible();
+  await page.keyboard.press("Escape");
+  await expect(dialog).toBeHidden();
+  await expect(trash).toBeFocused();
+  await page.setViewportSize({ width: 393, height: 659 });
+  await page.evaluate(() => { document.documentElement.dataset.theme = "dark"; document.documentElement.style.fontSize = "24px"; });
+  await trash.press("Space");
+  await expect(dialog).toBeVisible();
+  expect(await dialog.evaluate(node => node.scrollWidth <= node.clientWidth)).toBe(true);
+  await page.screenshot({ path: info.outputPath("iphone16-delete-confirmation-enlarged.png") });
+  await dialog.getByRole("button", { name: "Delete", exact: true }).click();
+  await expect(dialog.getByRole("alert")).toHaveText("Please try again.");
+  expect(deletes).toBe(1);
+  expect((await page.request.get(`/api/sessions/${session.id}`)).ok()).toBe(true);
+  await dialog.getByRole("button", { name: "Delete", exact: true }).click();
+  await expect(dialog).toBeHidden();
+  expect(deletes).toBe(2);
+  expect((await page.request.get(`/api/sessions/${session.id}`)).status()).toBe(404);
+});

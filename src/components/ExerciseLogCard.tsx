@@ -1,6 +1,6 @@
 "use client";
 
-import { ChevronDown, Check } from "lucide-react";
+import { ChevronDown, Check, Undo2 } from "lucide-react";
 import { useId, useRef, useState, type ReactNode } from "react";
 import styles from "./ExerciseLogCard.module.css";
 
@@ -59,17 +59,16 @@ export function SetLogRow({ number, count = 1, name, reps, weight, unit, addedWe
         </label>
         <div className={styles.actions}>
           <button ref={primaryRef} type="button" aria-label={primaryIsUndo ? undoLabel : count > 1 ? `Save ${count}-set log` : saveLabel}
-            aria-pressed={primaryIsUndo ? undefined : saved} disabled={actionDisabled} onClick={primaryIsUndo ? onUndo : onSave}
-            className={`touch-target inline-flex items-center justify-center rounded-xl font-semibold transition-colors disabled:opacity-70 ${primaryIsUndo ? `${styles.undo} border border-line bg-surface text-sm text-muted active:bg-surface-muted` : `${styles.save} bg-foreground text-base text-background active:opacity-90`}`}>
-            <Check aria-hidden="true" size={18} className={primaryIsUndo ? styles.concealed : undefined} />
-            <span className={primaryIsUndo ? undefined : styles.concealed}>{undoPending ? "Retry undo" : "Undo"}</span>
+            aria-pressed={saved} disabled={actionDisabled} onClick={primaryIsUndo ? onUndo : onSave}
+            className={`${styles.iconAction} touch-target inline-flex items-center justify-center rounded-xl border transition-colors outline-none focus-visible:ring-2 focus-visible:ring-brand disabled:opacity-70 ${saved ? "border-success-line bg-success-soft text-success-ink active:opacity-90" : undoPending ? "border-danger-line bg-danger-soft text-danger-ink active:opacity-90" : "border-foreground bg-foreground text-background active:opacity-90"}`}>
+            <Check aria-hidden="true" size={18} />
           </button>
           <button type="button" hidden={!secondaryUndo} aria-label={undoLabel} disabled={actionDisabled || !secondaryUndo} onClick={() => {
             // The primary slot becomes Retry undo during the request. Keep focus
             // there instead of on the secondary control that is about to hide.
             primaryRef.current?.focus();
             onUndo();
-          }} className={`${styles.undo} touch-target inline-flex items-center justify-center rounded-xl border border-line bg-surface text-sm font-semibold text-muted active:bg-surface-muted disabled:opacity-50`}>Undo</button>
+          }} className={`${styles.iconAction} touch-target inline-flex items-center justify-center rounded-xl border border-line bg-surface text-muted outline-none focus-visible:ring-2 focus-visible:ring-brand active:bg-surface-muted disabled:opacity-50`}><Undo2 aria-hidden="true" size={18} /></button>
         </div>
       </div>
     </div>

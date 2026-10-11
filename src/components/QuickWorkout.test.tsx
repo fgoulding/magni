@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import "@testing-library/jest-dom/vitest";
-import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { QuickWorkout } from "./QuickWorkout";
@@ -13,6 +13,13 @@ const response = (body: unknown, status = 200) => new Response(JSON.stringify(bo
 const editReps = (value: string) => fireEvent.change(screen.getByRole("spinbutton", { name: "Reps for set 1" }), { target: { value } });
 
 beforeEach(() => {
+  vi.stubGlobal("PointerEvent", class extends MouseEvent {
+    pointerId: number;
+    isPrimary: boolean;
+    constructor(type: string, init: PointerEventInit = {}) { super(type, init); this.pointerId = init.pointerId ?? 1; this.isPrimary = init.isPrimary ?? true; }
+  });
+  HTMLDialogElement.prototype.showModal = function () { this.setAttribute("open", ""); };
+  HTMLDialogElement.prototype.close = function () { this.removeAttribute("open"); };
   const storage = new Map<string, string>();
   vi.stubGlobal("localStorage", {
     getItem: (key: string) => storage.get(key) ?? null,
@@ -20,7 +27,7 @@ beforeEach(() => {
     removeItem: (key: string) => storage.delete(key),
   });
 });
-afterEach(() => { cleanup(); vi.restoreAllMocks(); vi.unstubAllGlobals(); });
+afterEach(() => { cleanup(); vi.useRealTimers(); vi.restoreAllMocks(); vi.unstubAllGlobals(); });
 
 describe("QuickWorkout save recovery", () => {
   it("shows the acknowledged date after an edit moves a Today workout to another day", async () => {
@@ -61,19 +68,104 @@ describe("QuickWorkout save recovery", () => {
     expect(screen.getByRole("spinbutton", { name: "Reps for set 1" })).toHaveValue(7);
   });
 
-  it("keeps destructive discard under More while Add exercise stays directly available", async () => {
+  it("requires a hold and explicit confirmation to delete while Add exercise stays available", async () => {
+    vi.useFakeTimers();
     const fetchMock = vi.fn().mockResolvedValue(response({ success: true }));
     vi.stubGlobal("fetch", fetchMock);
     render(<QuickWorkout initialSession={initialSession} todayOnly />);
     expect(screen.getByRole("button", { name: "Add exercise" })).toBeVisible();
-    expect(screen.getByRole("button", { name: "Discard" })).not.toBeVisible();
-    await userEvent.setup().click(screen.getByText("More", { exact: true }));
-    expect(screen.getByRole("button", { name: "Discard" })).toBeVisible();
-    fireEvent.click(screen.getByRole("button", { name: "Discard" }));
+    const trigger = screen.getByRole("button", { name: "Delete workout" });
+    fireEvent.pointerDown(trigger, { button: 0, pointerId: 1, clientX: 20, clientY: 20 });
+    act(() => vi.advanceTimersByTime(599));
+    fireEvent.pointerUp(trigger, { pointerId: 1 });
+    fireEvent.click(trigger, { detail: 1 });
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+    fireEvent.pointerDown(trigger, { button: 0, pointerId: 1, clientX: 20, clientY: 20 });
+    act(() => vi.advanceTimersByTime(600));
+    const dialog = screen.getByRole("dialog", { name: "Delete workout?" });
+    expect(dialog).toHaveTextContent("Are you sure you want to delete this workout?");
+    expect(within(dialog).getByRole("button", { name: "Cancel" })).toHaveFocus();
     expect(fetchMock).not.toHaveBeenCalled();
-    fireEvent.click(screen.getByRole("button", { name: "Confirm discard" }));
-    expect(await screen.findByRole("button", { name: "Quick workout" })).toBeVisible();
+    await act(async () => fireEvent.click(within(dialog).getByRole("button", { name: "Delete" })));
+    expect(screen.getByRole("button", { name: "Quick workout" })).toBeVisible();
     expect(fetchMock).toHaveBeenCalledWith("/api/sessions/42", { method: "DELETE" });
+  });
+
+  it.each(["release", "cancel", "leave", "move", "capture lost", "window blur"])("cancels a delete hold on %s without opening confirmation", (cancellation) => {
+    vi.useFakeTimers();
+    const fetchMock = vi.fn(); vi.stubGlobal("fetch", fetchMock);
+    render(<QuickWorkout initialSession={initialSession} />);
+    const trigger = screen.getByRole("button", { name: "Delete workout" });
+    fireEvent.pointerDown(trigger, { button: 0, pointerId: 1, clientX: 20, clientY: 20 });
+    act(() => vi.advanceTimersByTime(300));
+    if (cancellation === "release") fireEvent.pointerUp(trigger, { pointerId: 1 });
+    if (cancellation === "cancel") fireEvent.pointerCancel(trigger, { pointerId: 1 });
+    if (cancellation === "leave") fireEvent.pointerLeave(trigger, { pointerId: 1 });
+    if (cancellation === "move") fireEvent.pointerMove(trigger, { pointerId: 1, clientX: 40, clientY: 20 });
+    if (cancellation === "capture lost") fireEvent.lostPointerCapture(trigger, { pointerId: 1 });
+    if (cancellation === "window blur") fireEvent(window, new Event("blur"));
+    act(() => vi.advanceTimersByTime(600));
+    fireEvent.click(trigger, { detail: 1 });
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it.each(["{Enter}", " "])("opens confirmation with keyboard %s and restores focus after cancel or Escape", async (key) => {
+    const fetchMock = vi.fn(); vi.stubGlobal("fetch", fetchMock);
+    const user = userEvent.setup();
+    render(<QuickWorkout initialSession={initialSession} />);
+    const trigger = screen.getByRole("button", { name: "Delete workout" });
+    trigger.focus(); await user.keyboard(key);
+    let dialog = screen.getByRole("dialog", { name: "Delete workout?" });
+    expect(within(dialog).getByRole("button", { name: "Cancel" })).toHaveFocus();
+    await user.click(within(dialog).getByRole("button", { name: "Cancel" }));
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+    expect(trigger).toHaveFocus();
+    fireEvent.click(trigger, { detail: 0 });
+    dialog = screen.getByRole("dialog", { name: "Delete workout?" });
+    fireEvent(dialog, new Event("cancel", { cancelable: true }));
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+    expect(trigger).toHaveFocus();
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it("keeps failed deletion recoverable in the dialog and prevents duplicate confirmations", async () => {
+    let resolve!: (response: Response) => void;
+    const fetchMock = vi.fn().mockResolvedValueOnce(response({ error: "Unable to delete right now" }, 503)).mockImplementationOnce(() => new Promise<Response>(done => { resolve = done; }));
+    vi.stubGlobal("fetch", fetchMock);
+    render(<QuickWorkout initialSession={initialSession} />);
+    fireEvent.click(screen.getByRole("button", { name: "Delete workout" }), { detail: 0 });
+    const dialog = screen.getByRole("dialog", { name: "Delete workout?" });
+    fireEvent.click(within(dialog).getByRole("button", { name: "Delete" }));
+    expect(await within(dialog).findByRole("alert")).toHaveTextContent("Unable to delete right now");
+    expect(screen.getByRole("heading", { name: "Dumbbell Row" })).toBeInTheDocument();
+    const confirmation = within(dialog).getByRole("button", { name: "Delete" });
+    fireEvent.click(confirmation); fireEvent.click(confirmation);
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(within(dialog).getByRole("button", { name: "Deleting…" })).toBeDisabled();
+    expect(within(dialog).getByRole("button", { name: "Cancel" })).toBeDisabled();
+    fireEvent(dialog, new Event("cancel", { cancelable: true }));
+    expect(dialog).toBeVisible();
+    await act(async () => resolve(response({ success: true })));
+    expect(screen.getByRole("button", { name: "Quick workout" })).toBeVisible();
+  });
+
+  it("cancels an active hold and blocks deletion while a set save is pending", async () => {
+    vi.useFakeTimers();
+    let resolve!: (response: Response) => void;
+    const fetchMock = vi.fn(() => new Promise<Response>(done => { resolve = done; }));
+    vi.stubGlobal("fetch", fetchMock);
+    render(<QuickWorkout initialSession={initialSession} />);
+    const trigger = screen.getByRole("button", { name: "Delete workout" });
+    fireEvent.pointerDown(trigger, { button: 0, pointerId: 1 });
+    act(() => vi.advanceTimersByTime(300));
+    editReps("7"); fireEvent.click(screen.getByRole("button", { name: "Save set 1" }));
+    expect(trigger).toBeDisabled();
+    act(() => vi.advanceTimersByTime(600));
+    fireEvent.click(trigger, { detail: 0 });
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    await act(async () => resolve(response({ actual_reps: 7, actual_weight: 40 })));
   });
 
   it("resolves a lost older start without opening it on Today and uses a fresh key for today", async () => {
