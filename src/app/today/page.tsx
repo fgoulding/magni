@@ -212,7 +212,7 @@ export default async function TodayPage({ searchParams }: { searchParams?: Promi
           </section>
         </>
       ) : null}
-        {!quickWorkout && (primary ? <Link href={`/workouts/new?date=${todayKey}`} className="touch-target inline-flex items-center justify-center rounded-xl px-4 py-2 text-sm font-semibold text-muted hover:bg-surface-muted">Quick workout</Link> : <QuickWorkout initialSession={null} todayOnly todayDate={todayKey} prominentStart={!hasWorkouts} />)}
+        {!quickWorkout && (primary ? <Link href={`/workouts/new?date=${todayKey}&returnTo=%2Ftoday`} className="touch-target inline-flex items-center justify-center rounded-xl px-4 py-2 text-sm font-semibold text-muted hover:bg-surface-muted">Quick workout</Link> : <QuickWorkout initialSession={null} todayOnly todayDate={todayKey} prominentStart={!hasWorkouts} />)}
         {otherActive.length > 0 ? <section aria-label="Other active workouts"><h2 className="eyebrow mb-2 text-xs text-muted">Resume another workout</h2>{otherActive.map(row => workoutOption(row, "Resume"))}</section> : null}
         {otherToday.length > 0 ? <section aria-label="Other workouts today"><h2 className="eyebrow mb-2 text-xs text-muted">Also today</h2>{otherToday.map(row => workoutOption(row, "Scheduled today"))}</section> : null}
 

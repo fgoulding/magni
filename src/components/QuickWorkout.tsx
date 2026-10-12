@@ -1,6 +1,7 @@
 "use client";
 
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 import { LineChart, Zap } from "lucide-react";
 import { useMemo, useState, useSyncExternalStore } from "react";
 import { ExerciseLogCard, SetLogRow } from "./ExerciseLogCard";
@@ -10,6 +11,7 @@ import { QuickExercisePicker } from "./QuickExercisePicker";
 import { QuickWorkoutEditor } from "./QuickWorkoutEditor";
 import { buildQuickGroups, useWorkoutDraft, workoutInput, workoutRequest } from "./quick-workout-utils";
 import { readResponseJson, type WorkoutSet } from "@/components/workout-card-utils";
+import { withWorkoutReturn, workoutDeletionReturnHref, workoutReturnHref } from "@/features/workouts/navigation";
 
 export type QuickSession = { id: number; sets: WorkoutSet[]; name?: string; date?: string; unit?: "lb" | "kg"; revision?: number };
 
@@ -24,7 +26,9 @@ type Recap = {
 /** Inline "Quick Workout" card for the Today tab: start a program-less session,
  *  add exercises on the fly, log each set, and finish. Reuses the program-agnostic
  *  session routes (POST /api/sessions, POST/PUT .../sets, PATCH/DELETE the session). */
-export function QuickWorkout({ initialSession, initialDate, todayOnly = false, todayDate, prominentStart = false }: { initialSession: QuickSession | null; initialDate?: string; todayOnly?: boolean; todayDate?: string; prominentStart?: boolean }) {
+export function QuickWorkout({ initialSession, initialDate, todayOnly = false, todayDate, prominentStart = false, returnTo, standalone = false }: { initialSession: QuickSession | null; initialDate?: string; todayOnly?: boolean; todayDate?: string; prominentStart?: boolean; returnTo?: string; standalone?: boolean }) {
+  const router = useRouter();
+  const safeReturn = workoutReturnHref(returnTo) ?? (todayOnly ? "/today" : null);
   // The HTML preview must not accept edits before draft change handlers are attached.
   const hydrated = useSyncExternalStore(subscribeHydration, () => true, () => false);
   const [startDraft, storeStart] = useWorkoutDraft<{ name: string; date: string; unit: "lb" | "kg"; requestKey?: string }>(`magni.quick.start.${initialDate ?? "today"}`, { name: "Quick Workout", date: initialDate ?? "", unit: "lb" });
@@ -72,7 +76,7 @@ export function QuickWorkout({ initialSession, initialDate, todayOnly = false, t
         return;
       }
       setSession({ ...body, sets: body.sets ?? [] });
-      if (initialDate) window.history.replaceState(null, "", `/workouts/${body.id}`);
+      if (initialDate) window.history.replaceState(null, "", withWorkoutReturn(`/workouts/${body.id}`, safeReturn));
       storeStart(null);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Could not start workout");
@@ -197,6 +201,10 @@ export function QuickWorkout({ initialSession, initialDate, todayOnly = false, t
         throw new Error(body?.error ?? "Could not delete workout. Try again.");
       }
       reset();
+      if (standalone) {
+        router.replace(workoutDeletionReturnHref(safeReturn, session.id));
+        router.refresh();
+      }
     } finally {
       setDiscarding(false);
     }
@@ -220,7 +228,7 @@ export function QuickWorkout({ initialSession, initialDate, todayOnly = false, t
           {recap.volume > 0 ? ` · ${new Intl.NumberFormat("en-US").format(Math.round(recap.volume))} ${session?.unit ?? "lb"} total` : ""}.
         </p>
         <div className="mt-4 flex flex-wrap justify-center gap-2">
-          <Link href={`/workouts/${session?.id}`} className="touch-target inline-flex items-center rounded-xl border border-line px-4 text-sm font-semibold">View workout</Link>
+          <Link href={withWorkoutReturn(`/workouts/${session?.id}`, safeReturn)} className="touch-target inline-flex items-center rounded-xl border border-line px-4 text-sm font-semibold">View workout</Link>
           <Link
             href="/history"
             className="touch-target inline-flex items-center justify-center gap-2 rounded-xl border border-line bg-surface px-4 text-sm font-semibold text-foreground transition-colors active:bg-surface-muted"
@@ -228,14 +236,14 @@ export function QuickWorkout({ initialSession, initialDate, todayOnly = false, t
             <LineChart aria-hidden="true" size={16} />
             Stats
           </Link>
-          <button
+          {standalone ? <Link href={withWorkoutReturn("/workouts/new", safeReturn)} className="touch-target inline-flex items-center justify-center gap-1.5 rounded-xl border border-line bg-surface px-4 text-sm font-semibold text-muted transition-colors active:bg-surface-muted"><Zap aria-hidden="true" size={16} />New</Link> : <button
             type="button"
             onClick={reset}
             className="touch-target inline-flex items-center justify-center gap-1.5 rounded-xl border border-line bg-surface px-4 text-sm font-semibold text-muted transition-colors active:bg-surface-muted"
           >
             <Zap aria-hidden="true" size={16} />
             New
-          </button>
+          </button>}
         </div>
       </section>
     );

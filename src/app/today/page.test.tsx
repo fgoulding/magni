@@ -35,7 +35,7 @@ describe('focused Today layout', () => {
     expect(screen.getByRole('region', { name: 'Primary workout' })).toHaveAttribute('data-occurrence-id', '1');
     expect(screen.getByRole('link', { name: /Program 2.*Day 2/ })).toHaveAttribute('href', '/calendar?month=2026-09&date=2026-09-06&workout=occurrence-2');
     expect(screen.queryByRole('link', { name: /Program 3.*Day 3/ })).not.toBeInTheDocument();
-    expect(screen.getByRole('link', { name: 'Quick workout' })).toHaveAttribute('href', '/workouts/new?date=2026-09-06');
+    expect(screen.getByRole('link', { name: 'Quick workout' })).toHaveAttribute('href', '/workouts/new?date=2026-09-06&returnTo=%2Ftoday');
     expect(screen.queryByRole('button', { name: 'Quick workout' })).not.toBeInTheDocument();
   });
   it('does not automatically resume old planned or unplanned workouts', async () => {

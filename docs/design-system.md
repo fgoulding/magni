@@ -231,10 +231,12 @@ independent progression. Exercise reuse creates a complete, independent copy.
 
 **Bottom nav** (`BottomNav.tsx`): fixed, solid `bg-surface`,
 `border-t border-line`. Active tab = `text-brand-strong` + a `bg-brand` top
-indicator bar + `aria-current="page"`. Inactive = `text-faint`. Labels use
+indicator bar + `aria-current="page"`. Unselected = `text-muted` (these remain
+operable controls, so their labels must meet normal text contrast). Labels use
 normal case at 11px. The `.app-nav` targets are at least 64px high; its bottom
-padding clears the device safe area and raises the controls above the home
-indicator. Keep matching content clearance in `layout.tsx`.
+padding equals the device safe area, without an additional spacer or minimum.
+The solid background reaches the viewport bottom. Share `--app-nav-height`
+with the content clearance in `layout.tsx`, plus a 1rem gap for the final action.
 
 **Dialogs/sheets:** overlay `bg-black/35`, panel `rounded-2xl bg-surface`,
 header with `.eyebrow` + `.display` title and a ghost Close.

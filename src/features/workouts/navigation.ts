@@ -29,3 +29,38 @@ export function withWorkoutReturn(href: string, returnTo: string | null): string
   const safe = workoutReturnHref(returnTo);
   return safe ? `${href}${href.includes("?") ? "&" : "?"}returnTo=${encodeURIComponent(safe)}` : href;
 }
+
+/** Follow only validated workout intermediates; a history page stays Progress. */
+export function workoutNavigationOrigin(returnTo: unknown): "/today" | "/calendar" | "/history" {
+  let current = workoutReturnHref(returnTo);
+  for (let depth = 0; current && depth < 8; depth++) {
+    const url = new URL(current, "https://magni.invalid");
+    if (url.pathname === "/today") return "/today";
+    if (url.pathname === "/calendar") return "/calendar";
+    if (!/^\/workouts\/[1-9]\d*(?:\/resume)?$/.test(url.pathname)) break;
+    current = workoutReturnHref(url.searchParams.get("returnTo"));
+  }
+  return "/history";
+}
+
+export function workoutReturnLabel(returnTo: string | null): string {
+  return returnTo?.startsWith("/calendar?") ? "← Back to Calendar"
+    : returnTo?.startsWith("/history") ? "← Back to Progress"
+    : returnTo?.startsWith("/today") ? "← Back to Today"
+    : returnTo?.startsWith("/workouts/") ? "← Back to workout" : "← Workout history";
+}
+
+/** Never return to the workout that was just deleted or reopen its calendar card. */
+export function workoutDeletionReturnHref(returnTo: unknown, deletedId: number): string {
+  let current = workoutReturnHref(returnTo);
+  for (let depth = 0; current && depth < 8; depth++) {
+    const url = new URL(current, "https://magni.invalid");
+    if (url.pathname === `/workouts/${deletedId}` || url.pathname === `/workouts/${deletedId}/resume`) {
+      current = workoutReturnHref(url.searchParams.get("returnTo"));
+      continue;
+    }
+    if (url.pathname === "/calendar" && url.searchParams.get("workout") === `history-${deletedId}`) return calendarReturnHref(current)!;
+    return current;
+  }
+  return "/workouts";
+}

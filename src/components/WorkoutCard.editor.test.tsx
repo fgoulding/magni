@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import "@testing-library/jest-dom/vitest";
-import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { WorkoutCard } from "./WorkoutCard";
 import type { SessionResponse } from "./workout-card-utils";
@@ -42,6 +42,42 @@ beforeEach(() => {
 afterEach(() => { cleanup(); vi.restoreAllMocks(); vi.unstubAllGlobals(); router.refresh.mockClear(); });
 
 describe("custom workout set logging and draft recovery", () => {
+  it.each([
+    { sessionUnit: "lb" as const, authoredUnit: "kg" as const, total: "84" },
+    { sessionUnit: "kg" as const, authoredUnit: "lb" as const, total: "49" },
+  ])("keeps authored $authoredUnit and added $sessionUnit loads unchanged while normalizing the recap", async ({ sessionUnit, authoredUnit, total }) => {
+    const body = session(false, authoredUnit);
+    body.unit = sessionUnit;
+    body.sets = [{ ...body.sets[0], reps: 2, rep_out_target: 2, calculated_weight: 10 }];
+    const accessory = { id: 4, exercise_name: "Curl", reps: 2, sets: 1, set_number: 1, rep_out_target: 2, calculated_weight: 20, actual_reps: null, actual_weight: null, superset_group: null, editor_json: null };
+    const save = vi.fn<(url: string, init?: RequestInit) => Promise<Response>>().mockImplementation(async (url, init) => response(init?.method === "POST" && url.endsWith("/sets") ? { sets: [accessory] } : { success: true }));
+    mockServer(body, save);
+    render(<WorkoutCard {...props} />);
+    expect(await screen.findByRole("spinbutton", { name: `Row set 1 weight (${authoredUnit})` })).toHaveValue(10);
+    fireEvent.click(screen.getByRole("button", { name: "Add exercise" }));
+    expect(screen.getByRole("spinbutton", { name: "Weight" }).closest("label")).toHaveTextContent(`Weight (${sessionUnit})`);
+    fireEvent.change(screen.getByLabelText("New exercise name"), { target: { value: "Curl" } });
+    edit("Sets", "1"); edit("New exercise reps", "2"); edit("Weight", "20");
+    fireEvent.click(screen.getByRole("button", { name: "Add to workout" }));
+    expect(await screen.findByRole("spinbutton", { name: `Curl set 1 weight (${sessionUnit})` })).toHaveValue(20);
+    const row = within(screen.getByRole("heading", { name: "Row" }).closest("section")!);
+    const curl = within(screen.getByRole("heading", { name: "Curl" }).closest("section")!);
+    fireEvent.click(row.getByRole("button", { name: "Save set 1" }));
+    await waitFor(() => expect(row.getByRole("button", { name: "Undo set 1" })).toBeEnabled());
+    fireEvent.click(curl.getByRole("button", { name: "Save set 1" }));
+    await waitFor(() => expect(curl.getByRole("button", { name: "Undo set 1" })).toBeEnabled());
+    expect(save.mock.calls.filter(([, init]) => init?.method === "PUT").map(([, init]) => JSON.parse(init!.body as string))).toEqual([
+      { setId: 1, actualReps: 2, actualWeight: 10, expectedActual: { reps: null, weight: null } },
+      { setId: 4, actualReps: 2, actualWeight: 20, expectedActual: { reps: null, weight: null } },
+    ]);
+    expect(JSON.parse(save.mock.calls[0][1]!.body as string)).toEqual({ name: "Curl", sets: 1, reps: 2, weight: 20 });
+    fireEvent.click(screen.getByRole("button", { name: "Finish Workout" }));
+    expect(await screen.findByText("Workout complete")).toBeVisible();
+    expect(screen.getByText(`${sessionUnit} moved`).previousElementSibling).toHaveTextContent(total);
+    expect(screen.getByText(`20 ${authoredUnit} total`)).toBeVisible();
+    expect(screen.getByText(`40 ${sessionUnit} total`)).toBeVisible();
+  });
+
   it("shows independent editable ranges and context for identical sets without a legacy training-max editor", async () => {
     mockServer(session(false, "kg"));
     render(<WorkoutCard {...props} />);

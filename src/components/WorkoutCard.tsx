@@ -32,6 +32,8 @@ import { isDraftVolatile, parseDrafts, readDraftSnapshot, subscribeDrafts, write
 
 import styles from "./WorkoutCard.module.css";
 
+const KG_TO_LB = 2.2046226218487757;
+
 function isPending(draft?: SetDraft): boolean { return !!draft && draft.intent !== "retained"; }
 
 /** Compact "last time" line, e.g. "5/5/8 @ 225 lb" or "12/12/12 BW +25". */
@@ -129,10 +131,14 @@ export function WorkoutCard({
   const [prs, setPrs] = useState<{ exercise: string; e1rm: number; weight: number; reps: number }[]>([]);
 
   const groups = buildGroups(session?.sets ?? []);
-  const unit = (session?.sets[0] ? editorMetadata(session.sets[0])?.unit : undefined) ?? session?.unit ?? "lb";
+  const unit = session?.unit ?? "lb";
   // Summaries describe acknowledged actuals; pending edits never inflate performed volume.
   const summaryRows = buildSummaryRows(session?.sets ?? [], completedSetIds, {}, {}, {}, unit);
-  const totalTonnage = summaryRows.reduce((sum, row) => sum + row.tonnage, 0);
+  // Preserve each row's recorded unit, converting only the combined display total.
+  const totalTonnage = summaryRows.reduce((sum, row) => {
+    const conversion = row.unit === unit ? 1 : row.unit === "kg" ? KG_TO_LB : 1 / KG_TO_LB;
+    return sum + row.tonnage * conversion;
+  }, 0);
   const totalSets = (session?.sets ?? []).filter(set => completedSetIds.has(set.id)).reduce((sum, set) => sum + Math.max(1, set.sets), 0);
   const liftCount = summaryRows.length;
   function isSetSaved(set: WorkoutSet): boolean {
@@ -472,6 +478,7 @@ export function WorkoutCard({
 
   const addExerciseControl = session ? (<AddSessionExerciseForm
     sessionId={session.id}
+    unit={session.unit ?? "lb"}
             onAdded={(newSets) => {
               setSession((prev) => (prev ? { ...prev, sets: [...prev.sets, ...newSets] } : prev));
               setValues((prev) => ({

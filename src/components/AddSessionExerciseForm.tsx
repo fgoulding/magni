@@ -7,10 +7,12 @@ import { readResponseJson, type WorkoutSet } from "@/components/workout-card-uti
 /** Adds an ad-hoc accessory exercise to the active session and reports the new sets. */
 export function AddSessionExerciseForm({
   sessionId,
+  unit = "lb",
   onAdded,
   onError,
 }: {
   sessionId: number;
+  unit?: "lb" | "kg";
   onAdded: (sets: WorkoutSet[]) => void;
   onError: (message: string) => void;
 }) {
@@ -51,63 +53,68 @@ export function AddSessionExerciseForm({
   return (
     <div className="px-4 pb-1 pt-2">
       {open ? (
-        <div className="flex flex-col gap-2 rounded-xl border border-line bg-surface-muted p-3">
-          <input
-            value={name}
-            onChange={(event) => setName(event.target.value)}
-            placeholder="Exercise name"
-            aria-label="New exercise name"
-            className="touch-target rounded-xl border border-line bg-surface px-3 text-base outline-none transition-colors focus:border-brand"
-          />
-          <div className="grid grid-cols-3 gap-2">
-            <label className="flex flex-col gap-1 text-xs font-semibold text-muted">
+        <div className="flex min-w-0 flex-col gap-3 rounded-xl border border-line bg-surface-muted p-3">
+          <label className="min-w-0 text-xs font-semibold text-muted">
+            Exercise name
+            <input
+              value={name}
+              onChange={(event) => setName(event.target.value)}
+              aria-label="New exercise name"
+              className="touch-target mt-1 w-full min-w-0 rounded-xl border border-line bg-surface px-3 text-base font-normal outline-none transition-colors focus:border-brand"
+            />
+          </label>
+          <div className="flex flex-wrap gap-2">
+            <label className="flex min-w-[min(100%,4rem)] flex-[1_1_4rem] flex-col gap-1 text-xs font-semibold text-muted">
               Sets
               <input
                 type="number"
+                inputMode="numeric"
                 min={1}
                 value={sets}
                 onChange={(event) => setSets(event.target.value)}
                 aria-label="Sets"
-                className="touch-target rounded-xl border border-line bg-surface px-2 text-center text-base font-normal outline-none focus:border-brand"
+                className="touch-target w-full min-w-0 rounded-xl border border-line bg-surface px-2 text-base font-normal outline-none focus:border-brand"
               />
             </label>
-            <label className="flex flex-col gap-1 text-xs font-semibold text-muted">
+            <label className="flex min-w-[min(100%,4rem)] flex-[1_1_4rem] flex-col gap-1 text-xs font-semibold text-muted">
               Reps
               <input
                 type="number"
+                inputMode="numeric"
                 min={1}
                 value={reps}
                 onChange={(event) => setReps(event.target.value)}
                 aria-label="New exercise reps"
-                className="touch-target rounded-xl border border-line bg-surface px-2 text-center text-base font-normal outline-none focus:border-brand"
+                className="touch-target w-full min-w-0 rounded-xl border border-line bg-surface px-2 text-base font-normal outline-none focus:border-brand"
               />
             </label>
-            <label className="flex flex-col gap-1 text-xs font-semibold text-muted">
-              Weight
+            <label className="flex min-w-[min(100%,7rem)] flex-[2_1_7rem] flex-col gap-1 text-xs font-semibold text-muted">
+              Weight ({unit})
               <input
                 type="number"
+                inputMode="decimal"
                 min={0}
+                step="any"
                 value={weight}
                 onChange={(event) => setWeight(event.target.value)}
-                placeholder="lb"
                 aria-label="Weight"
-                className="touch-target rounded-xl border border-line bg-surface px-2 text-center text-base font-normal outline-none focus:border-brand"
+                className="touch-target w-full min-w-0 rounded-xl border border-line bg-surface px-2 text-base font-normal outline-none focus:border-brand"
               />
             </label>
           </div>
-          <div className="flex gap-2">
+          <div className="flex flex-wrap gap-2">
             <button
               type="button"
               disabled={adding || !name.trim()}
               onClick={submit}
-              className="touch-target flex-1 rounded-xl bg-brand px-4 py-2.5 text-sm font-semibold text-white transition-colors active:bg-brand-strong disabled:opacity-50"
+              className="touch-target min-w-0 flex-[1_1_9rem] rounded-xl bg-foreground px-3 py-2 text-base font-semibold text-background transition-colors active:opacity-90 disabled:opacity-50"
             >
               {adding ? "Adding…" : "Add to workout"}
             </button>
             <button
               type="button"
               onClick={() => setOpen(false)}
-              className="touch-target rounded-xl border border-line bg-surface px-4 py-2.5 text-sm font-semibold text-faint transition-colors active:bg-surface-muted"
+              className="touch-target min-w-0 flex-[1_1_5rem] rounded-xl border border-line bg-surface px-3 py-2 text-sm font-semibold text-muted transition-colors active:bg-surface-muted"
             >
               Cancel
             </button>

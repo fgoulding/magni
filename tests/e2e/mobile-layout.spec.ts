@@ -88,9 +88,11 @@ test("Today exercise cards collapse and scroll above navigation without old work
   await page.screenshot({ path: info.outputPath("today-focused-dark-large.png"), fullPage: true, animations: "disabled" });
   await quick.click();
   await expect(page.getByRole("heading", { name: "Add workout", exact: true })).toBeVisible();
+  await expect(page.getByRole("navigation", { name: "Main navigation" }).getByRole("link", { name: "Today", exact: true })).toHaveAttribute("aria-current", "page");
   await expect(page.getByLabel("Workout date", { exact: true })).toHaveValue(new Date().toISOString().slice(0, 10));
   await page.getByRole("button", { name: "Quick workout", exact: true }).click();
   await expect(page.getByRole("button", { name: "Finish workout", exact: true })).toBeVisible();
+  await expect.poll(() => new URL(page.url()).searchParams.get("returnTo")).toBe("/today");
   await page.getByRole("navigation", { name: "Main navigation" }).getByRole("link", { name: "Today", exact: true }).click();
   await expect(page.getByRole("button", { name: "Finish workout", exact: true })).toBeVisible();
   await expect(page.getByRole("button", { name: "Finish Workout", exact: true })).toHaveCount(0);
@@ -150,7 +152,8 @@ test("bottom tabs clear the home indicator and stay still while the agenda scrol
   const today = nav.getByRole("link", { name: "Today", exact: true });
   const before = await today.boundingBox();
   expect(before!.height).toBeGreaterThanOrEqual(60);
-  expect(page.viewportSize()!.height - before!.y - before!.height).toBeGreaterThanOrEqual(40);
+  await page.screenshot({ path: info.outputPath("calendar-safe-area-before-scroll.png"), animations: "disabled" });
+  expect.soft(page.viewportSize()!.height - before!.y - before!.height).toBeCloseTo(34, 0);
   const restDay = page.locator('[data-calendar-date="2090-06-05"]');
   expect((await restDay.boundingBox())!.height).toBeLessThan(108);
   await page.evaluate(() => window.scrollTo(0, document.body.scrollHeight));
@@ -160,6 +163,24 @@ test("bottom tabs clear the home indicator and stay still while the agenda scrol
   await page.evaluate(() => { document.documentElement.dataset.theme = "dark"; document.documentElement.style.fontSize = "20px"; });
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
   await page.screenshot({ path: info.outputPath("calendar-bottom-clearance-dark-large.png"), fullPage: true, animations: "disabled" });
+  for (const viewport of [{ width: 375, height: 812 }, { width: 393, height: 852 }]) {
+    await page.setViewportSize(viewport);
+    for (const fontSize of [16, 20, 32]) {
+      for (const inset of [0, 34]) {
+        await page.evaluate(({ inset, fontSize }) => {
+          document.documentElement.style.setProperty("--safe-bottom", `${inset}px`, "important");
+          document.documentElement.style.fontSize = `${fontSize}px`;
+        }, { inset, fontSize });
+        const tab = (await today.boundingBox())!;
+        const bar = (await nav.boundingBox())!;
+        expect.soft(viewport.height - tab.y - tab.height).toBeCloseTo(inset, 0);
+        expect.soft(bar.y + bar.height).toBeCloseTo(viewport.height, 0);
+        expect(tab.height).toBeGreaterThanOrEqual(64);
+        expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
+        await page.screenshot({ path: info.outputPath(`tabs-${viewport.width}-text-${fontSize}-inset-${inset}.png`), animations: "disabled" });
+      }
+    }
+  }
 });
 
 test("older unfinished workouts stay on their Calendar date while Today starts separately", async ({ page }) => {

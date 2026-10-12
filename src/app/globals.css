@@ -20,6 +20,9 @@
   --app-height: 100dvh;
   --safe-top: env(safe-area-inset-top);
   --safe-bottom: env(safe-area-inset-bottom);
+  --app-nav-row-height: 4rem;
+  --app-nav-inset: max(var(--safe-bottom), env(safe-area-inset-bottom));
+  --app-nav-height: calc(var(--app-nav-row-height) + var(--app-nav-inset) + 1px);
 
   /* Surfaces */
   --background: #faf9f7;
@@ -163,13 +166,13 @@ textarea {
 }
 
 .app-nav {
-  /* Keep labels above the home gesture area even if the first JS measurement
-     was zero. A solid surface avoids content flashing through while scrolling. */
-  padding-bottom: calc(max(0.75rem, var(--safe-bottom), env(safe-area-inset-bottom)) + 0.5rem);
+  /* The surface reaches the bottom; reserve the home-gesture inset only once.
+     env() also covers the first frame before AppHeight freezes the inset. */
+  padding-bottom: var(--app-nav-inset);
 }
 
 .app-nav .touch-target {
-  min-height: 4rem;
+  min-height: var(--app-nav-row-height);
 }
 
 .touch-target {

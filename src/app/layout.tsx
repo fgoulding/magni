@@ -66,7 +66,7 @@ export default async function RootLayout({
       <body className="min-h-full bg-background text-foreground">
         <ThemeScript />
         <AppHeight />
-        <main className="app-shell safe-top mx-auto flex min-h-[var(--app-height)] w-full max-w-xl flex-col pb-[calc(6rem+max(var(--safe-bottom),env(safe-area-inset-bottom)))]">
+        <main className="app-shell safe-top mx-auto flex min-h-[var(--app-height)] w-full max-w-xl flex-col pb-[calc(var(--app-nav-height)+1rem)]">
           <InstallHelp />
           {children}
         </main>

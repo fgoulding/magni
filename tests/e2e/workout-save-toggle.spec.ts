@@ -139,4 +139,7 @@ test("Quick trash requires a hold and confirmation, supports cancel and retries 
   await expect(dialog).toBeHidden();
   expect(deletes).toBe(2);
   expect((await page.request.get(`/api/sessions/${session.id}`)).status()).toBe(404);
+  await expect(page).toHaveURL(/\/workouts$/);
+  await page.reload();
+  await expect(page.getByRole("heading", { name: "Workout history", exact: true })).toBeVisible();
 });

@@ -41,7 +41,14 @@ describe('workout draft protection',()=>{
  });
  it('allows correcting a rejected fractional rep prescription',async()=>{
    const error=vi.fn(); const onAdded=vi.fn();
-   const fetcher=vi.fn().mockResolvedValueOnce(response([])).mockResolvedValueOnce(response({error:'Use whole reps from 1 to 1,000.'},400)).mockResolvedValueOnce(response({sets:fixture().sets,sessionRevision:2}));
+   let additions=0;
+   const fetcher=vi.fn(async(url:string,options:RequestInit)=>{
+     if(options.method==='GET'&&url.startsWith('/api/sessions/recent-exercises?')) return response([]);
+     if(options.method==='POST'&&url==='/api/sessions/200/sets') return ++additions===1
+       ? response({error:'Use whole reps from 1 to 1,000.'},400)
+       : response({sets:fixture().sets,sessionRevision:2});
+     throw new Error(`Unexpected request: ${options.method} ${url}`);
+   });
    vi.stubGlobal('fetch',fetcher);
    render(<QuickExercisePicker sessionId={200} unit='lb' disabled={false} onAdded={onAdded} onError={error}/>);
    fireEvent.click(screen.getByRole('button',{name:'Add exercise'}));
@@ -52,17 +59,26 @@ describe('workout draft protection',()=>{
    expect(screen.getByLabelText('New exercise reps')).toBeEnabled();
    expect(screen.getByLabelText('New exercise reps')).toHaveValue(1.5);
    expect(screen.getByLabelText('New exercise name')).toHaveValue('Row');
-   const rejected=JSON.parse(fetcher.mock.calls[1][1].body);
+   const rejected=JSON.parse(fetcher.mock.calls.filter(([,options])=>options.method==='POST')[0][1].body as string);
    fireEvent.change(screen.getByLabelText('New exercise reps'),{target:{value:'10'}});
    fireEvent.click(screen.getByRole('button',{name:'Add to workout'}));
    await waitFor(()=>expect(onAdded).toHaveBeenCalled());
-   const corrected=JSON.parse(fetcher.mock.calls[2][1].body);
+   const posts=fetcher.mock.calls.filter(([,options])=>options.method==='POST');
+   expect(posts).toHaveLength(2);
+   const corrected=JSON.parse(posts[1][1].body as string);
    expect(corrected.prescription).toEqual(Array.from({length:3},()=>({reps:10,weight:0})));
    expect(corrected.requestKey).not.toBe(rejected.requestKey);
    expect(localStorage.getItem('magni.quick.200.new-exercise')).toBeNull();
  });
  it('preserves the exact addition retry after an uncertain response',async()=>{
-   const fetcher=vi.fn().mockResolvedValueOnce(response([])).mockResolvedValueOnce(response({error:'Response lost'},503)).mockResolvedValueOnce(response({sets:fixture().sets,sessionRevision:2}));
+   let additions=0;
+   const fetcher=vi.fn(async(url:string,options:RequestInit)=>{
+     if(options.method==='GET'&&url.startsWith('/api/sessions/recent-exercises?')) return response([]);
+     if(options.method==='POST'&&url==='/api/sessions/200/sets') return ++additions===1
+       ? response({error:'Response lost'},503)
+       : response({sets:fixture().sets,sessionRevision:2});
+     throw new Error(`Unexpected request: ${options.method} ${url}`);
+   });
    vi.stubGlobal('fetch',fetcher);
    const onAdded=vi.fn();
    render(<QuickExercisePicker sessionId={200} unit='lb' disabled={false} onAdded={onAdded} onError={vi.fn()}/>);
@@ -73,7 +89,9 @@ describe('workout draft protection',()=>{
    expect(screen.getByLabelText('New exercise name')).toBeDisabled();
    fireEvent.click(retry);
    await waitFor(()=>expect(onAdded).toHaveBeenCalled());
-   expect(fetcher.mock.calls[2][1].body).toBe(fetcher.mock.calls[1][1].body);
+   const posts=fetcher.mock.calls.filter(([,options])=>options.method==='POST');
+   expect(posts).toHaveLength(2);
+   expect(posts[1][1].body).toBe(posts[0][1].body);
  });
  it('keeps separately added same-name exercises independently editable',async()=>{
    const source=fixture();source.sets.push({...source.sets[0],id:202,exercise_key:'row-b',sort_order:2});
