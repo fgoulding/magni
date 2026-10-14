@@ -83,7 +83,9 @@ test("custom set drafts recover and double progression advances once from real U
   const held = await (await hold).json();
   expect(held.progressionDecisions[0].result.outcome).toBe("hold");
   expect(held.progressionDecisions[0].afterState.load).toBe(40);
-  await expect(page.getByText(held.progressionDecisions[0].result.explanation, { exact: true })).toBeVisible();
+  await expect(page.getByText("Workout complete today", { exact: true })).toBeVisible();
+  await expect(page.getByText("Progression", { exact: true })).toHaveCount(0);
+  await expect(page.getByText(held.progressionDecisions[0].result.explanation, { exact: true })).toHaveCount(0);
   await nextScheduledWorkout(page);
   await expect(page.getByRole("dialog")).toContainText("40 lb");
   const secondStart = page.waitForResponse(response => /\/api\/programs\/\d+\/sessions$/.test(response.url()) && response.request().method() === "POST");

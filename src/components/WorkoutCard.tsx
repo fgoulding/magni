@@ -118,7 +118,6 @@ export function WorkoutCard({
   const [failedIds, setFailedIds] = useState<Set<number>>(new Set());
   const [conflicts, setConflicts] = useState<Record<number, ActualBaseline>>({});
   const [storageWarning, setStorageWarning] = useState(false);
-  const [progressionDecisions, setProgressionDecisions] = useState<{ progressionKey: string; exerciseName: string; result: { explanation: string } }[]>([]);
   const draftSnapshot = useSyncExternalStore(subscribeDrafts, () => readDraftSnapshot(session?.id), () => null);
   const drafts = useMemo(() => parseDrafts(draftSnapshot), [draftSnapshot]);
   const hasPending = session?.sets.some((set) => isPending(drafts[set.id])) ?? false;
@@ -388,13 +387,12 @@ export function WorkoutCard({
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ sessionId: session.id, ...(holdUnavailable ? { unavailableTemplatePolicy: "hold" } : {}) }),
       });
-      const body = await readResponseJson<{ error?: string; code?: string; success?: boolean; progressionDecisions?: typeof progressionDecisions }>(response);
+      const body = await readResponseJson<{ error?: string; code?: string; success?: boolean }>(response);
       if (!response.ok) {
         setUnavailableTemplate(body?.code === "missing_legacy_template");
         throw new Error(body?.error ?? "Could not complete workout");
       }
       if (body?.success !== true) throw new Error("Could not confirm completion. Retry finishing to recover the saved result.");
-      setProgressionDecisions(body?.progressionDecisions ?? []);
       writeDrafts(session.id, {});
       // Today can replace this card with its saved recap. Commit the local
       // completion and refreshed route together so navigation never starts
@@ -600,12 +598,6 @@ export function WorkoutCard({
               </div>
             )}
           </div>
-          {progressionDecisions.length > 0 && (
-            <div className="mt-5 rounded-xl border border-line bg-surface-muted p-3.5">
-              <p className="eyebrow text-xs text-brand-strong">Progression</p>
-              {progressionDecisions.map((decision) => <div key={decision.progressionKey} className="mt-3 text-sm"><p className="font-semibold">{decision.exerciseName}</p><p className="mt-1 text-muted">{decision.result.explanation}</p></div>)}
-            </div>
-          )}
           {prs.length > 0 && (
             <div className="mt-5 rounded-xl border border-brand-line bg-brand-soft p-3.5">
               <p className="eyebrow flex items-center gap-1.5 text-[11px] text-brand-strong">

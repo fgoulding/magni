@@ -6,8 +6,6 @@ import { QuickWorkout } from "@/components/QuickWorkout";
 import { WorkoutCard } from "@/components/WorkoutCard";
 import { buildSummaryRows, formatTonnage, summaryDetail } from "@/components/workout-card-utils";
 import { getWorkout } from "@/features/workouts/history-service";
-import type { EditorCompletionDecision } from "@/features/program-editor/execution";
-import { db } from "@/lib/db";
 import {
   getProgramLibrary,
   getQuickWorkoutForToday,
@@ -41,8 +39,6 @@ function renderWorkout(row: TodayWorkoutSummary, label: string, rounding: number
   if (row.today_session_status) {
     const completed = row.today_session_status === "completed" && row.today_session_id ? getWorkout(userId, row.today_session_id) : null;
     const summary = completed ? buildSummaryRows(completed.sets, new Set(completed.sets.filter(set => set.actual_reps !== null).map(set => set.id)), {}, {}, {}, completed.unit) : [];
-    const event = completed ? db.prepare("SELECT e.decision_json FROM program_editor_progression_events e JOIN sessions s ON s.id=e.session_id WHERE e.session_id=? AND s.user_id=?").get(completed.id, userId) as { decision_json: string } | undefined : undefined;
-    const decisions: EditorCompletionDecision[] = event ? JSON.parse(event.decision_json) : [];
     return (
       <section key={key} className="card p-4">
         <p className={`eyebrow text-xs ${completed ? "text-success-ink" : "text-muted"}`}>{finishedMessage(row.today_session_status)}</p>
@@ -50,7 +46,6 @@ function renderWorkout(row: TodayWorkoutSummary, label: string, rounding: number
         <p className="mt-1 text-sm text-muted">{row.program_name} · Week {row.current_week}</p>
         {completed && <div className="mt-4 text-left">
           {summary.length ? <ul className="flex flex-col gap-2">{summary.map(lift => <li key={lift.key} className="flex flex-wrap items-center justify-between gap-2 rounded-xl bg-surface-muted px-3.5 py-2.5 text-sm"><span className="font-semibold">{lift.exerciseName}</span><span className="text-right text-muted">{summaryDetail(lift)}<span className="block font-display text-xs tracking-tight">{formatTonnage(lift.tonnage)} {lift.unit} total</span></span></li>)}</ul> : <p className="text-sm text-muted">No sets were logged.</p>}
-          {decisions.length > 0 && <div className="mt-4 rounded-xl border border-line bg-surface-muted p-3.5"><p className="eyebrow text-xs text-brand-strong">Progression</p>{decisions.map(decision => <div key={decision.progressionKey} className="mt-3 text-sm"><p className="font-semibold">{decision.exerciseName}</p><p className="mt-1 text-muted">{decision.result.explanation}</p></div>)}</div>}
         </div>}
         <Link
           href={`/workouts/${row.today_session_id}`}

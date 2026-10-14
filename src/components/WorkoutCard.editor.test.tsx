@@ -286,13 +286,15 @@ describe("custom workout set logging and draft recovery", () => {
     expect(saves[1]).toMatchObject({ actualReps: 8, expectedActual: { reps: 11, weight: 40 } });
   });
 
-  it("shows the returned progression explanation after completion", async () => {
+  it("keeps progression explanations out of the completed workout summary", async () => {
     mockServer(session(true), async (url) => response(url.includes("complete-and-advance") ? {
       success: true, progressionDecisions: [{ progressionKey: "row-state", exerciseName: "Row", result: { explanation: "All work sets reached 12 reps. Next load: 42.5 lb." } }],
     } : { prs: [] }));
     render(<WorkoutCard {...props} />);
     await screen.findByRole("spinbutton", { name: "Row set 1 reps" });
     fireEvent.click(screen.getByRole("button", { name: "Finish Workout" }));
-    expect(await screen.findByText("All work sets reached 12 reps. Next load: 42.5 lb.")).toBeInTheDocument();
+    expect(await screen.findByText("Workout complete")).toBeInTheDocument();
+    expect(screen.queryByText("Progression", { exact: true })).not.toBeInTheDocument();
+    expect(screen.queryByText("All work sets reached 12 reps. Next load: 42.5 lb.")).not.toBeInTheDocument();
   });
 });

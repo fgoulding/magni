@@ -162,6 +162,9 @@ Keyboard and assistive activation open the same dialog. Focus Cancel initially
 and return focus to the trash control when canceled. Planned More retains its
 other useful actions.
 
+Completed workout summaries show performed lifts and personal records without a
+Progression explanation panel. Finishing still applies the configured rules.
+
 **Active workout exercises:** Quick Workout, planned Today, Calendar details and
 planned resume share the same exercise disclosure and set-row presentation.
 Use a full-width header button with the exercise name, saved count and

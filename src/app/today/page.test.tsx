@@ -12,7 +12,6 @@ const state = vi.hoisted(() => ({
 }));
 vi.mock('@/lib/auth', () => ({ requireUser: async () => ({ id: 1, email: 'today@example.test' }), getSettingNumber: () => 2.5 }));
 vi.mock('@/lib/user-date', () => ({ userDateKey: () => '2026-09-06' }));
-vi.mock('@/lib/db', () => ({ db: { prepare: () => ({ get: () => undefined }) } }));
 vi.mock('@/features/programs/program-service', () => ({ getTodayWorkoutDashboard: () => state.dashboard, getQuickWorkoutForToday: () => state.quick, getProgramLibrary: () => ({ activeRuns: [] }) }));
 vi.mock('@/features/workouts/history-service', () => ({ getWorkout: () => null }));
 vi.mock('@/components/WorkoutCard', () => ({ WorkoutCard: (props: { occurrenceId?: number; resumeSessionId?: number; programId: number; dayName: string; scheduledDate?: string }) => <section aria-label="Primary workout" data-occurrence-id={props.occurrenceId} data-resume-session-id={props.resumeSessionId} data-program-id={props.programId} data-scheduled-date={props.scheduledDate}><h2>{props.dayName}</h2><button>Start Workout</button></section> }));

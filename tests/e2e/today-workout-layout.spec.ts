@@ -80,7 +80,13 @@ test("Today overview and saved-set progress remain readable at mini and iPhone 1
   await page.setViewportSize({ width: 393, height: 659 });
   await page.getByRole("button", { name: "Finish Workout", exact: true }).click();
   await expect(page.getByText("Workout complete today", { exact: true })).toBeVisible();
+  await expect(page.getByText("Progression", { exact: true })).toHaveCount(0);
   await capture(page, info, "iphone16-completed");
+  await page.setViewportSize({ width: 375, height: 629 });
+  await page.reload();
+  await expect(page.getByText("Workout complete today", { exact: true })).toBeVisible();
+  await expect(page.getByText("Progression", { exact: true })).toHaveCount(0);
+  await capture(page, info, "mini-completed-reloaded");
 });
 
 test("Quick Today keeps editing and secondary actions accessible without duplicate identity", async ({ page }, info) => {
