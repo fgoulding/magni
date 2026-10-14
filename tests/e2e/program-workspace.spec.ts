@@ -3,7 +3,7 @@ import { registerViaApi } from "./helpers";
 
 test("failed saves allow leaving with local work and invalid drafts can be deleted", async ({ page }) => {
   await registerViaApi(page, "draft-invalid-exit");
-  await page.goto("/programs/editor/new");
+  await page.goto("/programs/editor/new?advanced=1");
   await page.getByLabel("Program name", { exact: true }).fill("Saved draft");
   await page.getByRole("button", { name: "Save now", exact: true }).click();
   await expect(page.getByText("Draft saved", { exact: true })).toBeVisible();
@@ -23,7 +23,7 @@ test("failed saves allow leaving with local work and invalid drafts can be delet
 
 test("back saves a new draft and Programs offers cancel and permanent draft removal", async ({ page }, info) => {
   await registerViaApi(page, "draft-delete-library");
-  await page.goto("/programs/editor/new");
+  await page.goto("/programs/editor/new?advanced=1");
   await page.getByLabel("Program name", { exact: true }).fill("Draft to remove");
   const draftUrl = page.url();
   await page.getByRole("link", { name: "Back to programs", exact: true }).click();
@@ -49,7 +49,7 @@ test("back saves a new draft and Programs offers cancel and permanent draft remo
 
 test("editor labels Undo and deletes its own saved draft", async ({ page }, info) => {
   await registerViaApi(page, "draft-delete-editor");
-  await page.goto("/programs/editor/new");
+  await page.goto("/programs/editor/new?advanced=1");
   await page.getByLabel("Program name", { exact: true }).fill("Keep this name");
   await page.getByRole("button", { name: "Save now", exact: true }).click();
   await expect(page.getByText("Draft saved", { exact: true })).toBeVisible();
@@ -70,9 +70,8 @@ test("editor labels Undo and deletes its own saved draft", async ({ page }, info
 test("workspace has a wide desktop outline and a contained phone fallback", async ({ page }, info) => {
   await registerViaApi(page, "desktop-workspace");
   await page.goto("/programs");
-  await page.getByRole("link", { name: "Open workspace", exact: true }).click();
-  await expect(page).toHaveURL(/\/programs\/editor$/);
-  await page.getByRole("link", { name: "New program", exact: true }).click();
+  await page.getByRole("link", { name: "Build a program", exact: true }).click();
+  await page.getByRole("button", { name: "Advanced editing", exact: true }).click();
   await page.getByText("Presets and program files", { exact: true }).click();
   await page.getByRole("combobox", { name: "Optional starting structure", exact: true }).selectOption("percentage");
   await page.getByRole("button", { name: "Apply preset", exact: true }).click();
@@ -109,7 +108,7 @@ test("workspace has a wide desktop outline and a contained phone fallback", asyn
 test("prescription rows preserve load bases and advanced fields through copy, reorder and reload", async ({ page }, info) => {
   test.setTimeout(90_000);
   await registerViaApi(page, "prescription-rows");
-  await page.goto("/programs/editor/new");
+  await page.goto("/programs/editor/new?advanced=1");
   await page.getByText("Presets and program files", { exact: true }).click();
   await page.getByRole("combobox", { name: "Optional starting structure", exact: true }).selectOption("double");
   await page.getByRole("button", { name: "Apply preset", exact: true }).click();

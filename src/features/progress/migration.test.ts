@@ -38,7 +38,7 @@ describe("schema 4 through 6 exercise identities", () => {
       const tables = ["sessions", "session_sets", "program_editor_progression_state", "program_editor_progression_events", "workout_corrections"];
       const before = tables.map(table => db.prepare(`SELECT * FROM ${table} ORDER BY rowid`).all());
       runMigrations(db);
-      expect(db.pragma("user_version", { simple: true })).toBe(6);
+      expect(db.pragma("user_version", { simple: true })).toBe(7);
       expect(tables.map(table => db.prepare(`SELECT * FROM ${table} ORDER BY rowid`).all())).toEqual(before);
       const rows = db.prepare(`SELECT x.session_set_id,s.exercise_id FROM exercise_set_sources x JOIN exercise_sources s USING(user_id,source_key) ORDER BY x.session_set_id`).all() as { session_set_id: number; exercise_id: string }[];
       expect(rows).toHaveLength(6);

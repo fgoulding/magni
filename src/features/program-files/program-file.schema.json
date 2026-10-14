@@ -1,0 +1,483 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://magni.tylergould.ing/api/program-imports/schema",
+  "title": "Magni program file version 1",
+  "description": "Reusable program definitions and optional personal setup. Import creates a private draft. Cross-field references, rep ranges, progression relationships, size and schedule limits are additionally checked by Magni.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "format",
+    "schemaVersion",
+    "program"
+  ],
+  "properties": {
+    "format": {
+      "const": "magni.program"
+    },
+    "schemaVersion": {
+      "const": 1
+    },
+    "program": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "name",
+        "description",
+        "unit",
+        "weeks"
+      ],
+      "properties": {
+        "name": {
+          "type": "string",
+          "maxLength": 140
+        },
+        "description": {
+          "type": "string",
+          "maxLength": 8000
+        },
+        "unit": {
+          "enum": [
+            "lb",
+            "kg"
+          ]
+        },
+        "weeks": {
+          "type": "array",
+          "items": {
+            "$ref": "#/definitions/week"
+          },
+          "maxItems": 52
+        }
+      }
+    },
+    "setup": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [],
+      "properties": {
+        "cycles": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 52
+        },
+        "weekdays": {
+          "type": "array",
+          "items": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 6
+          },
+          "maxItems": 7,
+          "minItems": 1,
+          "uniqueItems": true
+        },
+        "startDate": {
+          "type": "string",
+          "pattern": "^(|\\d{4}-\\d{2}-\\d{2})$"
+        }
+      }
+    }
+  },
+  "definitions": {
+    "id": {
+      "type": "string",
+      "maxLength": 100,
+      "minLength": 1,
+      "pattern": "\\S"
+    },
+    "rounding": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "mode",
+        "quantum"
+      ],
+      "properties": {
+        "mode": {
+          "enum": [
+            "nearest",
+            "down",
+            "up"
+          ]
+        },
+        "quantum": {
+          "type": "number",
+          "exclusiveMinimum": 0
+        }
+      }
+    },
+    "condition": {
+      "oneOf": [
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "type",
+            "target"
+          ],
+          "properties": {
+            "type": {
+              "const": "all_work_sets"
+            },
+            "target": {
+              "enum": [
+                "minimum",
+                "maximum"
+              ]
+            }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "type"
+          ],
+          "properties": {
+            "type": {
+              "const": "double_progression"
+            }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "type"
+          ],
+          "properties": {
+            "type": {
+              "const": "weekly"
+            }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "type",
+            "setId",
+            "targetReps"
+          ],
+          "properties": {
+            "type": {
+              "const": "designated_set"
+            },
+            "setId": {
+              "$ref": "#/definitions/id"
+            },
+            "targetReps": {
+              "type": "integer",
+              "minimum": 1
+            }
+          }
+        }
+      ]
+    },
+    "rule": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "version",
+        "condition",
+        "action"
+      ],
+      "properties": {
+        "version": {
+          "const": 1
+        },
+        "condition": {
+          "$ref": "#/definitions/condition"
+        },
+        "action": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "variable",
+            "unit",
+            "operation",
+            "amount",
+            "rounding",
+            "timing"
+          ],
+          "properties": {
+            "variable": {
+              "enum": [
+                "load",
+                "trainingMax",
+                "reps"
+              ]
+            },
+            "unit": {
+              "enum": [
+                "lb",
+                "kg",
+                "reps"
+              ]
+            },
+            "operation": {
+              "enum": [
+                "add",
+                "percent"
+              ]
+            },
+            "amount": {
+              "type": "number"
+            },
+            "rounding": {
+              "$ref": "#/definitions/rounding"
+            },
+            "timing": {
+              "enum": [
+                "per_exposure",
+                "weekly"
+              ]
+            }
+          }
+        },
+        "skipPolicy": {
+          "enum": [
+            "hold",
+            "count_failure"
+          ]
+        },
+        "partialPolicy": {
+          "enum": [
+            "hold",
+            "count_failure"
+          ]
+        },
+        "failureReset": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "afterFailures",
+            "percent",
+            "rounding"
+          ],
+          "properties": {
+            "afterFailures": {
+              "type": "integer",
+              "minimum": 1
+            },
+            "percent": {
+              "type": "number",
+              "exclusiveMinimum": 0,
+              "maximum": 100
+            },
+            "rounding": {
+              "$ref": "#/definitions/rounding"
+            }
+          }
+        }
+      }
+    },
+    "set": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "role",
+        "repMin",
+        "repMax",
+        "loadMode",
+        "load",
+        "effortKind",
+        "effort",
+        "restSeconds",
+        "tempo",
+        "notes"
+      ],
+      "properties": {
+        "id": {
+          "$ref": "#/definitions/id"
+        },
+        "role": {
+          "enum": [
+            "warmup",
+            "work",
+            "top",
+            "backoff",
+            "amrap"
+          ]
+        },
+        "repMin": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 1000
+        },
+        "repMax": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 1000
+        },
+        "loadMode": {
+          "enum": [
+            "working",
+            "fixed",
+            "percent",
+            "bodyweight",
+            "added"
+          ]
+        },
+        "load": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 1000000
+        },
+        "effortKind": {
+          "enum": [
+            "none",
+            "rpe",
+            "rir"
+          ]
+        },
+        "effort": {
+          "type": "number",
+          "minimum": -1000000,
+          "maximum": 1000000
+        },
+        "restSeconds": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 3600
+        },
+        "tempo": {
+          "type": "string",
+          "maxLength": 80
+        },
+        "notes": {
+          "type": "string",
+          "maxLength": 4000
+        }
+      }
+    },
+    "exercise": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "name",
+        "progressionKey",
+        "baseLoad",
+        "trainingMax",
+        "supersetGroup",
+        "notes",
+        "rule",
+        "sets"
+      ],
+      "properties": {
+        "id": {
+          "$ref": "#/definitions/id"
+        },
+        "historyKey": {
+          "$ref": "#/definitions/id"
+        },
+        "name": {
+          "type": "string",
+          "maxLength": 140
+        },
+        "progressionKey": {
+          "type": "string",
+          "maxLength": 120,
+          "minLength": 1,
+          "pattern": "\\S"
+        },
+        "baseLoad": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 1000000
+        },
+        "trainingMax": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 1000000
+        },
+        "supersetGroup": {
+          "type": "string",
+          "maxLength": 100
+        },
+        "notes": {
+          "type": "string",
+          "maxLength": 4000
+        },
+        "rule": {
+          "anyOf": [
+            {
+              "type": "null"
+            },
+            {
+              "$ref": "#/definitions/rule"
+            }
+          ]
+        },
+        "sets": {
+          "type": "array",
+          "items": {
+            "$ref": "#/definitions/set"
+          },
+          "maxItems": 30
+        }
+      }
+    },
+    "day": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "name",
+        "exercises"
+      ],
+      "properties": {
+        "id": {
+          "$ref": "#/definitions/id"
+        },
+        "name": {
+          "type": "string",
+          "maxLength": 140
+        },
+        "exercises": {
+          "type": "array",
+          "items": {
+            "$ref": "#/definitions/exercise"
+          },
+          "maxItems": 40
+        }
+      }
+    },
+    "week": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "name",
+        "block",
+        "deload",
+        "days"
+      ],
+      "properties": {
+        "id": {
+          "$ref": "#/definitions/id"
+        },
+        "name": {
+          "type": "string",
+          "maxLength": 140
+        },
+        "block": {
+          "type": "string",
+          "maxLength": 140
+        },
+        "deload": {
+          "type": "boolean"
+        },
+        "days": {
+          "type": "array",
+          "items": {
+            "$ref": "#/definitions/day"
+          },
+          "maxItems": 14
+        }
+      }
+    }
+  }
+}

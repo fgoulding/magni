@@ -1,0 +1,135 @@
+{
+  "format": "magni.program",
+  "schemaVersion": 1,
+  "program": {
+    "name": "Squat and row example",
+    "description": "One day, one superset of three rounds. A small editable example; expand days and exercises to build your own program.",
+    "unit": "lb",
+    "weeks": [
+      {
+        "id": "week-one",
+        "name": "Week 1",
+        "block": "",
+        "deload": false,
+        "days": [
+          {
+            "id": "day-one",
+            "name": "Squat and row",
+            "exercises": [
+              {
+                "id": "squat-slot",
+                "historyKey": "squat",
+                "name": "Barbell back squat",
+                "progressionKey": "squat-progression",
+                "baseLoad": 0,
+                "trainingMax": 0,
+                "supersetGroup": "A",
+                "notes": "Choose your working weight before logging.",
+                "rule": null,
+                "sets": [
+                  {
+                    "id": "squat-set-1",
+                    "role": "work",
+                    "repMin": 6,
+                    "repMax": 8,
+                    "loadMode": "working",
+                    "load": 0,
+                    "effortKind": "rir",
+                    "effort": 2,
+                    "restSeconds": 120,
+                    "tempo": "",
+                    "notes": "Choose your working weight before logging."
+                  },
+                  {
+                    "id": "squat-set-2",
+                    "role": "work",
+                    "repMin": 6,
+                    "repMax": 8,
+                    "loadMode": "working",
+                    "load": 0,
+                    "effortKind": "rir",
+                    "effort": 2,
+                    "restSeconds": 120,
+                    "tempo": "",
+                    "notes": "Choose your working weight before logging."
+                  },
+                  {
+                    "id": "squat-set-3",
+                    "role": "work",
+                    "repMin": 6,
+                    "repMax": 8,
+                    "loadMode": "working",
+                    "load": 0,
+                    "effortKind": "rir",
+                    "effort": 2,
+                    "restSeconds": 120,
+                    "tempo": "",
+                    "notes": "Choose your working weight before logging."
+                  }
+                ]
+              },
+              {
+                "id": "row-slot",
+                "historyKey": "row",
+                "name": "One-arm dumbbell row",
+                "progressionKey": "row-progression",
+                "baseLoad": 0,
+                "trainingMax": 0,
+                "supersetGroup": "A",
+                "notes": "Choose your working weight before logging.",
+                "rule": null,
+                "sets": [
+                  {
+                    "id": "row-set-1",
+                    "role": "work",
+                    "repMin": 8,
+                    "repMax": 12,
+                    "loadMode": "working",
+                    "load": 0,
+                    "effortKind": "rir",
+                    "effort": 2,
+                    "restSeconds": 120,
+                    "tempo": "",
+                    "notes": "Choose your working weight before logging."
+                  },
+                  {
+                    "id": "row-set-2",
+                    "role": "work",
+                    "repMin": 8,
+                    "repMax": 12,
+                    "loadMode": "working",
+                    "load": 0,
+                    "effortKind": "rir",
+                    "effort": 2,
+                    "restSeconds": 120,
+                    "tempo": "",
+                    "notes": "Choose your working weight before logging."
+                  },
+                  {
+                    "id": "row-set-3",
+                    "role": "work",
+                    "repMin": 8,
+                    "repMax": 12,
+                    "loadMode": "working",
+                    "load": 0,
+                    "effortKind": "rir",
+                    "effort": 2,
+                    "restSeconds": 120,
+                    "tempo": "",
+                    "notes": "Choose your working weight before logging."
+                  }
+                ]
+              }
+            ]
+          }
+        ]
+      }
+    ]
+  },
+  "setup": {
+    "cycles": 4,
+    "weekdays": [
+      1
+    ]
+  }
+}

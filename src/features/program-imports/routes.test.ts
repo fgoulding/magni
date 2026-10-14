@@ -1,0 +1,52 @@
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
+import { afterAll, beforeAll, expect, it, vi } from "vitest";
+import { makePreset } from "../program-editor/operations";
+const auth = vi.hoisted(() => ({ userId: 0, signedIn: true }));
+vi.mock("@/lib/auth", () => { class UnauthorizedError extends Error {} return { UnauthorizedError, requireUser: async () => { if (!auth.signedIn) throw new UnauthorizedError(); return {id: auth.userId}; } }; });
+let db: (typeof import("@/lib/db"))["db"];
+let upload: typeof import("@/app/api/program-imports/route");
+let tokens: typeof import("@/app/api/program-import-tokens/route");
+let revoke: typeof import("@/app/api/program-import-tokens/[id]/route");
+let repo: typeof import("./repository");
+let dir: string;
+const req = (body: unknown, headers: Record<string,string> = {}) => new Request("http://localhost/api/program-imports",{method:"POST",headers:{"content-type":"application/json",...headers},body:JSON.stringify(body)});
+beforeAll(async () => {
+  dir=fs.mkdtempSync(path.join(os.tmpdir(),"magni-import-routes-"));vi.stubEnv("DB_PATH",path.join(dir,"db.sqlite"));
+  db=(await import("@/lib/db")).db;
+  auth.userId=Number(db.prepare("INSERT INTO users(email,password_hash) VALUES('routes@example.test','hash')").run().lastInsertRowid);
+  upload=await import("@/app/api/program-imports/route");tokens=await import("@/app/api/program-import-tokens/route");revoke=await import("@/app/api/program-import-tokens/[id]/route");repo=await import("./repository");
+});
+afterAll(()=>{db?.close();fs.rmSync(dir,{recursive:true,force:true});vi.unstubAllEnvs();});
+it("requires cookie origin or valid import-only bearer, returns only a private draft URL and safely retries",async()=>{
+  auth.signedIn=true; const body={requestKey:crypto.randomUUID(),file:makePreset("double","")};
+  expect((await upload.POST(req(body,{origin:"https://foreign.test"}))).status).toBe(403);
+  auth.signedIn=false;expect((await upload.POST(req(body))).status).toBe(401);
+  const {secret}=repo.createImportToken(auth.userId,{name:"Agent"});
+  const headers={authorization:`Bearer ${secret}`};
+  const created=await upload.POST(req(body,headers));expect(created.status).toBe(201);
+  const result=await created.json();expect(result.reviewUrl).toBe(`/programs/editor/${result.draftId}`);
+  expect(created.headers.get("cache-control")).toBe("no-store");
+  const retry=await upload.POST(req(body,headers));expect(retry.status).toBe(200);expect((await retry.json()).draftId).toBe(result.draftId);
+  expect(db.prepare("SELECT count(*) n FROM programs").get()).toEqual({n:0});
+  auth.signedIn=true;expect((await upload.POST(req(body,{authorization:"Bearer invalid"}))).status).toBe(401);
+});
+it("credential management is session-only, same-origin, scoped and secrets are never listed",async()=>{
+  auth.signedIn=true;
+  expect((await tokens.POST(req({name:"Blocked"},{origin:"https://foreign.test"}))).status).toBe(403);
+  const made=await tokens.POST(req({name:"Automation",expiresInDays:2}));expect(made.status).toBe(201);const issued=await made.json();
+  expect(made.headers.get("cache-control")).toBe("no-store");
+  const list=await tokens.GET(new Request("http://localhost/api/program-import-tokens"));expect(JSON.stringify(await list.json())).not.toContain(issued.secret);
+  auth.signedIn=false;expect((await tokens.GET(new Request("http://localhost/api/program-import-tokens",{headers:{authorization:`Bearer ${issued.secret}`}}))).status).toBe(401);
+  auth.signedIn=true;
+  expect((await revoke.DELETE(new Request("http://localhost/api/program-import-tokens/x",{method:"DELETE"}),{params:Promise.resolve({id:issued.token.id})})).status).toBe(204);
+  expect((await upload.POST(req({requestKey:crypto.randomUUID(),file:makePreset("double","")},{authorization:`Bearer ${issued.secret}`}))).status).toBe(401);
+});
+it("bounds request bytes, rejects unknown request fields, and returns useful parser errors",async()=>{
+  auth.signedIn=true;
+  for(const body of [null,[],{}, {requestKey:crypto.randomUUID(),file:{},activate:true}])expect((await upload.POST(req(body))).status).toBe(400);
+  const invalid=await upload.POST(req({requestKey:crypto.randomUUID(),file:{}}));expect(invalid.status).toBe(400);expect((await invalid.json()).issues.length).toBeGreaterThan(0);
+  const huge=await upload.POST(new Request("http://localhost/api/program-imports",{method:"POST",body:" ".repeat(2_050_001)}));expect(huge.status).toBe(413);
+  const malformed=await upload.POST(new Request("http://localhost/api/program-imports",{method:"POST",body:"{"}));expect(malformed.status).toBe(400);
+});

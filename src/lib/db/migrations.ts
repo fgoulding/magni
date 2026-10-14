@@ -1,4 +1,5 @@
 import type Database from "better-sqlite3";
+import { runProgramImportMigration } from "@/features/program-imports/migration";
 import { runProgramEditorMigration } from "@/features/program-editor/migration";
 import { createCalendarOperations, migrateOccurrenceSessionUniqueness } from "@/features/calendar/migration";
 import { runWorkoutHistoryMigration } from "@/features/workouts/migration";
@@ -11,7 +12,7 @@ import { runProgressMigration } from "@/features/progress/migration";
  * the editor/calendar/history migration helpers. Revision 0 covers all releases
  * before migration tracking. Initialization may skip writes only at this exact
  * revision; a newer database requires its matching release, never a downgrade. */
-export const DATABASE_SCHEMA_REVISION = 6;
+export const DATABASE_SCHEMA_REVISION = 7;
 
 export function isDatabaseSchemaCurrent(db: Database.Database): boolean {
   const revision = db.pragma("user_version", { simple: true }) as number;
@@ -1061,6 +1062,7 @@ export function runMigrations(db: Database.Database): void {
   createWorkoutOccurrences(db);
   createPerformanceIndexes(db);
   runProgramEditorMigration(db);
+  runProgramImportMigration(db);
   createCalendarOperations(db);
   runWorkoutHistoryMigration(db);
   migrateOccurrenceSessionUniqueness(db);

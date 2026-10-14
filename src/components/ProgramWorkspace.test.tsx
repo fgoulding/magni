@@ -9,7 +9,7 @@ const router = vi.hoisted(() => ({ push: vi.fn(), refresh: vi.fn() }));
 vi.mock("next/navigation", () => ({ useRouter: () => router }));
 const id = "4a23c102-35b2-4394-91ba-1539de0bd822";
 const document = makePreset("double", "2026-09-05");
-const props = { userId: 7, draftId: id, initialDocument: document, initialRevision: 1, activatedProgramId: null };
+const props = { advanced: true, userId: 7, draftId: id, initialDocument: document, initialRevision: 1, activatedProgramId: null };
 const response = (body: unknown, status = 200) => new Response(JSON.stringify(body), { status });
 beforeEach(() => {
   const storage = new Map<string, string>();
@@ -20,6 +20,30 @@ afterEach(() => { cleanup(); vi.restoreAllMocks(); vi.unstubAllGlobals(); });
 const rename = (name: string) => fireEvent.change(screen.getByLabelText("Program name"), { target: { value: name } });
 
 describe("program workspace recovery and authoring", () => {
+  it("surfaces unsupported export fields without losing the saved draft", () => {
+    vi.stubGlobal("fetch", vi.fn());
+    const initialDocument = Object.assign(structuredClone(document), { futureMetadata: "preserve me" });
+    render(<ProgramWorkspace {...props} advanced={false} initialDocument={initialDocument} />);
+    fireEvent.click(screen.getByRole("button", { name: "Export JSON" }));
+    expect(screen.getByRole("alert")).toHaveTextContent(/unsupported|unknown|not supported/i);
+    expect(screen.getByLabelText("Program name")).toHaveValue(initialDocument.name);
+  });
+  it("saves the shared human document before switching to advanced editing", async () => {
+    const fetchMock = vi.fn().mockRejectedValueOnce(new Error("Connection lost")).mockResolvedValue(response({ revision: 2 }));
+    vi.stubGlobal("fetch", fetchMock);
+    render(<ProgramWorkspace {...props} advanced={false} />);
+    rename("Same draft in both editors");
+    fireEvent.click(screen.getByRole("button", { name: "Advanced editing" }));
+    await screen.findByText("Connection lost");
+    expect(screen.getByRole("heading", { name: "Build your program" })).toBeVisible();
+    fireEvent.click(screen.getByRole("button", { name: "Advanced editing" }));
+    await screen.findByRole("heading", { name: "Program workspace" });
+    expect(screen.getByLabelText("Program name")).toHaveValue("Same draft in both editors");
+    expect(window.location.search).toBe("?advanced=1");
+    fireEvent.click(screen.getByRole("button", { name: "Day-based editor" }));
+    await screen.findByRole("heading", { name: "Build your program" });
+    expect(window.location.search).toBe("");
+  });
   it("can discard invalid local edits without saving them first", async () => {
     const fetchMock = vi.fn(async (_url: string, options: RequestInit) => options.method === "DELETE" ? response({ deleted: true }) : response({ error: "Invalid draft" }, 400));
     vi.stubGlobal("fetch", fetchMock);

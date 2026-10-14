@@ -1,56 +1,41 @@
 import { expect, test, type Page } from "@playwright/test";
 import { registerViaApi } from "./helpers";
+import { readBuilderDraft, reviewBuilderForToday, saveBuilder, selectBuilderDay } from "./program-builder-helpers";
 
 const templateTitle = "Full Body Supersets 3-Day";
-const weekdays = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
 
 async function openSetup(page: Page, label: string) {
   await registerViaApi(page, label);
   expect((await page.request.post("/api/settings", { data: { timezone: "UTC" } })).ok()).toBe(true);
   await page.goto("/programs");
-  await page.getByRole("link", { name: "Create", exact: true }).click();
+  await page.getByRole("link", { name: "Choose a program", exact: true }).click();
   await expect(page).toHaveURL(/\/programs\/new$/);
-  await page.getByRole("combobox", { name: "Choose a program", exact: true }).selectOption("template:full-body-supersets-3-day");
+  await page.locator('a[href="/programs/editor/new?template=full-body-supersets-3-day"]').click();
   await expect(page.getByLabel("Program name", { exact: true })).toHaveValue(templateTitle);
 }
 
-async function chooseDaysIncludingToday(page: Page) {
-  const day = new Date().getUTCDay();
-  const chosen = [day, (day + 2) % 7, (day + 4) % 7];
-  for (let index = 0; index < weekdays.length; index++) {
-    const button = page.getByRole("button", { name: weekdays[index], exact: true });
-    if ((await button.getAttribute("aria-pressed") === "true") !== chosen.includes(index)) await button.click();
-  }
-}
-
-test("simple setup creates the full scheduled program and logs its actual prescriptions", async ({ page }, info) => {
+test("template builder creates the full scheduled program and logs its actual prescriptions", async ({ page }, info) => {
   test.setTimeout(120_000);
   await openSetup(page, "simple-full-body");
   await page.getByLabel("Program name", { exact: true }).fill("Simple full body");
-  await chooseDaysIncludingToday(page);
-  await page.getByText("Starting weights (optional)", { exact: true }).click();
-  await page.locator("summary").filter({ hasText: /^Squat$/ }).click();
-  await page.getByLabel("Squat: Barbell back squat (lb)", { exact: true }).fill("135");
-  await page.getByLabel("Squat: One-arm dumbbell row (lb)", { exact: true }).fill("42.5");
-  await page.locator("summary").filter({ hasText: /^Bench$/ }).click();
-  await page.getByLabel("Bench: One-arm dumbbell row (lb)", { exact: true }).fill("35");
-  const saved = page.waitForResponse(response => /\/api\/program-drafts\/[\da-f-]+$/.test(response.url()) && response.request().method() === "PUT");
-  const activated = page.waitForResponse(response => response.url().endsWith("/activate") && response.request().method() === "POST");
-  await page.getByRole("button", { name: "Create program", exact: true }).click();
-  const save = await saved;
-  expect(save.ok()).toBe(true);
-  const { document } = await save.json();
+  const groupA = page.getByRole("region", { name: "Superset A", exact: true });
+  await groupA.getByLabel("Working weight (lb)", { exact: true }).nth(0).fill("135");
+  await groupA.getByLabel("Working weight (lb)", { exact: true }).nth(1).fill("42.5");
+  await selectBuilderDay(page, 1);
+  await page.getByRole("region", { name: "Superset C", exact: true }).getByLabel("Working weight (lb)", { exact: true }).first().fill("35");
+  await reviewBuilderForToday(page);
+  await saveBuilder(page);
+  const { document } = await readBuilderDraft(page);
   expect(document.cycles).toBe(4);
   expect(document.weekdays).toHaveLength(3);
   expect(document.weeks[0].days.map((day: { exercises: { sets: unknown[] }[] }) => day.exercises.map(exercise => exercise.sets.length))).toEqual([[5, 5, 5, 5, 3, 3], [5, 5, 5, 5, 3, 3], [5, 5, 5, 5, 3, 3]]);
   expect(document.weeks[0].days[0].exercises[1].baseLoad).toBe(42.5);
   expect(document.weeks[0].days[1].exercises[4].baseLoad).toBe(35);
-  const activation = await activated;
-  expect(activation.ok()).toBe(true);
-  const { programId } = await activation.json();
-  await expect(page).toHaveURL(new RegExp(`/programs/${programId}$`));
-  await expect(page.getByRole("heading", { name: "Simple full body", exact: true })).toBeVisible();
-  await page.goto("/today");
+  const activated = page.waitForResponse(response => response.url().endsWith("/activate") && response.request().method() === "POST");
+  await page.getByRole("button", { name: "Start program", exact: true }).click();
+  expect((await activated).ok()).toBe(true);
+  await expect(page.getByText("Program activated", { exact: true })).toBeVisible();
+  await page.getByRole("link", { name: "Train this program", exact: true }).click();
   const started = page.waitForResponse(response => /\/api\/programs\/\d+\/sessions$/.test(response.url()) && response.request().method() === "POST");
   await page.getByRole("button", { name: "Start Workout", exact: true }).click();
   const start = await started;
@@ -68,10 +53,10 @@ test("simple setup creates the full scheduled program and logs its actual prescr
 });
 
 for (const lostOperation of ["save", "activation"] as const) {
-  test(`simple setup recovers a lost ${lostOperation} response without a second program`, async ({ page }) => {
+  test(`template builder recovers a lost ${lostOperation} response without a second program`, async ({ page }) => {
     await openSetup(page, `simple-lost-${lostOperation}`);
-    const name = `Recovered ${lostOperation}`;
-    await page.getByLabel("Program name", { exact: true }).fill(name);
+    await reviewBuilderForToday(page);
+    await saveBuilder(page);
     const draftIds = new Set<string>();
     const programIds = new Set<number>();
     let dropped = false;
@@ -90,8 +75,12 @@ for (const lostOperation of ["save", "activation"] as const) {
         await route.abort("failed");
       } else await route.fulfill({ response: result });
     });
-    await page.getByRole("button", { name: "Create program", exact: true }).click();
-    await expect(page).toHaveURL(/\/programs\/\d+$/);
+    const name = `Recovered ${lostOperation}`;
+    await page.getByLabel("Program name", { exact: true }).fill(name);
+    await page.getByRole("button", { name: "Start program", exact: true }).click();
+    await expect(page.getByRole("main").getByRole("alert")).toBeVisible();
+    await page.getByRole("button", { name: "Start program", exact: true }).click();
+    await expect(page.getByText("Program activated", { exact: true })).toBeVisible();
     expect(dropped).toBe(true);
     expect(draftIds.size).toBe(1);
     expect(programIds.size).toBe(1);
@@ -100,36 +89,39 @@ for (const lostOperation of ["save", "activation"] as const) {
   });
 }
 
-test("simple setup stays readable at small phone, enlarged phone and desktop sizes", async ({ page }, info) => {
+test("template builder stays readable at small phone, enlarged phone and desktop sizes", async ({ page }, info) => {
   await openSetup(page, "simple-layout");
   for (const [width, height, fontSize] of [[320, 740, 16], [375, 812, 20], [393, 852, 16], [1280, 900, 16]]) {
     await page.setViewportSize({ width, height });
     await page.evaluate(({ size, theme }) => { document.documentElement.style.fontSize = `${size}px`; document.documentElement.dataset.theme = theme; }, { size: fontSize, theme: width === 393 ? "light" : "dark" });
     expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
-    const create = page.getByRole("button", { name: "Create program", exact: true });
-    await create.scrollIntoViewIfNeeded();
-    await create.click({ trial: true });
-    const box = await create.boundingBox();
-    expect(box?.height).toBeGreaterThanOrEqual(44);
+    const review = page.getByRole("button", { name: "Review & start", exact: true }).last();
+    await review.scrollIntoViewIfNeeded();
+    await review.click({ trial: true });
+    expect((await review.boundingBox())?.height).toBeGreaterThanOrEqual(44);
     await page.screenshot({ path: info.outputPath(`simple-program-${width}.png`), fullPage: true, animations: "disabled" });
   }
   await page.setViewportSize({ width: 375, height: 812 });
   await page.evaluate(() => { document.documentElement.style.fontSize = "20px"; document.documentElement.dataset.theme = "dark"; });
-  await page.getByText("Starting weights (optional)", { exact: true }).click();
-  await page.locator("summary").filter({ hasText: /^Squat$/ }).click();
-  const weight = page.getByLabel("Squat: One-arm dumbbell row (lb)", { exact: true });
+  const weight = page.getByRole("region", { name: "Superset A", exact: true }).getByLabel("Working weight (lb)", { exact: true }).nth(1);
   await weight.fill("42.5");
   await expect(weight).toHaveValue("42.5");
   await expect(weight).toHaveAttribute("inputmode", "decimal");
   await weight.scrollIntoViewIfNeeded();
   await page.screenshot({ path: info.outputPath("simple-program-weights-375.png"), animations: "disabled" });
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
-  await page.getByRole("button", { name: "Create program", exact: true }).click({ trial: true });
+  await reviewBuilderForToday(page);
+  const start = page.getByRole("button", { name: "Start program", exact: true });
+  await start.scrollIntoViewIfNeeded();
+  await start.click({ trial: true });
+  await page.screenshot({ path: info.outputPath("simple-program-review-375.png") });
 });
 
-test("an interrupted creation survives reload and retries the same program", async ({ page }) => {
+test("an interrupted template activation survives reload without a second program", async ({ page }) => {
   await openSetup(page, "simple-reload-recovery");
   await page.getByLabel("Program name", { exact: true }).fill("Interrupted full body");
+  await reviewBuilderForToday(page);
+  await saveBuilder(page);
   let offline = false;
   let createdProgramId: number | undefined;
   const drafts = new Set<string>();
@@ -145,14 +137,13 @@ test("an interrupted creation survives reload and retries the same program", asy
       await route.abort("failed");
     } else await route.continue();
   });
-  await page.getByRole("button", { name: "Create program", exact: true }).click();
-  await expect(page.getByRole("alert").filter({ hasText: "Your setup is retained" })).toContainText("Retry");
+  await page.getByRole("button", { name: "Start program", exact: true }).click();
+  await expect(page.getByRole("main").getByRole("alert")).toBeVisible();
   expect(createdProgramId).toBeGreaterThan(0);
+  offline = false;
   await page.reload();
   await expect(page.getByLabel("Program name", { exact: true })).toHaveValue("Interrupted full body");
-  offline = false;
-  await page.getByRole("button", { name: "Retry creation", exact: true }).click();
-  await expect(page).toHaveURL(new RegExp(`/programs/${createdProgramId}$`));
+  await expect(page.getByText("Program activated", { exact: true })).toBeVisible();
   expect(drafts.size).toBe(1);
   await page.goto("/programs");
   await expect(page.getByRole("heading", { name: "Interrupted full body", exact: true })).toHaveCount(1);

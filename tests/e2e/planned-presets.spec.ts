@@ -29,7 +29,7 @@ test.afterEach(async ({ page }, info) => {
 
 async function authorPreset(page: Page, preset: string): Promise<string> {
   await registerViaApi(page, `logged-${preset}`);
-  await page.goto("/programs/editor/new");
+  await page.goto("/programs/editor/new?advanced=1");
   await page.getByText("Presets and program files", { exact: true }).click();
   await page.getByRole("combobox", { name: "Optional starting structure", exact: true }).selectOption(preset);
   await page.getByRole("button", { name: "Apply preset", exact: true }).click();

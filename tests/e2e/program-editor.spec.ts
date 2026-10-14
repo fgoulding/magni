@@ -1,5 +1,6 @@
 import { expect, test } from "@playwright/test";
 import { readFile } from "node:fs/promises";
+import { randomUUID } from "node:crypto";
 import { registerViaApi } from "./helpers";
 import { selectEditorWeek } from "./editor-navigation";
 
@@ -8,7 +9,7 @@ const presets = ["linear", "double", "percentage", "top-backoff", "reset", "manu
 test("copy a block, fill selected weeks, bulk edit and undo without re-entry", async ({ page }, info) => {
   test.setTimeout(90_000);
   await registerViaApi(page, "editor-block-fill");
-  await page.goto("/programs/editor/new");
+  await page.goto("/programs/editor/new?advanced=1");
   await page.getByText("Presets and program files", { exact: true }).click();
   await page.getByRole("combobox", { name: "Optional starting structure", exact: true }).selectOption("percentage");
   await page.getByRole("button", { name: "Apply preset", exact: true }).click();
@@ -56,27 +57,28 @@ test("copy a block, fill selected weeks, bulk edit and undo without re-entry", a
   await expect(page.getByLabel("Set 1 minimum reps", { exact: true })).toHaveValue("4");
 });
 
-test("import, edit, export and reload a versioned program file", async ({ page }) => {
+test("edit, export and reload an existing versioned draft in the advanced editor", async ({ page }) => {
   await registerViaApi(page, "program-file");
-  await page.goto("/programs/editor/new");
-  await page.getByText("Presets and program files", { exact: true }).click();
   const file = JSON.parse(await readFile("examples/programs/double.magni.json", "utf8"));
-  await page.getByLabel("Import program file", { exact: true }).setInputFiles({ name: "double.magni.json", mimeType: "application/json", buffer: Buffer.from(JSON.stringify(file)) });
-  await expect(page.getByLabel("Program name", { exact: true })).toHaveValue(file.name);
-  await page.getByLabel("Program name", { exact: true }).fill("My imported program");
+  const id = randomUUID();
+  expect((await page.request.put(`/api/program-drafts/${id}`, { data: { expectedRevision: 0, document: file } })).ok()).toBe(true);
+  await page.goto(`/programs/editor/${id}?advanced=1`);
+  await page.getByText("Presets and program files", { exact: true }).click();
+  await page.getByLabel("Program name", { exact: true }).fill("My existing program");
   const downloadPromise = page.waitForEvent("download");
   await page.getByRole("button", { name: "Export program file", exact: true }).click();
   const download = await downloadPromise;
-  expect(download.suggestedFilename()).toBe("My imported program.magni.json");
+  expect(download.suggestedFilename()).toBe("My existing program.magni.json");
   const exported = JSON.parse(await readFile((await download.path())!, "utf8"));
-  expect(exported).toEqual({ ...file, name: "My imported program" });
-  await page.getByLabel("Import program file", { exact: true }).setInputFiles({ name: "unsupported.json", mimeType: "application/json", buffer: Buffer.from(JSON.stringify({ ...file, schemaVersion: 99 })) });
-  await expect(page.getByRole("alert").filter({ hasText: "Check this program file" })).toBeVisible();
-  await expect(page.getByLabel("Program name", { exact: true })).toHaveValue("My imported program");
+  expect(exported).toEqual({
+    format: "magni.program", schemaVersion: 1,
+    program: { name: "My existing program", description: file.description, unit: file.unit, weeks: file.weeks },
+    setup: { cycles: file.cycles, weekdays: file.weekdays, startDate: file.startDate },
+  });
   await page.getByRole("button", { name: "Save now", exact: true }).click();
   await expect(page.getByText("Draft saved", { exact: true })).toBeVisible();
   await page.reload();
-  await expect(page.getByLabel("Program name", { exact: true })).toHaveValue("My imported program");
+  await expect(page.getByLabel("Program name", { exact: true })).toHaveValue("My existing program");
   await page.getByRole("button", { name: "Progression & preview", exact: true }).click();
   await expect(page.getByRole("combobox", { name: "Progression condition", exact: true })).toHaveValue("double_progression");
 });
@@ -85,9 +87,8 @@ test("author a custom double progression program, preview, reload and activate",
   test.setTimeout(90_000);
   await registerViaApi(page, "direct-editor");
   await page.goto("/programs");
-  await page.getByRole("link", { name: "Open workspace", exact: true }).click();
-  await expect(page).toHaveURL(/\/programs\/editor$/);
-  await page.getByRole("link", { name: "New program", exact: true }).click();
+  await page.getByRole("link", { name: "Build a program", exact: true }).click();
+  await page.getByRole("button", { name: "Advanced editing", exact: true }).click();
   await page.getByLabel("Program name", { exact: true }).fill("Exact double progression");
   await page.getByLabel("Repeat cycles").fill("3");
   await page.getByRole("button", { name: "Prescriptions", exact: true }).click();
@@ -159,7 +160,7 @@ test("author a custom double progression program, preview, reload and activate",
 for (const preset of presets) test(`customize, copy, reload and activate ${preset}`, async ({ page }, info) => {
   test.setTimeout(90_000);
   await registerViaApi(page, `preset-${preset}`);
-  await page.goto("/programs/editor/new");
+  await page.goto("/programs/editor/new?advanced=1");
   await page.getByText("Presets and program files", { exact: true }).click();
   await page.getByRole("combobox", { name: "Optional starting structure", exact: true }).selectOption(preset);
   await page.getByRole("button", { name: "Apply preset", exact: true }).click();

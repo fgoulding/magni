@@ -64,7 +64,7 @@ it("migrates old planned and quick history, preserving saved data and old IDs", 
   const before = tables.map(table => database.db.prepare(`SELECT * FROM ${table} ORDER BY rowid`).all());
   database.db.pragma("user_version=5");
   runMigrations(database.db);
-  expect(database.db.pragma("user_version", { simple: true })).toBe(6);
+  expect(database.db.pragma("user_version", { simple: true })).toBe(7);
   expect(tables.map(table => database.db.prepare(`SELECT * FROM ${table} ORDER BY rowid`).all())).toEqual(before);
   const ids = [a, b, c].map(row => identity.resolveSetExerciseIdentities(userId, row.sessionId).get(row.setId)!.exerciseId);
   expect(new Set(ids).size).toBe(1);

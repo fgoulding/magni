@@ -35,11 +35,12 @@ function program() {
 }
 async function importDraft(page: Page, document: ProgramDocumentV1) {
   await registerViaApi(page, "progression-workspace");
-  await page.goto("/programs/editor/new");
-  await page.getByText("Presets and program files", { exact: true }).click();
-  await page.getByLabel("Import program file", { exact: true }).setInputFiles({ name: "workspace.magni.json", mimeType: "application/json", buffer: Buffer.from(JSON.stringify(document)) });
-  await page.getByRole("button", { name: "Save now", exact: true }).click();
-  await expect(page.getByText("Draft saved", { exact: true })).toBeVisible();
+  // Seed this progression-specific fixture without remapping its assertion IDs.
+  // Public file import and remapping are exercised by program-import.spec.ts.
+  const id = randomUUID();
+  const response = await page.request.put(`/api/program-drafts/${id}`, { data: { expectedRevision: 0, document } });
+  expect(response.ok()).toBe(true);
+  await page.goto(`/programs/editor/${id}?advanced=1`);
   await page.getByRole("button", { name: "Progression & preview", exact: true }).click();
 }
 async function savedDocument(page: Page): Promise<ProgramDocumentV1> {

@@ -37,3 +37,11 @@ describe("proxy auth boundary", () => {
     expect(proxy(request("/history", "abc")).status).toBe(200);
   });
 });
+
+it("allows only the import POST bearer handoff and public format resources", () => {
+  expect(proxy(new NextRequest("http://localhost/api/program-imports",{method:"POST",headers:{authorization:"Bearer opaque"}})).status).toBe(200);
+  expect(proxy(new NextRequest("http://localhost/api/program-imports",{headers:{authorization:"Bearer opaque"}})).status).toBe(401);
+  for(const url of ["/api/program-import-tokens","/api/program-drafts/some-id","/api/program-drafts/some-id/activate","/api/program-imports/anything"])
+    expect(proxy(new NextRequest(`http://localhost${url}`,{method:"POST",headers:{authorization:"Bearer opaque"}})).status).toBe(401);
+  for(const url of ["/api/program-imports/schema","/api/program-imports/example"])expect(proxy(request(url)).status).toBe(200);
+});

@@ -1,5 +1,5 @@
 import Link from "next/link";
-import { CalendarDays, Copy, Dumbbell, Library, Plus, Trash2 } from "lucide-react";
+import { CalendarDays, Copy, Dumbbell, Library, Trash2 } from "lucide-react";
 import { redirect } from "next/navigation";
 import { DeleteButton } from "@/components/DeleteButton";
 import { ProgramDraftList } from "@/components/ProgramDraftList";
@@ -144,17 +144,11 @@ export default async function ProgramsPage() {
         </div>
         <div className="flex shrink-0 items-center gap-2">
           <TrainingMaxesModal maxes={latestMaxes} />
-          <Link
-            href="/programs/new"
-            className="touch-target inline-flex items-center justify-center gap-1.5 rounded-xl bg-foreground px-4 text-sm font-semibold text-background transition-colors active:opacity-90"
-          >
-            <Plus aria-hidden="true" size={16} />
-            Create
-          </Link>
+
         </div>
       </header>
 
-      <section className="card p-4"><h2 className="display text-2xl">Choose your next program</h2><p className="mt-2 text-sm leading-6 text-muted">Start a ready program with a simple setup. Use the workspace when you want to design your own.</p><div className="mt-3 flex flex-wrap gap-2"><Link href="/programs/new" className="touch-target inline-flex items-center rounded-xl bg-foreground px-4 text-sm font-semibold text-background">Choose a program</Link><Link prefetch={false} href="/programs/editor" className="touch-target inline-flex items-center rounded-xl border border-line px-4 text-sm font-semibold">Open workspace</Link><Link href="/programs/new" className="touch-target inline-flex items-center rounded-xl px-2 text-sm font-semibold text-muted">Original training systems</Link></div></section>
+      <section aria-label="Create a program" className="card p-4"><h2 className="display text-2xl">Your next program</h2><p className="mt-2 text-sm leading-6 text-muted">Start with a ready program, build your own, or open a JSON file. Review everything before training.</p><div className="mt-4 grid gap-2 sm:grid-cols-3"><Link href="/programs/new" className="touch-target inline-flex items-center justify-center rounded-xl bg-foreground px-4 py-3 text-sm font-semibold text-background">Choose a program</Link><Link prefetch={false} href="/programs/editor/new" className="touch-target inline-flex items-center justify-center rounded-xl border border-line px-4 py-3 text-sm font-semibold">Build a program</Link><Link href="/programs/import" className="touch-target inline-flex items-center justify-center rounded-xl border border-line px-4 py-3 text-sm font-semibold">Import JSON</Link></div></section>
       <ProgramDraftList userId={user.id} drafts={drafts} />
       {library.definitions.length === 0 ? (
         <section className="flex min-h-80 flex-col items-center justify-center rounded-2xl border border-dashed border-line px-6 text-center">

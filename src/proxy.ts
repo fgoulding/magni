@@ -6,7 +6,12 @@ export function proxy(request: NextRequest) {
   const { pathname } = request.nextUrl;
   const token = request.cookies.get("auth_token")?.value;
 
+  // Narrow handoff only: this route validates its import-only bearer itself.
+  if (pathname === "/api/program-imports" && request.method === "POST" && request.headers.has("authorization")) return NextResponse.next();
+
   if (
+    pathname === "/api/program-imports/schema" ||
+    pathname === "/api/program-imports/example" ||
     pathname === "/api/health" ||
     pathname.startsWith("/api/auth/") ||
     pathname.startsWith("/_next/") ||

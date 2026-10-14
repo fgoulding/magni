@@ -39,7 +39,7 @@ it("boots a populated schema-5 database, preserves training and backup recovery,
   let initialized: typeof import("../index") | undefined;
   try {
     initialized = await import("../index");
-    expect(initialized.db.pragma("user_version", { simple: true })).toBe(6);
+    expect(initialized.db.pragma("user_version", { simple: true })).toBe(7);
     expect(snapshot(initialized.db)).toEqual(before);
     expect(initialized.db.prepare("SELECT DISTINCT exercise_id FROM exercise_set_sources").all()).toEqual([{ exercise_id: "catalog-1" }]);
     expect(initialized.db.prepare("SELECT * FROM exercise_catalog_redirects ORDER BY old_exercise_id").all()).toEqual([

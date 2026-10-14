@@ -5,7 +5,7 @@ import { writeFile } from "node:fs/promises";
 
 async function author(page: Page, label: string) {
   await registerViaApi(page, label);
-  await page.goto("/programs/editor/new");
+  await page.goto("/programs/editor/new?advanced=1");
   await page.getByText("Presets and program files", { exact: true }).click();
   await page.getByRole("combobox", { name: "Optional starting structure", exact: true }).selectOption("double");
   await page.getByRole("button", { name: "Apply preset", exact: true }).click();
@@ -164,6 +164,7 @@ test("publish an immutable definition and recover copying it after later draft e
   await capture(page, info, "active-published-copy-recovered");
   await panel(page).getByRole("link", { name: "Open copied draft", exact: true }).click();
   await expect(page).toHaveURL(new RegExp(`/programs/editor/${copied!.draftId}$`));
+  await page.getByRole("button", { name: "Advanced editing", exact: true }).click();
   await page.getByRole("button", { name: "Prescriptions", exact: true }).click();
   await expect(page.getByLabel("Working load (lb)", { exact: true })).toHaveValue("55");
   await page.reload();

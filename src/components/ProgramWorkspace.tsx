@@ -6,6 +6,8 @@ import { useEffect, useRef, useState, useSyncExternalStore } from "react";
 import { ArrowDown, ArrowLeft, ArrowUp, Copy, Plus, Trash2, Undo2 } from "lucide-react";
 import { createDay, createExercise, createSet, createWeek, validateDocument, validateDraftStructure, type ProgramDocumentV1, type ProgramExerciseV1 } from "@/features/program-editor/document";
 import { cloneExercise as copyExercise, cloneDay as copyDay, cloneWeek as copyWeek, applySharedConfiguration, copyBlock, getBlockRange, prescriptionMatches, makePreset, PRESETS, type PresetId } from "@/features/program-editor/operations";
+import { ProgramBuilder } from "./ProgramBuilder";
+import { exportProgramFile } from "@/features/program-files/file";
 import { DeleteProgramDraft } from "@/components/DeleteProgramDraft";
 import { ActiveProgramChanges } from "@/components/ActiveProgramChanges";
 import { BulkPrescriptionTools } from "@/components/BulkPrescriptionTools";
@@ -34,13 +36,14 @@ function EditorNumber({label,value,onChange}:{label:string;value:number;onChange
 function EditorIcon({label,children,onClick,disabled=false}:{label:string;children:React.ReactNode;onClick:()=>void;disabled?:boolean}) {
  return <button type="button" className={button} aria-label={label} title={label} onClick={onClick} disabled={disabled}>{children}</button>;
 }
-type WorkspaceProps = { userId: number; draftId: string; initialDocument: ProgramDocumentV1; initialRevision: number; activatedProgramId: number | null; published?: boolean };
+type WorkspaceProps = { userId: number; draftId: string; initialDocument: ProgramDocumentV1; initialRevision: number; activatedProgramId: number | null; published?: boolean; advanced?: boolean };
 const subscribeHydration = () => () => {};
 export function ProgramWorkspace(props: WorkspaceProps) {
  const mounted = useSyncExternalStore(subscribeHydration, () => true, () => false);
  return mounted ? <HydratedWorkspace {...props} /> : <p role="status" className="safe-x py-8 text-muted">Opening your program…</p>;
 }
-function HydratedWorkspace({ userId, draftId, initialDocument, initialRevision, activatedProgramId, published = false }: WorkspaceProps) {
+function HydratedWorkspace({ userId, draftId, initialDocument, initialRevision, activatedProgramId, published = false, advanced: initialAdvanced = false }: WorkspaceProps) {
+  const [advanced, setAdvanced] = useState(initialAdvanced);
   const storageKey = `magni:program-draft:${userId}:${draftId}`;
   const [restored] = useState(() => {
     try {
@@ -155,19 +158,21 @@ function HydratedWorkspace({ userId, draftId, initialDocument, initialRevision, 
   function editShared(update: (value: ProgramExerciseV1) => void) {
     change(value => { const source = value.weeks[wi].days[di].exercises[ei]; update(source); applySharedConfiguration(value, source); });
   }
+  async function switchEditorMode(nextAdvanced: boolean) {
+    if (!await save()) return;
+    const url = new URL(window.location.href);
+    if (nextAdvanced) url.searchParams.set("advanced", "1");
+    else url.searchParams.delete("advanced");
+    window.history.replaceState(null, "", url);
+    setAdvanced(nextAdvanced);
+  }
   function exportFile() {
-    const blob = new Blob([JSON.stringify(draft.current, null, 2) + "\n"], { type: "application/json" });
+    try {
+    const blob = new Blob([JSON.stringify(exportProgramFile(draft.current), null, 2) + "\n"], { type: "application/json" });
     const url = URL.createObjectURL(blob); const link = window.document.createElement("a");
     link.href = url; link.download = `${draft.current.name || "program"}.magni.json`; link.click(); URL.revokeObjectURL(url);
-  }
-  async function importFile(file: File | undefined) {
-    if (!file) return;
-    try {
-      if (file.size > 2_000_000) throw new Error("Program files must be smaller than 2 MB.");
-      const imported = JSON.parse(await file.text()); const invalid = validateDocument(imported);
-      if (invalid.length) throw new Error(`Check this program file: ${invalid.slice(0,3).map(issue => issue.message).join(" ")}`);
-      change(value => Object.assign(value, imported)); setWeekIndex(0); setDayIndex(0); setExerciseIndex(0); setError("");
-    } catch (failure) { setError(failure instanceof Error ? failure.message : "Could not read this program file."); }
+    setError("");
+    } catch (failure) { setError(failure instanceof Error ? failure.message : "Could not export this program. Your draft is retained."); }
   }
 
   useEffect(() => {
@@ -223,7 +228,7 @@ function HydratedWorkspace({ userId, draftId, initialDocument, initialRevision, 
       <div><Link prefetch={false} className="touch-target inline-flex items-center gap-2 text-sm font-semibold text-muted" href="/programs" onNavigate={event => {
         event.preventDefault();
         if (!deletePending.current) void save().then(saved => { if (saved) { router.push("/programs"); router.refresh(); } else setLeaveAfterFailure(true); });
-      }}><ArrowLeft aria-hidden="true" size={18} />Back to programs</Link><p className="mt-3 text-sm text-muted">Magni · Program design</p><h1 className="display mt-1 text-4xl lg:text-5xl">Program workspace</h1></div>
+      }}><ArrowLeft aria-hidden="true" size={18} />Back to programs</Link><p className="mt-3 text-sm text-muted">Magni · Program design</p><h1 className="display mt-1 text-4xl lg:text-5xl">{advanced ? "Program workspace" : "Build your program"}</h1></div>
       <div className="flex min-w-0 flex-col gap-2 lg:items-end">
         <p role="status" className={`text-sm font-semibold ${saveState === "saved" ? "text-success-ink" : saveState === "failed" || saveState === "conflict" ? "text-danger-ink" : "text-muted"}`}>{({ saved: "Draft saved", unsaved: "Unsaved changes", saving: "Saving…", failed: "Save failed — changes retained", conflict: "Conflicting edits — changes retained" })[saveState]}</p>
         <div role="group" aria-label="Draft editing actions" className="flex flex-wrap gap-2">
@@ -233,11 +238,11 @@ function HydratedWorkspace({ userId, draftId, initialDocument, initialRevision, 
         </div>
       </div>
     </header>
-    <p className="text-sm leading-6 text-muted lg:hidden">Designed for a larger screen. Your drafts are available here and on your computer.</p>
+    {advanced ? <button type="button" className={`${button} self-start`} disabled={deleting} onClick={() => { void switchEditorMode(false); }}>Day-based editor</button> : null}
     {leaveAfterFailure ? <div role="alert" className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-warn-line bg-warn-soft p-3"><p className="text-sm text-warn-ink">The latest changes could not be saved. Leave the editor or stay to fix them.</p><div className="flex flex-wrap gap-2"><button className={button} onClick={() => { router.push("/programs"); router.refresh(); }}>Leave editor</button><button className={button} onClick={() => setLeaveAfterFailure(false)}>Stay here</button></div></div> : null}
     {error ? <div role="alert" className="rounded-xl border border-danger-line bg-danger-soft p-3 text-sm text-danger-ink">{error}{saveState === "conflict" ? <button className={`${button} mt-2`} onClick={() => { localStorage.removeItem(storageKey); window.location.reload(); }}>Load server version and discard local edits</button> : null}</div> : null}
     {activeId ? <section className="rounded-xl border border-success-line bg-success-soft p-3"><p className="font-semibold text-success-ink">Program activated</p><p className="mt-1 text-sm text-muted">Edits save to this draft. Open Review & apply to choose which unstarted workouts change, or publish a reusable definition. Started workouts keep their saved prescriptions.</p><Link href="/today" className={`${button} mt-3`}>Train this program</Link></section> : null}
-    <div className="grid min-w-0 items-start gap-6 lg:grid-cols-[220px_minmax(0,1fr)] xl:grid-cols-[260px_minmax(0,1fr)]">
+    {!advanced ? <fieldset disabled={deleting} className="min-w-0"><ProgramBuilder document={document} onChange={change} onActivate={() => { void activate(); }} activating={activating} activeId={activeId} onAdvanced={() => { void switchEditorMode(true); }} onExport={exportFile} activeReview={activeId ? <ActiveProgramChanges programId={activeId} draftId={draftId} saveDraft={async () => await save() ? revision.current : null} /> : null} /></fieldset> : <div className="grid min-w-0 items-start gap-6 lg:grid-cols-[220px_minmax(0,1fr)] xl:grid-cols-[260px_minmax(0,1fr)]">
       <aside aria-label="Program outline" className="card hidden min-w-0 flex-col gap-4 p-4 lg:flex">
         <div><h2 className="display break-words text-2xl">{document.name || "Untitled program"}</h2><p className="mt-1 text-xs text-muted">{document.weeks.length} weeks · {document.cycles} cycles · {document.unit}</p></div>
         {document.weeks.map((item, w) => <div key={item.id} className="min-w-0">
@@ -248,7 +253,7 @@ function HydratedWorkspace({ userId, draftId, initialDocument, initialRevision, 
       </aside>
       <fieldset disabled={deleting} className="flex min-w-0 flex-col gap-4">
     {tab === "structure" ? <section className="card grid gap-3 p-4 sm:grid-cols-2">{<EditorField label={"Program name"} value={document.name} onChange={name => change(value => { value.name = name; })} />}<label className="flex flex-col gap-1 text-sm font-semibold">Units<select className={control} value={document.unit} onChange={event => change(value => { value.unit = event.target.value as "lb" | "kg"; for (const week of value.weeks) for (const day of week.days) for (const exercise of day.exercises) if (exercise.rule?.action && exercise.rule.action.variable !== "reps") exercise.rule.action.unit = value.unit; })}><option value="lb">Pounds (lb)</option><option value="kg">Kilograms (kg)</option></select><span className="text-xs font-normal leading-5 text-muted">Changing units keeps the entered numbers. Review loads before activation.</span></label></section> : <p className="break-words text-sm font-semibold text-muted">{document.name || "Untitled program"} · {document.unit}</p>}
-    {tab === "structure" ? <details className="card p-4"><summary className="touch-target cursor-pointer text-sm font-semibold">Presets and program files</summary><div className="mt-3 flex flex-col gap-3"><label className="text-sm font-semibold">Optional starting structure<select className={control} value={preset} onChange={event => setPreset(event.target.value as PresetId)}>{PRESETS.map(item => <option key={item.id} value={item.id}>{item.title}</option>)}</select></label><p className="text-sm text-muted">{PRESETS.find(item => item.id === preset)?.description} Applying a preset or importing replaces this draft’s content. Undo restores it.</p><button className={button} onClick={() => { change(value => Object.assign(value, makePreset(preset, value.startDate))); setWeekIndex(0); setDayIndex(0); setExerciseIndex(0); }}>Apply preset</button><div className="flex flex-wrap gap-2"><button className={button} onClick={exportFile}>Export program file</button><label className={`${button} cursor-pointer`}>Import program file<input aria-label="Import program file" className="sr-only" type="file" accept=".json,application/json" onChange={event => { void importFile(event.target.files?.[0]); event.target.value = ""; }} /></label></div><p className="text-sm text-muted">Magni program files contain the structure, prescriptions and versioned rules. They do not contain workout history.</p></div></details> : null}
+    {tab === "structure" ? <details className="card p-4"><summary className="touch-target cursor-pointer text-sm font-semibold">Presets and program files</summary><div className="mt-3 flex flex-col gap-3"><label className="text-sm font-semibold">Optional starting structure<select className={control} value={preset} onChange={event => setPreset(event.target.value as PresetId)}>{PRESETS.map(item => <option key={item.id} value={item.id}>{item.title}</option>)}</select></label><p className="text-sm text-muted">{PRESETS.find(item => item.id === preset)?.description} Applying a preset replaces this draft’s content. Undo restores it.</p><button className={button} onClick={() => { change(value => Object.assign(value, makePreset(preset, value.startDate))); setWeekIndex(0); setDayIndex(0); setExerciseIndex(0); }}>Apply preset</button><div className="flex flex-wrap gap-2"><button className={button} onClick={exportFile}>Export program file</button><Link href="/programs/import" className={button} onNavigate={event => { event.preventDefault(); void save().then(saved => { if (saved) router.push("/programs/import"); }); }}>Import JSON</Link></div><p className="text-sm text-muted">Magni program files contain the structure, prescriptions and versioned rules. They do not contain workout history.</p></div></details> : null}
     <nav aria-label="Program workspace sections" className="grid grid-cols-2 gap-2 sm:grid-cols-4">{([["structure", "Structure"], ["sets", "Prescriptions"], ["progression", "Progression & preview"], ["preview", "Review & activate"]] as const).map(([id, title]) => <button key={id} className={`${button} ${tab === id ? "border-brand-line bg-brand-soft text-brand-strong" : ""}`} aria-pressed={tab === id} onClick={() => setTab(id)}>{id === "preview" && activeId ? "Review & apply" : title}</button>)}</nav>
     {tab !== "preview" ? <section className="grid grid-cols-2 gap-2 lg:hidden"><label className="text-sm font-semibold">Week<select className={control} value={wi} onChange={event => { setWeekIndex(Number(event.target.value)); setDayIndex(0); setExerciseIndex(0); }}>{document.weeks.map((week, index) => <option key={week.id} value={index}>{week.name || `Week ${index + 1}`}{week.deload ? " · Deload" : ""}</option>)}</select></label><label className="text-sm font-semibold">Day<select className={control} value={di} onChange={event => { setDayIndex(Number(event.target.value)); setExerciseIndex(0); }}>{week?.days.map((day, index) => <option key={day.id} value={index}>{day.name || `Day ${index + 1}`}</option>)}</select></label></section> : null}
 
@@ -291,7 +296,7 @@ function HydratedWorkspace({ userId, draftId, initialDocument, initialRevision, 
     {tab === "preview" && activeId ? <ActiveProgramChanges programId={activeId} draftId={draftId} saveDraft={async () => await save() ? revision.current : null} /> : null}
     {tab === "preview" ? <section className="card flex flex-col gap-4 p-4"><h2 className="display text-2xl">Review your program</h2><div className="grid grid-cols-2 gap-3"><label className="text-sm font-semibold">Start date<input type="date" className={control} value={document.startDate} onChange={event => change(value => { value.startDate = event.target.value; })} /></label>{<EditorNumber label={"Cycles"} value={document.cycles} onChange={cycles => change(value => { value.cycles = cycles; })} />}</div><fieldset><legend className="text-sm font-semibold">Training weekdays</legend><div className="mt-2 grid grid-cols-7 gap-1">{["Sun","Mon","Tue","Wed","Thu","Fri","Sat"].map((name,index) => <button key={name} className={`touch-target rounded-xl border text-xs font-semibold ${document.weekdays.includes(index) ? "border-brand-line bg-brand-soft text-brand-strong" : "border-line"}`} aria-pressed={document.weekdays.includes(index)} onClick={() => change(value => { value.weekdays = value.weekdays.includes(index) ? value.weekdays.filter(day => day !== index) : [...value.weekdays,index].sort(); })}>{name}</button>)}</div></fieldset><p className="text-sm leading-6 text-muted">{activeId ? "These schedule settings apply to future copies; use Calendar to rearrange the active run. " : ""}Day 1 starts on the first selected weekday on or after your start date. Program weeks advance through workout slots. {document.cycles} cycle(s), {document.weeks.reduce((sum,week) => sum + week.days.length,0) * document.cycles} workouts. Future loads depend on your results.</p>{document.weeks.map((week,index) => <div key={week.id} className="rounded-xl border border-line p-3"><h3 className="display text-xl">{week.block ? `${week.block} · ` : ""}{week.name}{week.deload ? " · Deload" : ""}</h3>{week.days.map(day => <div key={day.id} className="mt-3"><p className="font-semibold">{day.name}</p>{day.exercises.map(exercise => <p key={exercise.id} className="mt-1 text-sm text-muted">{exercise.name || "Unnamed exercise"} · {exercise.sets.length} sets · {exercise.sets.map(set => `${set.repMin}${set.repMax !== set.repMin ? `–${set.repMax}` : ""}`).join(" / ")} reps</p>)}</div>)}<button className={`${button} mt-3`} onClick={() => { setWeekIndex(index); setDayIndex(0); setTab("sets"); }}>Edit this week</button></div>)}{showIssues || issues.length ? <div aria-label="Program validation">{issues.map(issue => <p className="mt-1 text-sm text-danger-ink" key={issue.path + issue.message}>{issue.path.replace(/weeks\.(\d+)\.days\.(\d+)\.exercises\.(\d+)/, (_,w,d,e) => `Week ${Number(w)+1}, day ${Number(d)+1}, exercise ${Number(e)+1}`).replaceAll("."," · ")}: {issue.message}</p>)}</div> : null}<p className="text-sm text-muted">Activation saves an immutable version and schedules its workouts. Your draft remains available for further editing.</p><button className="touch-target rounded-xl bg-brand px-4 py-3 text-base font-semibold text-white disabled:opacity-50" disabled={activating || !!activeId} onClick={() => { void activate(); }}>{activating ? "Activating…" : activeId ? "Activated" : "Activate program"}</button></section> : null}
       </fieldset>
-    </div>
+    </div>}
     {!activeId && !published ? <footer className="flex flex-wrap items-center justify-between gap-3 border-t border-line pt-4"><p className="text-sm text-muted">This program is an unfinished draft.</p><DeleteProgramDraft userId={userId} draftId={draftId} name={document.name} revision={revision.current} redirectHref="/programs" onPendingChange={pending => { deletePending.current = pending; setDeleting(pending); if (pending && timer.current) clearTimeout(timer.current); }} prepareDelete={async () => { if (saving.current) await saving.current; return revision.current; }} /></footer> : null}
   </div>;
 }

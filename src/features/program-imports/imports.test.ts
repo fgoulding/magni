@@ -1,0 +1,68 @@
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
+import { afterAll, beforeAll, expect, it, vi } from "vitest";
+import { makePreset } from "../program-editor/operations";
+import { exportProgramFile } from "../program-files/file";
+let db: (typeof import("@/lib/db"))["db"];
+let imports: typeof import("./repository");
+let drafts: typeof import("../program-editor/repository");
+let dir: string; let owner: number; let other: number;
+beforeAll(async () => {
+  dir = fs.mkdtempSync(path.join(os.tmpdir(), "magni-imports-")); vi.stubEnv("DB_PATH", path.join(dir, "db.sqlite"));
+  db = (await import("@/lib/db")).db; imports = await import("./repository"); drafts = await import("../program-editor/repository");
+  owner = Number(db.prepare("INSERT INTO users(email,password_hash) VALUES ('import-owner@example.test','hash')").run().lastInsertRowid);
+  other = Number(db.prepare("INSERT INTO users(email,password_hash) VALUES ('import-other@example.test','hash')").run().lastInsertRowid);
+});
+afterAll(() => { db?.close(); fs.rmSync(dir, { recursive: true, force: true }); vi.unstubAllEnvs(); });
+it("imports atomically into a private draft once, scopes identities and keeps edited drafts on retries", () => {
+  const file = exportProgramFile(makePreset("top-backoff", "")); const requestKey = crypto.randomUUID();
+  const first = imports.importProgram({ userId: owner, requestKey, file });
+  const draft = drafts.getEditorDraft(owner, first.draftId)!;
+  expect(draft.activatedProgramId).toBeNull(); expect(draft.document.startDate).toBe("");
+  expect(draft.document.weeks[0].id).not.toBe(file.program.weeks[0].id);
+  expect(db.prepare("SELECT count(*) n FROM programs").get()).toEqual({ n: 0 });
+  expect(db.prepare("SELECT count(*) n FROM workout_occurrences").get()).toEqual({ n: 0 });
+  drafts.saveEditorDraft({ userId: owner, id: first.draftId, expectedRevision: 1, document: { ...draft.document, name: "Human edit" } });
+  expect(imports.importProgram({ userId: owner, requestKey, file })).toMatchObject({ draftId: first.draftId, revision: 2, replayed: true });
+  expect(drafts.getEditorDraft(other, first.draftId)).toBeNull();
+  expect(() => imports.importProgram({ userId: owner, requestKey, file: { ...file, program: { ...file.program, name: "different" } } })).toThrow(/different/);
+  expect(imports.importProgram({ userId: other, requestKey, file }).draftId).not.toBe(first.draftId);
+  drafts.deleteEditorDraft({ userId: owner, id: first.draftId, expectedRevision: 2 });
+  expect(() => imports.importProgram({ userId: owner, requestKey, file })).toThrow(/deleted/);
+});
+it("does not leave a receipt or draft for malformed imports and validates request keys", () => {
+  const before = db.prepare("SELECT count(*) n FROM program_editor_drafts").get();
+  const key = crypto.randomUUID();
+  expect(() => imports.importProgram({ userId: owner, requestKey: key, file: {} })).toThrow();
+  expect(db.prepare("SELECT count(*) n FROM program_editor_drafts").get()).toEqual(before);
+  expect(db.prepare("SELECT 1 FROM program_import_requests WHERE request_key=?").get(key)).toBeUndefined();
+  expect(() => imports.importProgram({ userId: owner, requestKey: "bad", file: {} })).toThrow(/request key/i);
+});
+it("issues scoped credentials once, stores only a hash, enforces owner, expiry and revocation", () => {
+  const issued = imports.createImportToken(owner, { name: "Local agent", expiresInDays: 1 });
+  expect(issued.secret).toMatch(/^magni_import_/);
+  expect(imports.authenticateImportToken(issued.secret)).toEqual({ userId: owner, tokenId: issued.token.id });
+  const row = db.prepare("SELECT * FROM program_import_tokens WHERE id=?").get(issued.token.id);
+  expect(JSON.stringify(row)).not.toContain(issued.secret);
+  expect(JSON.stringify(imports.listImportTokens(owner))).not.toContain("hash");
+  expect(imports.listImportTokens(other)).toEqual([]);
+  expect(() => imports.revokeImportToken(other, issued.token.id)).toThrow(/not found/i);
+  imports.revokeImportToken(owner, issued.token.id); imports.revokeImportToken(owner, issued.token.id);
+  expect(() => imports.authenticateImportToken(issued.secret)).toThrow(/credential/i);
+  const expired = imports.createImportToken(owner, { name: "Expired" });
+  db.prepare("UPDATE program_import_tokens SET expires_at='2000-01-01T00:00:00.000Z' WHERE id=?").run(expired.token.id);
+  expect(() => imports.authenticateImportToken(expired.secret)).toThrow(/credential/i);
+  expect(() => imports.authenticateImportToken("not-a-secret")).toThrow(/credential/i);
+  for (const bad of [{ name: "" }, { name: "valid", expiresInDays: 91 }, { name: "valid", expiresInDays: 0 }]) expect(() => imports.createImportToken(owner, bad)).toThrow();
+});
+it("limits active credentials and new daily imports but permits retry at the limit", () => {
+  const user = Number(db.prepare("INSERT INTO users(email,password_hash) VALUES ('quota@example.test','hash')").run().lastInsertRowid);
+  for (let n = 0; n < 10; n++) imports.createImportToken(user, { name: `Agent ${n}` });
+  expect(() => imports.createImportToken(user, { name: "Too many" })).toThrow(/10/);
+  const file = exportProgramFile(makePreset("double", "")); const requestKey = crypto.randomUUID();
+  const first = imports.importProgram({ userId: user, requestKey, file });
+  for (let n = 1; n < 100; n++) db.prepare("INSERT INTO program_import_requests(user_id,request_key,payload_hash,draft_id) VALUES (?,?,?,?)").run(user, crypto.randomUUID(), "hash", first.draftId);
+  expect(() => imports.importProgram({ userId: user, requestKey: crypto.randomUUID(), file })).toThrow(/100/);
+  expect(imports.importProgram({ userId: user, requestKey, file }).replayed).toBe(true);
+});

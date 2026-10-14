@@ -29,7 +29,7 @@ function fixture() {
   return { document, source, target };
 }
 function open(document: ProgramDocumentV1) {
-  render(<ProgramWorkspace userId={7} draftId={draftId} initialDocument={document} initialRevision={1} activatedProgramId={null} />);
+  render(<ProgramWorkspace advanced userId={7} draftId={draftId} initialDocument={document} initialRevision={1} activatedProgramId={null} />);
   fireEvent.click(screen.getByRole("button", { name: "Progression & preview" }));
 }
 function pending(): ProgramDocumentV1 {

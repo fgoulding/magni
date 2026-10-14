@@ -4,13 +4,13 @@ import { registerViaApi } from "./helpers";
 test("full body default survives editing, reload and activation with all three supersets", async ({ page }, info) => {
   test.setTimeout(120_000);
   await registerViaApi(page, "full-body-default");
-  await page.goto("/programs/editor");
-  const starter = page.getByRole("region", { name: "Default programs" });
+  await page.goto("/programs/new");
+  const starter = page.getByRole("region", { name: "Ready programs" });
   await expect(starter).toContainText("Full Body Supersets 3-Day");
   await page.screenshot({ path: info.outputPath("default-program-starter.png"), fullPage: true });
-  // The starter now uses simple setup. Keep direct advanced authoring coverage too.
-  await expect(starter.getByRole("link", { name: "Use this program", exact: true })).toHaveAttribute("href", "/programs/new?template=full-body-supersets-3-day");
-  await page.goto("/programs/editor/new?preset=full-body-supersets-3-day");
+  // The chooser opens the shared builder. Keep direct advanced authoring coverage too.
+  await expect(starter.getByRole("link").filter({ hasText: "Full Body Supersets 3-Day" })).toHaveAttribute("href", "/programs/editor/new?template=full-body-supersets-3-day");
+  await page.goto("/programs/editor/new?preset=full-body-supersets-3-day&advanced=1");
   await expect(page.getByLabel("Program name", { exact: true })).toHaveValue("Full Body Supersets 3-Day");
   await page.getByLabel("Program name", { exact: true }).fill("My full body program");
   await page.getByRole("button", { name: "Prescriptions", exact: true }).click();
@@ -65,12 +65,12 @@ test("default starter stays readable on both phone sizes", async ({ page }, info
   await registerViaApi(page, "full-body-default-phones");
   for (const [width, height] of [[375, 812], [393, 852]]) {
     await page.setViewportSize({ width, height });
-    await page.goto("/programs/editor");
-    const starter = page.getByRole("region", { name: "Default programs" });
-    await expect(starter.getByRole("link", { name: "Use this program" })).toBeVisible();
+    await page.goto("/programs/new");
+    const starter = page.getByRole("region", { name: "Ready programs" });
+    await expect(starter.getByRole("link").filter({ hasText: "Full Body Supersets 3-Day" })).toBeVisible();
     await page.evaluate(() => { document.documentElement.dataset.theme = "dark"; document.documentElement.style.fontSize = "20px"; });
     expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
-    const useProgram = starter.getByRole("link", { name: "Use this program" });
+    const useProgram = starter.getByRole("link").filter({ hasText: "Full Body Supersets 3-Day" });
     await useProgram.scrollIntoViewIfNeeded();
     await useProgram.click({ trial: true });
     await page.screenshot({ path: info.outputPath(`default-program-${width}.png`) });

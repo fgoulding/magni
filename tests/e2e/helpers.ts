@@ -80,10 +80,11 @@ export async function currentWeekdayLabel(page: Page): Promise<string> {
 
 export async function createProgram(page: Page, name: string): Promise<void> {
   await goToTab(page, "Programs");
-  await page.getByRole("link", { name: "Original training systems" }).click();
-  await expect(page).toHaveURL(/\/programs\/new$/);
-  await expect(page.getByRole("heading", { name: "New program" })).toBeVisible();
-  await page.getByRole("combobox", { name: "Choose a program", exact: true }).selectOption("blank");
+  await page.getByRole("link", { name: "Choose a program", exact: true }).click();
+  await page.getByRole("link", { name: /^Original training systems/ }).click();
+  await expect(page).toHaveURL(/\/programs\/new\?system=1$/);
+  await expect(page.getByRole("heading", { name: "Original training systems", exact: true })).toBeVisible();
+  await page.getByRole("button", { name: "Blank Custom", exact: true }).click();
   await page.getByLabel("Program name").fill(name);
   await page.getByLabel("Weeks").fill("4");
   const responsePromise = page.waitForResponse((response) =>

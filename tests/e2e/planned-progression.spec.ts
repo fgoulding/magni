@@ -33,7 +33,7 @@ async function saveSet(page: Page, number: number, reps: string) {
 test("custom set drafts recover and double progression advances once from real UI logging", async ({ page, context }, info) => {
   test.setTimeout(120_000);
   await registerViaApi(page, "planned-recovery");
-  await page.goto("/programs/editor/new");
+  await page.goto("/programs/editor/new?advanced=1");
   await page.getByLabel("Program name", { exact: true }).fill("Recovery double progression");
   await page.getByLabel("Repeat cycles", { exact: true }).fill("3");
   await page.getByRole("button", { name: "Prescriptions", exact: true }).click();
