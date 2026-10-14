@@ -402,7 +402,10 @@ export async function POST(request: Request, context: RouteContext) {
           weekSetting.sets,
           repOutTarget,
           weekSetting.weight ?? calculateWeight(weekSetting.training_max, weekSetting.intensity_pct, rounding),
-          weekSetting.training_max,
+          // Editor manual/bodyweight prescriptions can intentionally have no
+          // training max. The nullable legacy column accepts no max, while the
+          // exact authored zero and progression state remain in editor_json.
+          editor && weekSetting.training_max === 0 ? null : weekSetting.training_max,
           editor || weekSetting.progression_type === "custom" || weekSetting.progression_type === "bodyweight" ? 0 : 1,
           editor ? JSON.stringify(editor) : null,
           weekSetting.template_snapshot_json ?? null,

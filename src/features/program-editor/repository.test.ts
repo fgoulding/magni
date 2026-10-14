@@ -41,6 +41,31 @@ function completeDocument() {
   return doc;
 }
 
+it("activates the full body default without losing any day, range, superset or training cue", async () => {
+  const { makePreset } = await import("./operations");
+  const doc = makePreset("full-body-supersets-3-day", "2026-10-19");
+  doc.weeks[0].days[0].exercises[0].baseLoad = 135;
+  const id = crypto.randomUUID();
+  repository.saveEditorDraft({ userId, id, expectedRevision: 0, document: doc });
+  const result = repository.activateEditorDraft({ userId, id, expectedRevision: 1 });
+  const occurrences = database.db.prepare("SELECT scheduled_date, prescription_json FROM workout_occurrences WHERE program_run_id = ? ORDER BY slot_index").all(result.runId) as { scheduled_date: string; prescription_json: string }[];
+  expect(occurrences).toHaveLength(12);
+  expect(occurrences.slice(0, 3).map(row => row.scheduled_date)).toEqual(["2026-10-19", "2026-10-21", "2026-10-23"]);
+  for (const [index, occurrence] of occurrences.entries()) {
+    const sets = JSON.parse(occurrence.prescription_json) as import("./repository").EditorPrescriptionSet[];
+    expect(sets).toHaveLength(26);
+    const expected = doc.weeks[0].days[index % 3].exercises.flatMap(exercise => exercise.sets.map(set => ({
+      exercise_name: exercise.name,
+      superset_group: exercise.supersetGroup,
+      calculated_weight: set.loadMode === "bodyweight" ? 0 : exercise.baseLoad,
+      editor: expect.objectContaining({ historyKey: exercise.historyKey, rule: null, set }),
+    })));
+    expect(sets).toEqual(expected.map(set => expect.objectContaining(set)));
+  }
+  expect(repository.activateEditorDraft({ userId, id, expectedRevision: 1 })).toEqual(result);
+  expect(database.db.prepare("SELECT COUNT(*) AS count FROM workout_occurrences WHERE program_run_id = ?").get(result.runId)).toEqual({ count: 12 });
+});
+
 describe("program editor documents", () => {
   it("creates editable defaults with unique IDs and allows incomplete structural drafts", () => {
     const first = document.createBlankDocument();

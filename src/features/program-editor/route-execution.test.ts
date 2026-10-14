@@ -85,6 +85,43 @@ function state(runId: number, key: string): ProgressionState {
 }
 
 describe("editor start, actual logging, completion and skip routes", () => {
+  it("starts, logs and completes manual working-load and bodyweight prescriptions with no training max", async () => {
+    const { makeFullBodySupersetProgram } = await import("./full-body-superset");
+    const doc = makeFullBodySupersetProgram("2026-10-13");
+    doc.weeks[0].days[0].exercises[0].baseLoad = 135;
+    authState.userId = userId;
+    const id = crypto.randomUUID();
+    repository.saveEditorDraft({ userId, id, expectedRevision: 0, document: doc });
+    const activation = repository.activateEditorDraft({ userId, id, expectedRevision: 1 });
+    const rows = db.prepare("SELECT * FROM workout_occurrences WHERE program_run_id=? ORDER BY slot_index").all(activation.runId) as Occurrence[];
+    for (const row of rows.slice(0, 3)) {
+      const slotIndex = row.slot_index;
+      if (slotIndex === null) throw new Error("The default workout is missing its scheduled slot index.");
+      const response = await startRoute.POST(request({ occurrenceId: row.id }), context(activation.programId));
+      expect(response.status).toBe(201);
+      const session = await response.json() as SessionResponse;
+      expect(session.sets).toHaveLength(26);
+      expect(session.sets.every(set => JSON.parse(set.editor_json!).trainingMax === 0)).toBe(true);
+      expect(db.prepare("SELECT DISTINCT training_max FROM session_sets WHERE session_id=?").all(session.id)).toEqual([{ training_max: null }]);
+      const retry = await startRoute.POST(request({ occurrenceId: row.id }), context(activation.programId));
+      expect(retry.status).toBe(200);
+      expect((await retry.json()).sets).toEqual(session.sets);
+      if (row.slot_index === 0) {
+        expect(session.sets.slice(0, 5).map(set => set.calculated_weight)).toEqual([135, 135, 135, 135, 135]);
+      }
+      await log(session, session.sets.map((set, index) => {
+        const prescribed = JSON.parse(set.editor_json!).set;
+        return index === 0 || prescribed.loadMode === "bodyweight" ? prescribed.repMin : null;
+      }));
+      const completed = await completeRoute.POST(request({ sessionId: session.id }), context(activation.programId));
+      expect(completed.status).toBe(200);
+      expect((await completed.json()).progressionDecisions.every((decision: EditorCompletionDecision) => decision.result.reason === "manual")).toBe(true);
+      for (const exercise of doc.weeks[0].days[slotIndex].exercises) {
+        expect(state(activation.runId, exercise.progressionKey)).toMatchObject({ load: exercise.baseLoad, trainingMax: 0 });
+      }
+    }
+  });
+
   it("freezes the editor unit onto the session for hot-added sets and history", async () => {
     const { activation, rows } = fixture(undefined, "kg");
     const started = await start(activation.programId, rows[0]);

@@ -1,7 +1,9 @@
 import { createBlankDocument, createDay, createExercise, type ProgramDayV1, type ProgramDocumentV1, type ProgramExerciseV1, type ProgramWeekV1 } from "./document";
 import type { ProgressionRuleV1 } from "./progression";
+import { FULL_BODY_SUPERSET_PRESET, makeFullBodySupersetProgram } from "./full-body-superset";
 
 export const PRESETS = [
+  FULL_BODY_SUPERSET_PRESET,
   { id: "linear", title: "All-set linear", description: "Three straight sets; add load when every set reaches its target." },
   { id: "double", title: "Double progression", description: "Three sets of 8–12; add 2.5 when all reach 12." },
   { id: "percentage", title: "Percentage blocks", description: "Three build weeks, a deload, and repeating cycles." },
@@ -102,6 +104,7 @@ export function applySharedConfiguration(document: ProgramDocumentV1, source: Pr
 }
 
 export function makePreset(id: PresetId, startDate: string): ProgramDocumentV1 {
+  if (id === FULL_BODY_SUPERSET_PRESET.id) return makeFullBodySupersetProgram(startDate);
   const document = createBlankDocument();
   document.startDate = startDate;
   document.name = PRESETS.find(preset => preset.id === id)?.title ?? "Custom program";
