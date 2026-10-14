@@ -38,6 +38,10 @@ COPY --from=builder /app/src/lib/db/schema.sql ./src/lib/db/schema.sql
 # Admin CLIs (password reset, etc.) so they're runnable via `docker compose exec`.
 # They import better-sqlite3/argon2, which the standalone bundle already includes.
 COPY --from=builder /app/scripts ./scripts
+# Runtime template publication is data-only. The operator CLI shares its plain
+# JavaScript contract with the app and needs no TypeScript/test dependencies.
+COPY --from=builder /app/src/features/program-templates/*.mjs ./src/features/program-templates/
+COPY --from=builder /app/program-templates ./program-templates
 
 # Drop any DB the build baked in (initDb runs at import time). Real data lives
 # only in the mounted /data volume. Create it and hand everything to `node`.

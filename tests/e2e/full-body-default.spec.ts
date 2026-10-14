@@ -8,7 +8,9 @@ test("full body default survives editing, reload and activation with all three s
   const starter = page.getByRole("region", { name: "Default programs" });
   await expect(starter).toContainText("Full Body Supersets 3-Day");
   await page.screenshot({ path: info.outputPath("default-program-starter.png"), fullPage: true });
-  await starter.getByRole("link", { name: "Use this program", exact: true }).click();
+  // The starter now uses simple setup. Keep direct advanced authoring coverage too.
+  await expect(starter.getByRole("link", { name: "Use this program", exact: true })).toHaveAttribute("href", "/programs/new?template=full-body-supersets-3-day");
+  await page.goto("/programs/editor/new?preset=full-body-supersets-3-day");
   await expect(page.getByLabel("Program name", { exact: true })).toHaveValue("Full Body Supersets 3-Day");
   await page.getByLabel("Program name", { exact: true }).fill("My full body program");
   await page.getByRole("button", { name: "Prescriptions", exact: true }).click();

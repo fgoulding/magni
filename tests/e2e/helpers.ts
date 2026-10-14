@@ -83,6 +83,7 @@ export async function createProgram(page: Page, name: string): Promise<void> {
   await page.getByRole("link", { name: "Original training systems" }).click();
   await expect(page).toHaveURL(/\/programs\/new$/);
   await expect(page.getByRole("heading", { name: "New program" })).toBeVisible();
+  await page.getByRole("combobox", { name: "Choose a program", exact: true }).selectOption("blank");
   await page.getByLabel("Program name").fill(name);
   await page.getByLabel("Weeks").fill("4");
   const responsePromise = page.waitForResponse((response) =>

@@ -19,11 +19,40 @@ test('publication requires successful release verification on the same checkout'
   }
 });
 
-test('verification installs both browser engines and runs the complete release runner', () => {
-  const commands = workflow.jobs.verify.steps.map(step => step.run ?? '').join('\n');
+test('verification requires core checks and all four isolated browser shards', () => {
+  assert.deepEqual(workflow.jobs.verify.needs, ['core', 'browser']);
+  assert.equal(workflow.jobs.verify.env.RELEASE_CORE_RESULT, '${{ needs.core.result }}');
+  assert.equal(workflow.jobs.verify.env.RELEASE_BROWSER_RESULT, '${{ needs.browser.result }}');
+  const coreCommands = workflow.jobs.core.steps.map(step => step.run ?? '').join('\n');
+  assert.match(coreCommands, /npm ci/);
+  assert.match(coreCommands, /node scripts\/release-check\.core\.mjs/);
+  assert.equal(workflow.jobs.core.needs, undefined);
+  assert.equal(workflow.jobs.browser.needs, undefined);
+  assert.equal(workflow.jobs.browser.strategy['fail-fast'], false);
+  assert.deepEqual(workflow.jobs.browser.strategy.matrix.include, [
+    { project: 'chromium', engine: 'chromium', shard: 1 },
+    { project: 'chromium', engine: 'chromium', shard: 2 },
+    { project: 'mobile-safari', engine: 'webkit', shard: 1 },
+    { project: 'mobile-safari', engine: 'webkit', shard: 2 },
+  ]);
+  const commands = workflow.jobs.browser.steps.map(step => step.run ?? '').join('\n');
   assert.match(commands, /npm ci/);
-  assert.match(commands, /playwright install --with-deps chromium webkit/);
-  assert.match(commands, /node scripts\/release-check\.mjs/);
+  assert.match(commands, /playwright install --with-deps \$\{\{ matrix.engine \}\}/);
+  assert.match(commands, /node scripts\/release-check\.browser\.mjs --project=\$\{\{ matrix.project \}\} --shard=\$\{\{ matrix.shard \}\}\/2/);
+  assert.match(workflow.jobs.verify.steps.map(step => step.run ?? '').join('\n'), /node scripts\/release-check\.aggregate\.mjs/);
+});
+
+test('release receipts remain small and compatible while diagnostics stay separately downloadable', () => {
+  const uploads = Object.values(workflow.jobs).flatMap(job => job.steps).filter(step => step.uses?.startsWith('actions/upload-artifact@'));
+  const receipt = uploads.find(step => step.with.name === 'release-checks-${{ github.sha }}-${{ github.run_attempt }}');
+  assert.equal(receipt.with['include-hidden-files'], true);
+  assert.match(receipt.with.path, /\.playwright\/release-checks\/\*\.json/);
+  assert.match(receipt.with.path, /coverage\/coverage-summary\.json/);
+  assert.doesNotMatch(receipt.with.path, /\.log|e2e-report|test-results/);
+  const diagnostics = uploads.filter(step => step.with.name.startsWith('release-diagnostics-'));
+  assert.equal(diagnostics.length, 2);
+  assert.ok(diagnostics.some(step => step.with.path.includes('e2e-report/')));
+  assert.ok(diagnostics.some(step => step.with.path.includes('*.log')));
 });
 
 test('publication records full commit identity and immutable image digest', () => {

@@ -1,11 +1,14 @@
 "use client";
 
 import { useRouter } from "next/navigation";
-import { useState } from "react";
+import Link from "next/link";
+import { useCallback, useEffect, useState } from "react";
 import { ErrorBanner } from "@/components/ErrorBanner";
 import { applySbsCycleToSnapshot, snapshotUsesSbs } from "@/features/program-defaults/defaults";
 import type { ProgramDefault } from "@/features/program-defaults/types";
 import type { SharedProgramSnapshot } from "@/features/shared-programs/types";
+import { validateProgramTemplate, type ProgramTemplate } from "@/features/program-templates/template";
+import { SimpleProgramSetup } from "./SimpleProgramSetup";
 
 type CreateProgramFormProps = Readonly<{
   programDefaults?: readonly ProgramDefault[];
@@ -15,6 +18,10 @@ type CreateProgramFormProps = Readonly<{
   submitMode?: "create-program" | "snapshot-only";
   /** Latest training max per lift (keyed by lowercased exercise name) to pre-fill. */
   latestMaxes?: Readonly<Record<string, number>>;
+  programTemplates?: readonly ProgramTemplate[];
+  initialTemplateId?: string;
+  startDate?: string;
+  userId?: number;
 }>;
 
 function buildExpectedMaxesFromSnapshot(
@@ -43,10 +50,39 @@ export function CreateProgramForm({
   submitEndpoint = "/api/programs",
   submitMode = "create-program",
   latestMaxes = {},
+  programTemplates = [],
+  initialTemplateId,
+  startDate = "",
+  userId,
 }: CreateProgramFormProps) {
   const [name, setName] = useState(initialSnapshot?.name ?? "");
   const [numWeeks, setNumWeeks] = useState(initialSnapshot?.numWeeks ?? 7);
-  const [selectedDefaultId, setSelectedDefaultId] = useState(initialSnapshot ? "loaded" : "blank");
+  const templates = submitMode === "create-program" ? programTemplates : [];
+  const [pendingTemplate, setPendingTemplate] = useState<ProgramTemplate | null>(null);
+  const choices = pendingTemplate && !templates.some(template => template.id === pendingTemplate.id) ? [pendingTemplate, ...templates] : templates;
+  const [selectedDefaultId, setSelectedDefaultId] = useState(initialSnapshot ? "loaded" : initialTemplateId ? `template:${initialTemplateId}` : templates[0] ? `template:${templates[0].id}` : "blank");
+  const [sourceLocked, setSourceLocked] = useState(false);
+  const [sourceReady, setSourceReady] = useState(!userId || !!initialSnapshot || submitMode !== "create-program");
+  const lockSource = useCallback(() => setSourceLocked(true), []);
+  const unlockSource = useCallback(() => setSourceLocked(false), []);
+  useEffect(() => {
+    const frame = requestAnimationFrame(() => {
+      try {
+        if (userId && !initialSnapshot && submitMode === "create-program") {
+          const id = sessionStorage.getItem(`magni.program-setup.pending.${userId}`);
+          const raw = id ? sessionStorage.getItem(`magni.program-setup.v1.${userId}.${id}`) : null;
+          if (raw) {
+            const saved = JSON.parse(raw);
+            if (saved.version === 1 && saved.template?.id === id && saved.attempt && validateProgramTemplate(saved.template).length === 0) {
+              setPendingTemplate(saved.template); setSelectedDefaultId(`template:${id}`);
+            }
+          }
+        }
+      } catch { /* Recover in memory if browser storage is unavailable. */ }
+      setSourceReady(true);
+    });
+    return () => cancelAnimationFrame(frame);
+  }, [userId, initialSnapshot, submitMode]);
   const [expectedMaxes, setExpectedMaxes] = useState<Record<string, number | "">>(
     initialSnapshot ? buildExpectedMaxesFromSnapshot(initialSnapshot, latestMaxes) : {},
   );
@@ -55,6 +91,8 @@ export function CreateProgramForm({
   // SBS runs as three 7-week cycles (same lifts, heavier loads at lower reps).
   const [sbsCycle, setSbsCycle] = useState(1);
   const router = useRouter();
+  const selectedTemplate = choices.find(template => `template:${template.id}` === selectedDefaultId);
+  const unavailableTemplate = selectedDefaultId.startsWith("template:") && !selectedTemplate;
   const selectedDefault = programDefaults.find((programDefault) => programDefault.id === selectedDefaultId);
   const baseSnapshot = selectedDefault?.snapshot ?? (selectedDefaultId === "loaded" ? initialSnapshot : undefined);
   const showsCycleChoice = baseSnapshot ? snapshotUsesSbs(baseSnapshot) : false;
@@ -67,7 +105,7 @@ export function CreateProgramForm({
   const sourceButtonClass = (selected: boolean) =>
     `touch-target rounded-xl border px-3 py-2 text-left text-sm font-semibold transition-colors ${
       selected
-        ? "border-brand bg-brand text-white"
+        ? "border-brand-line bg-brand-soft text-brand-strong"
         : "border-line bg-surface text-foreground active:bg-surface-muted"
     }`;
 
@@ -155,20 +193,19 @@ export function CreateProgramForm({
   }
 
   return (
-    <form onSubmit={submit} noValidate className="flex flex-col gap-4">
-      <ErrorBanner message={error} />
-
-      <fieldset className="flex flex-col gap-2">
-        <legend className="text-sm font-medium">Source</legend>
+    <div className="flex min-w-0 flex-col gap-5">
+      <fieldset disabled={sourceLocked || !sourceReady} className="flex min-w-0 flex-col gap-2">
+        {choices.length > 0 ? <label className="flex min-w-0 flex-col gap-2 text-sm font-semibold">Choose a program
+          <select value={selectedDefaultId} onChange={event => selectDefault(event.target.value)} className="touch-target min-w-0 w-full rounded-xl border border-line bg-surface px-3 text-base outline-none focus:border-brand">
+            {unavailableTemplate && <option value={selectedDefaultId} disabled>Unavailable program</option>}
+            <optgroup label="Ready programs">{choices.map(template => <option key={template.id} value={`template:${template.id}`}>{template.title}</option>)}</optgroup>
+            {initialSnapshot && <option value="loaded">{initialSnapshotLabel}</option>}
+            {programDefaults.length > 0 && <optgroup label="Original training systems">{programDefaults.map(programDefault => <option key={programDefault.id} value={programDefault.id}>{programDefault.label}</option>)}</optgroup>}
+            <option value="blank">Blank Custom</option>
+          </select>
+        </label> : <><legend className="mb-2 text-sm font-semibold">Choose a program</legend>
         <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
-          <button
-            type="button"
-            aria-pressed={selectedDefaultId === "blank"}
-            onClick={() => selectDefault("blank")}
-            className={sourceButtonClass(selectedDefaultId === "blank")}
-          >
-            Blank Custom
-          </button>
+          {choices.map(template => <button key={template.id} type="button" aria-pressed={selectedDefaultId === `template:${template.id}`} onClick={() => selectDefault(`template:${template.id}`)} className={sourceButtonClass(selectedDefaultId === `template:${template.id}`)}>{template.title}</button>)}
           {initialSnapshot ? (
             <button
               type="button"
@@ -190,8 +227,12 @@ export function CreateProgramForm({
               {programDefault.label}
             </button>
           ))}
-        </div>
+          <button type="button" aria-pressed={selectedDefaultId === "blank"} onClick={() => selectDefault("blank")} className={sourceButtonClass(selectedDefaultId === "blank")}>Blank Custom</button>
+        </div></>}
       </fieldset>
+
+      {unavailableTemplate ? <ErrorBanner message="This program is unavailable. Choose another program above; nothing has been created." /> : selectedTemplate ? <SimpleProgramSetup key={selectedTemplate.id} template={selectedTemplate} startDate={startDate} userId={userId} onLock={lockSource} onUnlock={unlockSource} /> : <form onSubmit={submit} noValidate className="flex min-w-0 flex-col gap-4">
+      <ErrorBanner message={error} />
 
       {selectedSnapshot ? (
         <div className="grid grid-cols-3 gap-2 rounded-xl border border-line bg-surface p-3 text-center">
@@ -317,6 +358,8 @@ export function CreateProgramForm({
       >
         {submitting ? "Saving…" : submitMode === "snapshot-only" ? "Publish update" : "Create program"}
       </button>
-    </form>
+    </form>}
+    {templates.length > 0 && !sourceLocked && <Link href="/programs/editor/new" className="touch-target inline-flex items-center self-start text-sm font-semibold text-muted">Build a custom program in workspace</Link>}
+    </div>
   );
 }

@@ -6,6 +6,8 @@ import userEvent from "@testing-library/user-event";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { CreateProgramForm } from "@/components/CreateProgramForm";
 import { getProgramDefault, listProgramDefaults } from "@/features/program-defaults/defaults";
+import bundled from "../../program-templates/full-body-supersets-3-day.json";
+import type { ProgramTemplate } from "@/features/program-templates/template";
 
 const routerMock = vi.hoisted(() => ({
   push: vi.fn(),
@@ -35,6 +37,29 @@ function mockJsonResponse(body: unknown, init: ResponseInit = {}): Response {
 }
 
 describe("CreateProgramForm", () => {
+  it("leads with ready programs while keeping original training systems in the same chooser", async () => {
+    const user = userEvent.setup();
+    render(<CreateProgramForm programDefaults={listProgramDefaults()} programTemplates={[bundled as ProgramTemplate]} startDate="2026-10-13" userId={7} />);
+    expect(screen.getByLabelText("Choose a program")).toHaveValue(`template:${bundled.id}`);
+    expect(screen.getByLabelText("Weeks")).toHaveValue(4);
+    expect(screen.getByLabelText("Start date")).toHaveValue("2026-10-13");
+    expect(screen.getByRole("link", { name: "Build a custom program in workspace" })).toHaveAttribute("href", "/programs/editor/new");
+    await waitFor(() => expect(screen.getByLabelText("Choose a program")).toBeEnabled());
+    await user.selectOptions(screen.getByLabelText("Choose a program"), "basic-strength-3-day");
+    expect(screen.getByLabelText("Weeks")).toHaveValue(7);
+    expect(screen.getByText("Training Maxes")).toBeInTheDocument();
+    await user.selectOptions(screen.getByLabelText("Choose a program"), "blank");
+    expect(screen.getByLabelText("Program name")).toHaveValue("");
+    expect(screen.getByText(/A blank program starts empty/)).toBeInTheDocument();
+  });
+
+  it("does not silently replace an unavailable requested template", () => {
+    render(<CreateProgramForm programTemplates={[bundled as ProgramTemplate]} initialTemplateId="removed-program" startDate="2026-10-13" userId={7} />);
+    expect(screen.getByRole("alert")).toHaveTextContent("This program is unavailable");
+    expect(screen.queryByRole("button", { name: "Create program" })).not.toBeInTheDocument();
+    expect(screen.getByLabelText("Choose a program")).toHaveValue("template:removed-program");
+  });
+
   function liftCount(snapshot: { days: readonly { exercises: readonly unknown[] }[] }): number {
     return snapshot.days.reduce((total, day) => total + day.exercises.length, 0);
   }

@@ -24,12 +24,63 @@ concurrency:
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
-  verify:
-    name: Verify release candidate
+  core:
+    name: Verify application and build
     runs-on: ubuntu-latest
-    # Browser OS dependencies can take 14 minutes on a slow package mirror.
-    # Leave room for the complete release suite; individual test limits stay strict.
-    timeout-minutes: 45
+    timeout-minutes: 20
+    env:
+      CI: "true"
+      NEXT_TELEMETRY_DISABLED: "1"
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+
+      - name: Install locked dependencies
+        run: npm ci
+
+      - name: Run core release checks and discover the complete browser suite
+        run: node scripts/release-check.core.mjs
+
+      - name: Upload compact core evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-core-${{ github.sha }}-${{ github.run_attempt }}
+          include-hidden-files: true
+          if-no-files-found: error
+          retention-days: 30
+          path: |
+            .playwright/release-core/result.json
+            .playwright/release-core/browser-manifest.json
+            coverage/coverage-summary.json
+
+      - name: Upload core diagnostics
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-diagnostics-core-${{ github.sha }}-${{ github.run_attempt }}
+          include-hidden-files: true
+          retention-days: 30
+          path: .playwright/release-core/*.log
+
+  browser:
+    name: Browser ${{ matrix.project }} (${{ matrix.shard }}/2)
+    runs-on: ubuntu-latest
+    # Each job owns an app, disposable SQLite DB and one worker. Parallelism is
+    # between runners, preserving file order and avoiding shared-server races.
+    timeout-minutes: 35
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { project: chromium, engine: chromium, shard: 1 }
+          - { project: chromium, engine: chromium, shard: 2 }
+          - { project: mobile-safari, engine: webkit, shard: 1 }
+          - { project: mobile-safari, engine: webkit, shard: 2 }
     env:
       CI: "true"
       E2E_NAV_DIAGNOSTICS: "1"
@@ -45,26 +96,78 @@ jobs:
       - name: Install locked dependencies
         run: npm ci
 
-      - name: Install Chromium and WebKit with operating-system dependencies
-        run: npx playwright install --with-deps chromium webkit
+      - name: Install the assigned browser and operating-system dependencies
+        run: npx playwright install --with-deps ${{ matrix.engine }}
 
-      - name: Run every release check
-        run: node scripts/release-check.mjs
+      - name: Run the assigned browser shard
+        run: node scripts/release-check.browser.mjs --project=${{ matrix.project }} --shard=${{ matrix.shard }}/2
 
-      - name: Upload verification evidence
+      - name: Upload compact browser evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-browser-${{ github.sha }}-${{ github.run_attempt }}-${{ matrix.project }}-${{ matrix.shard }}
+          include-hidden-files: true
+          if-no-files-found: error
+          retention-days: 30
+          path: .playwright/release-browser/result.json
+
+      - name: Upload browser diagnostics
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-diagnostics-browser-${{ github.sha }}-${{ github.run_attempt }}-${{ matrix.project }}-${{ matrix.shard }}
+          include-hidden-files: true
+          retention-days: 30
+          path: |
+            .playwright/release-browser/*.log
+            .playwright/e2e-results.json
+            .playwright/e2e-results.xml
+            .playwright/e2e-report/
+            .playwright/test-results/
+
+  verify:
+    name: Verify release candidate
+    needs: [core, browser]
+    if: always()
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      RELEASE_CORE_RESULT: ${{ needs.core.result }}
+      RELEASE_BROWSER_RESULT: ${{ needs.browser.result }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      - name: Download compact core evidence
+        uses: actions/download-artifact@v4
+        with:
+          name: release-core-${{ github.sha }}-${{ github.run_attempt }}
+          path: .
+
+      - name: Download all compact browser receipts
+        uses: actions/download-artifact@v4
+        with:
+          pattern: release-browser-${{ github.sha }}-${{ github.run_attempt }}-*
+          path: .playwright/release-input/browser
+
+      - name: Require every gate and every discovered browser case
+        run: node scripts/release-check.aggregate.mjs
+
+      - name: Upload small release receipt
         if: always()
         uses: actions/upload-artifact@v4
         with:
           name: release-checks-${{ github.sha }}-${{ github.run_attempt }}
           include-hidden-files: true
+          if-no-files-found: error
           retention-days: 30
           path: |
             .playwright/release-checks/*.json
-            .playwright/release-checks/*.log
             coverage/coverage-summary.json
-            .playwright/e2e-results.xml
-            .playwright/e2e-report/
-            .playwright/test-results/
 
   build-and-push:
     needs: verify

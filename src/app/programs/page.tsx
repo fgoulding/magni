@@ -145,8 +145,8 @@ export default async function ProgramsPage() {
         <div className="flex shrink-0 items-center gap-2">
           <TrainingMaxesModal maxes={latestMaxes} />
           <Link
-            href="/programs/editor/new"
-            className="touch-target inline-flex items-center justify-center gap-1.5 rounded-xl bg-brand px-4 text-sm font-semibold text-white transition-colors active:bg-brand-strong"
+            href="/programs/new"
+            className="touch-target inline-flex items-center justify-center gap-1.5 rounded-xl bg-foreground px-4 text-sm font-semibold text-background transition-colors active:opacity-90"
           >
             <Plus aria-hidden="true" size={16} />
             Create
@@ -154,7 +154,7 @@ export default async function ProgramsPage() {
         </div>
       </header>
 
-      <section className="card p-4"><h2 className="display text-2xl">Program workspace</h2><p className="mt-2 text-sm leading-6 text-muted">Design your programs on a larger screen, then train here on your phone.</p><div className="mt-3 flex flex-wrap gap-2"><Link prefetch={false} href="/programs/editor" className="touch-target inline-flex items-center rounded-xl bg-brand px-4 text-sm font-semibold text-white">Open workspace</Link><Link prefetch={false} href="/programs/editor/new" className="touch-target inline-flex items-center rounded-xl border border-line px-4 text-sm font-semibold">Custom program</Link><Link href="/programs/new" className="touch-target inline-flex items-center rounded-xl border border-line px-4 text-sm font-semibold">Original training systems</Link></div></section>
+      <section className="card p-4"><h2 className="display text-2xl">Choose your next program</h2><p className="mt-2 text-sm leading-6 text-muted">Start a ready program with a simple setup. Use the workspace when you want to design your own.</p><div className="mt-3 flex flex-wrap gap-2"><Link href="/programs/new" className="touch-target inline-flex items-center rounded-xl bg-foreground px-4 text-sm font-semibold text-background">Choose a program</Link><Link prefetch={false} href="/programs/editor" className="touch-target inline-flex items-center rounded-xl border border-line px-4 text-sm font-semibold">Open workspace</Link><Link href="/programs/new" className="touch-target inline-flex items-center rounded-xl px-2 text-sm font-semibold text-muted">Original training systems</Link></div></section>
       <ProgramDraftList userId={user.id} drafts={drafts} />
       {library.definitions.length === 0 ? (
         <section className="flex min-h-80 flex-col items-center justify-center rounded-2xl border border-dashed border-line px-6 text-center">

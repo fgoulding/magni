@@ -27,12 +27,37 @@ test("a failed check blocks subsequent stages and persists its exit code and out
     assert.equal(result.status, "failed");
     assert.deepEqual(result.checks.map(check => check.status), ["failed", "skipped"]);
     assert.equal(result.checks[0].exitCode, 7);
+    assert.ok(Number.isFinite(result.checks[0].durationMs) && result.checks[0].durationMs >= 0);
+    assert.equal(typeof result.checks[0].startedAt, "string");
+    assert.equal(typeof result.checks[0].finishedAt, "string");
     assert.equal(existsSync(marker), false);
     assert.match(readFileSync(path.join(directory, "reject.log"), "utf8"), /deliberate gate failure/);
     const saved = JSON.parse(readFileSync(path.join(directory, "result.json"), "utf8"));
     assert.equal(saved.status, "failed");
     assert.match(saved.source.commit, /^[a-f0-9]{40}$/);
   } finally { rmSync(directory, { recursive: true, force: true }); }
+});
+
+test("a source change during a release check invalidates its receipt", async () => {
+  const directory = mkdtempSync(path.join(os.tmpdir(), "magni-source-change-test-"));
+  const outputDirectory = mkdtempSync(path.join(os.tmpdir(), "magni-source-change-output-"));
+  const git = (...args) => execFileSync("git", args, { cwd: directory, stdio: "pipe" });
+  try {
+    git("init");
+    writeFileSync(path.join(directory, "package.json"), '{"version":"1.0.0"}\n');
+    git("add", "package.json");
+    git("-c", "user.name=Release test", "-c", "user.email=release@example.test", "-c", "commit.gpgsign=false", "-c", `core.hooksPath=${path.join(directory, "no-hooks")}`, "commit", "-m", "Fixture");
+    const result = await runReleaseChecks({ cwd: directory, outputDirectory, quiet: true, env: {}, checks: [
+      { name: "mutation", command: process.execPath, args: ["-e", "require('node:fs').writeFileSync('unverified.ts', 'new source')"] },
+    ] });
+    assert.equal(result.status, "failed");
+    assert.match(result.error, /source changed/i);
+    assert.equal(result.source.dirty, false);
+    assert.equal(result.sourceAfter.dirty, true);
+  } finally {
+    rmSync(directory, { recursive: true, force: true });
+    rmSync(outputDirectory, { recursive: true, force: true });
+  }
 });
 
 test("release identity does not call a checkout clean when it contains new source files", async () => {

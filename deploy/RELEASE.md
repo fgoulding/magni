@@ -5,9 +5,9 @@ main pushes, `v*` tags, and manual runs. The publication job requires that job t
 succeed and only publishes from main or a `v*` ref. Pull requests and manual runs
 on other branches cannot publish. No check has a continue-on-error path.
 
-The verification job installs the lockfile with Node 22, matching the Docker
-runtime, and installs Chromium/WebKit plus their operating-system dependencies.
-`node scripts/release-check.mjs` then runs, in order:
+CI installs the lockfile with Node 22, matching the Docker runtime. Application
+checks and browser checks run concurrently on separate GitHub runners. The
+application job runs `node scripts/release-check.core.mjs`:
 
 1. Release policy and failure-propagation checks.
 2. `npm audit --omit=dev`, requiring the production dependency audit to pass.
@@ -16,19 +16,42 @@ runtime, and installs Chromium/WebKit plus their operating-system dependencies.
 5. `npm run test:coverage`, which runs the full suite with the existing configured
    coverage thresholds. It accepts no coverage reduction or test filtering flags.
 6. The normal production build.
-7. Every configured E2E test in both Chromium and iPhone WebKit projects. A test
-   that fails initially and passes on retry still fails the release gate; retries
-   collect diagnostic evidence and cannot turn a flaky run into a promotion.
+The browser job has four independent runners: two file-level shards of Chromium
+and two of iPhone WebKit. Each installs its assigned engine and owns its Next
+server, disposable SQLite database and generated output. Each retains one worker
+and the existing order within test files; parallelism never shares a test server
+or database. [Playwright sharding](https://playwright.dev/docs/test-sharding)
+splits the full project suite without selecting or dropping test files. A test
+that fails initially and passes on retry still fails the release gate; retries
+collect diagnostic evidence and cannot turn a flaky run into a promotion.
 
-The first failure stops the sequence and marks all later checks skipped. CI
-uploads per-check output and `result.json` even on failure, plus available
-coverage, JUnit, HTML, and browser trace artifacts. The result identifies the
-full tested commit. CI retains traces from the first failed browser attempt,
-including when a later diagnostic retry passes. The result also identifies the
-source ref, package version, dirty-checkout state, run ID,
-and attempt. Keep this artifact with the release record. Repository branch
-protection should require `Verify release candidate`; changing branch-protection
-settings remains a repository administration step, separate from these files.
+The required `Verify release candidate` job aggregates these results. It requires
+all seven application gates and all four browser jobs to succeed for the same
+clean commit, ref, package version, workflow run and attempt. It compares every
+executed case ID with the complete suite discovered independently by the
+application job. Missing/duplicate shards or cases, skipped tests, unexpected
+cases, failures, retries and collection errors block publication. Adding a test
+automatically expands this expected set; there is no hardcoded case count or
+path-based shortcut. The final receipt preserves all eight gate names, including
+the complete `e2e` gate. Per-check and per-shard timings show where time is spent.
+
+Evidence is split so normal promotion never downloads screenshots or traces:
+
+- `release-checks-<commit>-<attempt>` is the small release receipt. It retains
+  `.playwright/release-checks/result.json` and `coverage/coverage-summary.json`,
+  preserving the paths used by guarded deployment tooling.
+- `release-diagnostics-core-<commit>-<attempt>` contains core check logs.
+- `release-diagnostics-browser-<commit>-<attempt>-<project>-<shard>` contains that
+  shard's logs, JSON/JUnit/HTML report, screenshots and available traces. Download
+  it only when investigating a failure. Traces include the first failed attempt,
+  even when a later diagnostic retry passes.
+
+The core and browser jobs also upload small intermediate receipts for aggregation.
+Evidence uploads run after failures, while failed or missing evidence cannot
+satisfy the publication gate. Keep the final receipt and published image identity
+with the release record. Repository branch protection should require
+`Verify release candidate`; changing branch-protection settings remains a
+repository administration step, separate from these files.
 
 ## Local verification
 
@@ -38,10 +61,12 @@ npx playwright install --with-deps chromium webkit
 node scripts/release-check.mjs
 ```
 
-Check logs and `result.json` in `.playwright/release-checks/`. This command runs
+The local command retains the full sequential eight-gate flow; it has no skip
+flags. Check logs and `result.json` in `.playwright/release-checks/`. It runs
 checks only; it cannot tag, push, publish, or deploy. A dirty checkout, including
 new untracked source files, is recorded as dirty and does not establish that its
-current HEAD alone was verified.
+current HEAD alone was verified. CI aggregation rejects dirty receipts and any
+source identity change during a check invalidates its evidence.
 
 For E2E checks alone, use `npm run test:e2e`. The default port is 3108; choose
 another with `E2E_PORT=3109 npm run test:e2e`. An occupied port fails instead of

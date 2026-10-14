@@ -3,10 +3,11 @@ import { createWriteStream, mkdirSync, mkdtempSync, readFileSync, writeFileSync 
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { finished } from "node:stream/promises";
+import { isDeepStrictEqual } from "node:util";
 
 const npm = process.platform === "win32" ? "npm.cmd" : "npm";
 export const RELEASE_CHECKS = [
-  { name: "gate-policy", command: process.execPath, args: ["--test", ".github/tests/release-policy.test.cjs", "scripts/release-check.test.mjs", "scripts/database-maintenance.test.mjs"] },
+  { name: "gate-policy", command: process.execPath, args: ["--test", ".github/tests/release-policy.test.cjs", "scripts/release-check.test.mjs", "scripts/release-check.evidence.test.mjs", "scripts/database-maintenance.test.mjs"] },
   { name: "dependency-audit", command: npm, args: ["audit", "--omit=dev"] },
   { name: "route-types", command: process.execPath, args: ["node_modules/next/dist/bin/next", "typegen"] },
   { name: "typecheck", command: npm, args: ["run", "typecheck"] },
@@ -15,8 +16,9 @@ export const RELEASE_CHECKS = [
   { name: "production-build", command: npm, args: ["run", "build"] },
   { name: "e2e", command: npm, args: ["run", "test:e2e", "--", "--project=chromium", "--project=mobile-safari", "--fail-on-flaky-tests"] },
 ];
+export const CORE_RELEASE_CHECKS = RELEASE_CHECKS.slice(0, -1);
 
-function sourceIdentity(cwd, env) {
+export function sourceIdentity(cwd, env) {
   const git = (...args) => execFileSync("git", args, { cwd, encoding: "utf8" }).trim();
   const commit = git("rev-parse", "HEAD");
   if (env.GITHUB_SHA && env.GITHUB_SHA !== commit) throw new Error("Checkout does not match GITHUB_SHA");
@@ -30,7 +32,9 @@ function sourceIdentity(cwd, env) {
   };
 }
 
-async function runCheck(check, { cwd, env, logPath, quiet }) {
+export async function runCheck(check, { cwd, env, logPath, quiet }) {
+  const startedAt = new Date().toISOString();
+  const started = performance.now();
   const log = createWriteStream(logPath);
   let result;
   try {
@@ -50,7 +54,7 @@ async function runCheck(check, { cwd, env, logPath, quiet }) {
     log.end();
     await finished(log);
   }
-  return result;
+  return { ...result, startedAt, finishedAt: new Date().toISOString(), durationMs: Math.round(performance.now() - started) };
 }
 
 /** Fail closed: no later stage starts after a failed check. No CLI skip flags. */
@@ -82,6 +86,11 @@ export async function runReleaseChecks({ cwd = process.cwd(), outputDirectory = 
     save();
   }
   if (result.status === "running") result.status = "passed";
+  result.sourceAfter = sourceIdentity(cwd, env);
+  if (!isDeepStrictEqual(result.sourceAfter, result.source)) {
+    result.status = "failed";
+    result.error = "Source changed during release checks";
+  }
   result.finishedAt = new Date().toISOString();
   save();
   return result;
