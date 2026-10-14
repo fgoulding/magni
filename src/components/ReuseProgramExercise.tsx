@@ -25,7 +25,7 @@ export function ReuseProgramExercise({ document, disabled, onReuse }: {
       </label>
       <button type="button" className="touch-target rounded-xl border border-line bg-surface px-3 py-2 text-sm font-semibold disabled:opacity-50" disabled={disabled || !source} onClick={() => { if (source) { onReuse(source); setSelected(""); } }}>Add independent copy</button>
     </div>
-    <p className="mt-2 text-sm text-muted">Copies the exercise, sets, notes and rule into this day. Its progress is tracked independently; later edits to the original stay separate.</p>
+    <p className="mt-2 text-sm text-muted">Copies the exercise, sets, notes and rule into this day. Working weight and progression are independent; exercise history stays linked.</p>
     {disabled ? <p className="mt-2 text-sm text-warn-ink">This day has reached the exercise limit.</p> : null}
   </details>;
 }

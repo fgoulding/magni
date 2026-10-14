@@ -217,6 +217,21 @@ Use aligned columns from `xl`; stack the rows below it even when the `lg`
 sidebar is visible. Numeric fields need room for their digits, padding and native
 spinner, including enlarged text, in addition to a 44px outer target.
 
+The simple program builder uses manually collapsible exercise/superset cards.
+Cards start open; closed summaries retain names, set/repetition/load targets and
+configured effort, tempo and cues. Mixed prescriptions remain associated with
+their individual sets. Collapse changes only the view, preserves draft values
+and follows the group through reorder and day navigation. Moving an exercise
+into a closed group opens that destination and keeps the edited field focused.
+Reorder actions sit beside, never inside, the disclosure button.
+
+For identical sets, group Min and Max under Reps. Desktop columns are Sets /
+Reps / Weight; phone rows are Sets + Weight followed by the paired Reps fields.
+Keep Reuse an exercise beside the add actions. Reuse copies full prescriptions
+with independent working weight/progression and linked exercise history. Show
+review corrections immediately below the review heading, before the schedule
+and workout list.
+
 Progression groups related controls under When, Change, Frequency and Missed
 workouts. At `xl`, put the hypothetical sequence beside the rule controls; stack
 it below them at smaller widths. Label every simulated workout and keep its

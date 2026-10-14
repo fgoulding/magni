@@ -81,6 +81,7 @@ function HydratedWorkspace({ userId, draftId, initialDocument, initialRevision, 
   const draft = useRef(restored.document);
   const revision = useRef(initialRevision);
   const lastSaved = useRef(initialRevision ? JSON.stringify(initialDocument) : "");
+  const unacknowledgedSave = useRef<{ sent: string; expectedRevision: number } | null>(null);
   const undoStack = useRef<ProgramDocumentV1[]>([]);
   const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const saving = useRef<Promise<boolean> | null>(null);
@@ -108,13 +109,19 @@ function HydratedWorkspace({ userId, draftId, initialDocument, initialRevision, 
     if (saving.current) return saving.current;
     if (conflict.current) return false;
     const operation = async () => {
-      while (JSON.stringify(draft.current) !== lastSaved.current) {
-        const sent = JSON.stringify(draft.current);
+      while (unacknowledgedSave.current || JSON.stringify(draft.current) !== lastSaved.current) {
+        // Reconcile the exact uncertain request before later edits (including
+        // Undo) can use its acknowledged revision. Equality with the old saved
+        // document alone does not prove a lost request failed to commit.
+        const attempt = unacknowledgedSave.current ?? { sent: JSON.stringify(draft.current), expectedRevision: revision.current };
+        unacknowledgedSave.current = attempt;
+        const { sent } = attempt;
         setSaveState("saving");
         try {
-          const response = await fetch(`/api/program-drafts/${draftId}`, { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ expectedRevision: revision.current, document: JSON.parse(sent) }) });
+          const response = await fetch(`/api/program-drafts/${draftId}`, { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ expectedRevision: attempt.expectedRevision, document: JSON.parse(sent) }) });
           const body = await response.json() as EditorDraft & { error?: string };
           if (!response.ok) {
+            if (response.status === 400) unacknowledgedSave.current = null;
             if (response.status === 409) { conflict.current = true; setSaveState("conflict"); }
             else setSaveState("failed");
             throw new Error(body.error ?? "Could not save this draft.");
@@ -122,6 +129,7 @@ function HydratedWorkspace({ userId, draftId, initialDocument, initialRevision, 
           if (!Number.isInteger(body.revision) || body.revision < 1) throw new Error("Save response was incomplete. Retry to verify your draft.");
           revision.current = body.revision;
           lastSaved.current = sent;
+          unacknowledgedSave.current = null;
           if (JSON.stringify(draft.current) === sent) {
             localStorage.removeItem(storageKey);
             setSaveState("saved");
@@ -133,6 +141,11 @@ function HydratedWorkspace({ userId, draftId, initialDocument, initialRevision, 
           return false;
         }
       }
+      // Undo may have returned to the acknowledged document before autosave
+      // began. That is clean even though no PUT was necessary this time.
+      setSaveState("saved");
+      try { localStorage.removeItem(storageKey); setError(""); }
+      catch { setError("Draft saved, but its device cache could not be cleared."); }
       return true;
     };
     saving.current = operation();

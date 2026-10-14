@@ -20,6 +20,55 @@ afterEach(() => { cleanup(); vi.restoreAllMocks(); vi.unstubAllGlobals(); });
 const rename = (name: string) => fireEvent.change(screen.getByLabelText("Program name"), { target: { value: name } });
 
 describe("program workspace recovery and authoring", () => {
+  it("clears dirty state without a write when Undo returns to the acknowledged document", async () => {
+    const fetchMock = vi.fn(); vi.stubGlobal("fetch", fetchMock);
+    render(<ProgramWorkspace {...props} />);
+    rename("Unsaved edit");
+    fireEvent.click(screen.getByRole("button", { name: "Undo last edit" }));
+    fireEvent.click(screen.getByRole("button", { name: "Save now" }));
+    expect(await screen.findByText("Draft saved")).toBeVisible();
+    expect(fetchMock).not.toHaveBeenCalled();
+    expect(localStorage.getItem(`magni:program-draft:7:${id}`)).toBeNull();
+  });
+  it("serializes an undo behind the in-flight document before acknowledging it", async () => {
+    const resolvers: Array<(response: Response) => void> = [];
+    const fetchMock = vi.fn<(url: string, options: RequestInit) => Promise<Response>>(() => new Promise<Response>(resolve => resolvers.push(resolve)));
+    vi.stubGlobal("fetch", fetchMock);
+    render(<ProgramWorkspace {...props} />);
+    rename("In-flight change"); fireEvent.click(screen.getByRole("button", { name: "Save now" }));
+    fireEvent.click(screen.getByRole("button", { name: "Undo last edit" }));
+    fireEvent.click(screen.getByRole("button", { name: "Save now" }));
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    await act(async () => resolvers[0](response({ revision: 2 })));
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(JSON.parse(fetchMock.mock.calls[1][1].body as string)).toEqual({ expectedRevision: 2, document });
+    expect(screen.queryByText("Draft saved")).toBeNull();
+    await act(async () => resolvers[1](response({ revision: 3 })));
+    expect(screen.getByText("Draft saved")).toBeVisible();
+    expect(localStorage.getItem(`magni:program-draft:7:${id}`)).toBeNull();
+  });
+  it.each(["lost response", "incomplete response"])("reconciles an uncertain %s before saving an undo", async failure => {
+    const resolvers: Array<(response: Response) => void> = [];
+    const fetchMock = vi.fn<(url: string, options: RequestInit) => Promise<Response>>()
+      .mockImplementationOnce(() => failure === "lost response" ? Promise.reject(new Error("Offline")) : Promise.resolve(response({})))
+      .mockImplementation(() => new Promise<Response>(resolve => resolvers.push(resolve)));
+    vi.stubGlobal("fetch", fetchMock);
+    render(<ProgramWorkspace {...props} />);
+    rename("Possibly committed change"); fireEvent.click(screen.getByRole("button", { name: "Save now" }));
+    await screen.findByText("Save failed — changes retained");
+    fireEvent.click(screen.getByRole("button", { name: "Undo last edit" }));
+    fireEvent.click(screen.getByRole("button", { name: "Save now" }));
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(fetchMock.mock.calls[1][1].body).toBe(fetchMock.mock.calls[0][1].body);
+    expect(screen.queryByText("Draft saved")).toBeNull();
+    await act(async () => resolvers[0](response({ revision: 2 })));
+    expect(fetchMock).toHaveBeenCalledTimes(3);
+    expect(JSON.parse(fetchMock.mock.calls[2][1].body as string)).toEqual({ expectedRevision: 2, document });
+    expect(screen.queryByText("Draft saved")).toBeNull();
+    await act(async () => resolvers[1](response({ revision: 3 })));
+    expect(screen.getByText("Draft saved")).toBeVisible();
+    expect(localStorage.getItem(`magni:program-draft:7:${id}`)).toBeNull();
+  });
   it("surfaces unsupported export fields without losing the saved draft", () => {
     vi.stubGlobal("fetch", vi.fn());
     const initialDocument = Object.assign(structuredClone(document), { futureMetadata: "preserve me" });
