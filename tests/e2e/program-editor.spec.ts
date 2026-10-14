@@ -85,7 +85,9 @@ test("author a custom double progression program, preview, reload and activate",
   test.setTimeout(90_000);
   await registerViaApi(page, "direct-editor");
   await page.goto("/programs");
-  await page.getByRole("link", { name: "Custom program", exact: true }).click();
+  await page.getByRole("link", { name: "Open workspace", exact: true }).click();
+  await expect(page).toHaveURL(/\/programs\/editor$/);
+  await page.getByRole("link", { name: "New program", exact: true }).click();
   await page.getByLabel("Program name", { exact: true }).fill("Exact double progression");
   await page.getByLabel("Repeat cycles").fill("3");
   await page.getByRole("button", { name: "Prescriptions", exact: true }).click();
