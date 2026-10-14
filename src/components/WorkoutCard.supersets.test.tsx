@@ -49,8 +49,8 @@ describe("active superset rounds", () => {
       "Squat set 1a reps", "Squat set 1a weight (kg)", "Row set 1b reps", "Row set 1b weight (kg)",
       "Squat set 2a reps", "Squat set 2a weight (kg)", "Row set 2b reps", "Row set 2b weight (kg)",
     ]);
-    expect(round().getAllByText(/Top · 5–8 reps/)).toHaveLength(2);
-    expect(round(2).getAllByText(/Backoff · 5–8 reps/)).toHaveLength(2);
+    expect(round().getAllByText(/Top-set target · 5–8 reps/)).toHaveLength(2);
+    expect(round(2).getAllByText(/Back-off target · 5–8 reps/)).toHaveLength(2);
     expect(round().getAllByText("RPE 8 · Rest 90 s · Tempo 3-1-1")).toHaveLength(2);
     expect(round().getByText("Row cue")).toBeVisible();
     const input = screen.getByRole("spinbutton", { name: "Row set 1b weight (kg)" });

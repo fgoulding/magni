@@ -686,7 +686,7 @@ export function WorkoutCard({
                 const editor = editorMetadata(set);
                 const spec = editor?.set;
                 const role = spec?.role ?? (set.rep_out_target > set.reps ? "amrap" : "work");
-                const roleLabel = role === "amrap" ? "AMRAP" : role[0].toUpperCase() + role.slice(1);
+                const roleLabel = { work: "Target", warmup: "Warm-up target", top: "Top-set target", backoff: "Back-off target", amrap: "AMRAP target" }[role];
                 const range = set.reps === set.rep_out_target ? String(set.reps) : `${set.reps}–${set.rep_out_target}`;
                 const loadLabel = isBodyweight(set) ? `BW${set.calculated_weight > 0 ? ` +${set.calculated_weight} ${rowUnit}` : ""}` : `${set.calculated_weight} ${rowUnit}`;
                 return <SetLogRow key={set.id} number={number} count={set.sets} name={group.supersetGroup ? set.exercise_name : undefined}
@@ -733,7 +733,7 @@ export function WorkoutCard({
                       <Check aria-hidden="true" size={18} />
                     </button>
                   </div>
-                  {round.entries.map(entry => renderRow(entry.set, entry.label))}
+                  <div>{round.entries.map(entry => renderRow(entry.set, entry.label))}</div>
                 </div>;
               }) : group.sets.map((set, index) => renderRow(set, index + 1))}
               <div className="flex flex-wrap items-center gap-2 border-t border-line pt-2">

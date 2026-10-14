@@ -194,7 +194,7 @@ describe("WorkoutCard", () => {
     expect(await screen.findByText("Squat")).toBeInTheDocument();
     // Flat single lift shows a weight hero + scheme.
     expect(screen.getByRole("spinbutton", { name: "Squat set 1 weight (lb)" })).toHaveValue(225);
-    expect(screen.getByText("Work · 5 reps · 225 lb")).toBeInTheDocument();
+    expect(screen.getByText("Target · 5 reps · 225 lb")).toBeInTheDocument();
     expect(screen.getByText("Bench Press")).toBeInTheDocument();
   });
 

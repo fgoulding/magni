@@ -174,6 +174,8 @@ states. Saving the final set leaves its controls visible.
 
 Active supersets present rounds vertically inside that same disclosure: 1a, 1b,
 2a, 2b. Each row keeps its exercise name, targets, inputs and individual check.
+Keep the round heading attached to its first row without an intervening divider
+or extra row padding; retain separators between lifts and rounds.
 A compact Round N header contains the saved fraction and a fixed 44px check to
 save the round's unfinished or edited sets; its green state requires every
 member's acknowledgement. The saved round control can undo that round. Partial
@@ -196,6 +198,10 @@ least 44px targets. Keep authored targets, roles, effort, rest, tempo, notes,
 bodyweight and superset context available. Legacy rows storing multiple sets
 remain clearly labeled as a batch. Undo clears actuals only after acknowledgement,
 retaining the input values without treating them as unsaved performed work.
+
+Label planned reps/load as Target to distinguish them from the editable actuals.
+Keep special roles explicit: Warm-up target, Top-set target, Back-off target and
+AMRAP target.
 
 **Calendar:** Week is the default, with workout names and quiet status symbols.
 Use the shared `CalendarStatus` shapes in Week, Month and the legend: completed

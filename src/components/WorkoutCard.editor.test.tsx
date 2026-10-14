@@ -84,7 +84,7 @@ describe("custom workout set logging and draft recovery", () => {
     expect(await screen.findByRole("spinbutton", { name: "Row set 1 reps" })).toHaveValue(12);
     expect(screen.getByRole("spinbutton", { name: "Row set 2 reps" })).toHaveValue(12);
     expect(screen.getByRole("spinbutton", { name: "Row set 3 weight (kg)" })).toHaveValue(40);
-    expect(screen.getAllByText(/Work · 8–12 reps/)).toHaveLength(3);
+    expect(screen.getAllByText(/Target · 8–12 reps/)).toHaveLength(3);
     expect(screen.getAllByText(/RPE 8/)).toHaveLength(3);
     expect(screen.getAllByText(/Rest 120 s/)).toHaveLength(3);
     expect(screen.getAllByText(/Tempo 3-1-1/)).toHaveLength(3);
