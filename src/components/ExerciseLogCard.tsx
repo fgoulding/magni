@@ -28,7 +28,7 @@ export function ExerciseLogCard({ name, saved, total, status, disabled, children
 export function SetLogRow({ number, count = 1, name, reps, weight, unit, addedWeight = false, repsLabel, weightLabel, prescription,
   saved, logged, pending, saving, failed, undoPending, missingWeight, disabled, saveDisabled, saveLabel, onChange, onSave, onUndo, children,
 }: {
-  number: number; count?: number; name?: string; reps: string; weight: string; unit: string; addedWeight?: boolean;
+  number: number | string; count?: number; name?: string; reps: string; weight: string; unit: string; addedWeight?: boolean;
   repsLabel: string; weightLabel: string; prescription?: ReactNode;
   saved: boolean; logged: boolean; pending: boolean; saving: boolean; failed: boolean; undoPending?: boolean; missingWeight?: boolean;
   disabled?: boolean; saveDisabled?: boolean; saveLabel: string;
@@ -43,7 +43,7 @@ export function SetLogRow({ number, count = 1, name, reps, weight, unit, addedWe
   const actionDisabled = disabled || saving || saveDisabled;
   return <div data-set-log-row className="min-w-0 border-t border-line py-3 first:border-t-0 first:pt-0">
     <div className="flex flex-wrap items-center justify-between gap-x-3 gap-y-1">
-      <p className="text-sm font-semibold">{name ? `${name} · ` : ""}{count > 1 ? `${count} sets · batch` : `Set ${number}`}</p>
+      <p className="text-sm font-semibold">{typeof number === "string" && name ? `${number} · ${name}` : <>{name ? `${name} · ` : ""}{count > 1 ? `${count} sets · batch` : `Set ${number}`}</>}</p>
       <span aria-live="polite" className={`text-xs font-semibold ${failed || undoPending ? "text-danger-ink" : saved ? "text-success-ink" : "text-muted"}`}>{status}</span>
     </div>
     {prescription}

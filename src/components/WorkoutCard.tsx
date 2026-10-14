@@ -3,8 +3,9 @@
 import { Check, Dumbbell, SkipForward, Trophy } from "lucide-react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
-import { type ReactNode, useEffect, useMemo, useState, useSyncExternalStore, useTransition } from "react";
+import { type ReactNode, useCallback, useEffect, useMemo, useState, useSyncExternalStore, useTransition } from "react";
 import { ExerciseLogCard, SetLogRow } from "./ExerciseLogCard";
+import { buildSupersetRounds } from "./superset-rounds";
 import { WorkoutSaveStatus } from "./WorkoutSaveStatus";
 import { AddSessionExerciseForm } from "@/components/AddSessionExerciseForm";
 import { ErrorBanner } from "@/components/ErrorBanner";
@@ -107,7 +108,9 @@ export function WorkoutCard({
   // id. Client-only: skipped lifts are simply left unlogged, so the recap marks
   // them skipped at finish. A full reload resets this (the lift returns as "to do").
   const [skippedGroupKeys, setSkippedGroupKeys] = useState<Set<number>>(new Set());
-  const [error, setError] = useState("");
+  const [errorState, setErrorState] = useState<{ message: string; setId: number | null }>({ message: "", setId: null });
+  const error = errorState.message;
+  const setError = useCallback((message: string) => setErrorState({ message, setId: null }), []);
   const [unavailableTemplate, setUnavailableTemplate] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const [saving, setSaving] = useState(false);
@@ -288,6 +291,11 @@ export function WorkoutCard({
     const latest = parseDrafts(readDraftSnapshot(session.id));
     delete latest[set.id];
     writeDrafts(session.id, latest);
+    const recoveringRow = failedIds.has(set.id) || !!conflicts[set.id] || errorState.setId === set.id;
+    const otherRowsNeedRecovery = [...failedIds].some(id => id !== set.id) || Object.keys(conflicts).some(id => Number(id) !== set.id);
+    // Resolving a set must not dismiss a newer workout-level error (for example,
+    // an unsuccessful Add exercise), or hide another row that still needs help.
+    if (recoveringRow && !otherRowsNeedRecovery && errorState.setId !== null) setError("");
     setConflicts((prev) => { const next = { ...prev }; delete next[set.id]; return next; });
     setFailedIds((prev) => new Set([...prev].filter((id) => id !== set.id)));
   }
@@ -363,7 +371,7 @@ export function WorkoutCard({
       }
     } catch (err) {
       if (savingId != null) setFailedIds((prev) => new Set(prev).add(savingId));
-      setError(err instanceof Error ? err.message : "Could not save set");
+      setErrorState({ message: err instanceof Error ? err.message : "Could not save set", setId: savingId ?? null });
     } finally {
       setSavingIds(new Set());
       setSaving(false);
@@ -675,15 +683,8 @@ export function WorkoutCard({
             const savedCount = group.sets.filter(isSetSaved).reduce((sum, set) => sum + Math.max(1, set.sets), 0);
             const status = group.sets.some(set => conflicts[set.id]) ? "Resolve conflicting changes" : group.sets.some(set => savingIds.has(set.id)) ? "Saving…" : group.sets.some(set => drafts[set.id]?.intent === "undo") ? "Undo unconfirmed" : group.sets.some(set => failedIds.has(set.id)) ? "Save failed" : group.sets.some(set => isPending(drafts[set.id])) ? "Unsaved changes" : isGroupSkipped(group) ? "Skipped" : undefined;
             const first = group.sets[0];
-            return <ExerciseLogCard key={groupKey(group)} name={groupExerciseNames(group).join(" + ")} saved={savedCount} total={group.sets.reduce((sum, set) => sum + Math.max(1, set.sets), 0)} status={status}>
-              {group.supersetGroup && <p className="mb-2 text-xs font-semibold text-muted">Superset · {group.supersetGroup}</p>}
-              {group.sets.filter((set, index, all) => {
-                const last = session.lastPerformance?.[String(set.id)];
-                return last && !all.slice(0, index).some(prior => { const other = session.lastPerformance?.[String(prior.id)]; return other?.sessionId === last.sessionId && other?.exerciseId === last.exerciseId; });
-              }).map(set => { const last = session.lastPerformance![String(set.id)]; return <Link key={set.id} href={withWorkoutReturn(`/workouts/${last.sessionId}`, trainingHref)} className="touch-target mb-2 flex items-center text-sm text-muted underline decoration-line underline-offset-2" aria-label={`Previous ${set.exercise_name} workout, ${last.date}: ${formatLastPerformance(last)}`}>Last{group.supersetGroup ? ` · ${set.exercise_name}` : ""}: {formatLastPerformance(last)}</Link>; })}
-              {isGroupSkipped(group) ? <div className="mb-3 flex flex-wrap items-center justify-between gap-2"><p className="text-sm text-muted">Unlogged sets skipped</p><button type="button" onClick={() => unskipLift(group)} className="touch-target rounded-xl border border-line px-3 text-sm font-semibold">Do this lift</button></div> : null}
-              {group.sets.map((set, index) => {
-                const number = index + 1;
+            const rounds = buildSupersetRounds(group);
+            const renderRow = (set: WorkoutSet, number: number | string) => {
                 const rowUnit = setUnit(set, unit);
                 const draft = drafts[set.id];
                 const pending = isPending(draft);
@@ -714,7 +715,35 @@ export function WorkoutCard({
                   </div> : null}
                   {pending && !rowSaving && draft?.intent !== "undo" ? <button type="button" aria-label={`Discard set ${number} changes`} onClick={() => discardSetChanges(set)} className="touch-target mt-1 w-full rounded-xl px-3 py-2 text-sm font-semibold text-muted">Discard changes</button> : null}
                 </SetLogRow>;
-              })}
+            };
+            return <ExerciseLogCard key={groupKey(group)} name={groupExerciseNames(group).join(" + ")} saved={savedCount} total={group.sets.reduce((sum, set) => sum + Math.max(1, set.sets), 0)} status={status}>
+              {group.supersetGroup && <p className="mb-2 text-xs font-semibold text-muted">Superset · {group.supersetGroup}</p>}
+              {group.sets.filter((set, index, all) => {
+                const last = session.lastPerformance?.[String(set.id)];
+                return last && !all.slice(0, index).some(prior => { const other = session.lastPerformance?.[String(prior.id)]; return other?.sessionId === last.sessionId && other?.exerciseId === last.exerciseId; });
+              }).map(set => { const last = session.lastPerformance![String(set.id)]; return <Link key={set.id} href={withWorkoutReturn(`/workouts/${last.sessionId}`, trainingHref)} className="touch-target mb-2 flex items-center text-sm text-muted underline decoration-line underline-offset-2" aria-label={`Previous ${set.exercise_name} workout, ${last.date}: ${formatLastPerformance(last)}`}>Last{group.supersetGroup ? ` · ${set.exercise_name}` : ""}: {formatLastPerformance(last)}</Link>; })}
+              {isGroupSkipped(group) ? <div className="mb-3 flex flex-wrap items-center justify-between gap-2"><p className="text-sm text-muted">Unlogged sets skipped</p><button type="button" onClick={() => unskipLift(group)} className="touch-target rounded-xl border border-line px-3 text-sm font-semibold">Do this lift</button></div> : null}
+              {rounds ? rounds.map(round => {
+                const rows = round.entries.map(entry => entry.set);
+                const roundSaved = rows.every(set => isSetSaved(set) && !conflicts[set.id]);
+                const roundSavedCount = rows.filter(set => isSetSaved(set) && !conflicts[set.id]).length;
+                const blocked = saving || rows.some(set => conflicts[set.id] || drafts[set.id]?.intent === "undo");
+                const actionLabel = `${roundSaved ? "Undo" : "Save"} round ${round.number} of superset ${group.supersetGroup}`;
+                return <div key={round.number} role="group" aria-label={`Round ${round.number} of superset ${group.supersetGroup}`} data-superset-round={round.number} className="border-t border-line pt-2 first:border-t-0">
+                  <div className="mb-2 flex min-h-11 items-center justify-between gap-3">
+                    <div className="min-w-0">
+                      <h4 className="text-sm font-semibold">Round {round.number}</h4>
+                      <p aria-live="polite" aria-atomic="true" className="text-xs text-muted"><span className="sr-only">Round {round.number}: </span>{roundSavedCount} of {rows.length} saved</p>
+                    </div>
+                    <button type="button" aria-label={actionLabel} title={actionLabel} aria-pressed={roundSaved} disabled={blocked}
+                      onClick={() => { unskipLift(group); void saveSets(roundSaved ? rows : rows.filter(set => !isSetSaved(set)), {}, roundSaved); }}
+                      className={`touch-target inline-flex h-11 w-11 shrink-0 items-center justify-center rounded-xl border outline-none transition-colors focus-visible:ring-2 focus-visible:ring-brand disabled:opacity-70 ${roundSaved ? "border-success-line bg-success-soft text-success-ink active:opacity-90" : "border-foreground bg-foreground text-background active:opacity-90"}`}>
+                      <Check aria-hidden="true" size={18} />
+                    </button>
+                  </div>
+                  {round.entries.map(entry => renderRow(entry.set, entry.label))}
+                </div>;
+              }) : group.sets.map((set, index) => renderRow(set, index + 1))}
               <div className="flex flex-wrap items-center gap-2 border-t border-line pt-2">
                 {!isGroupSkipped(group) && !allSetsInGroupLogged(group) ? <button type="button" disabled={saving || group.sets.some(set => isPending(drafts[set.id]))} onClick={() => skipLift(group)} className="touch-target inline-flex items-center justify-center gap-2 rounded-xl px-3 text-sm font-semibold text-muted active:bg-surface-muted disabled:opacity-50"><SkipForward aria-hidden="true" size={16} />Skip lift</button> : null}
                 {!group.supersetGroup && !group.sets.some(set => set.editor_json) && first.training_max && !isBodyweight(first) ? <details className={styles.options}><summary className="touch-target flex cursor-pointer items-center justify-center rounded-xl px-3 text-sm font-semibold text-muted">Training max</summary><WorkoutTmEditor key={first.exercise_name} sessionId={session.id} exerciseName={first.exercise_name} value={first.training_max} onPreview={tm => previewTm(first.exercise_name, tm)} onUpdated={applyTmUpdate} /></details> : null}

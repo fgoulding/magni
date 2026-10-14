@@ -15,6 +15,8 @@ export type WorkoutSet = {
   intensity_pct?: number | null;
   progression_type?: string;
   editor_json?: string | null;
+  program_definition_exercise_id?: number | null;
+  exercise_key?: string | null;
 };
 
 export function editorMetadata(set: WorkoutSet): EditorSetMetadata | null {

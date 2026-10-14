@@ -169,6 +169,17 @@ Use a full-width header button with the exercise name, saved count and
 entered values. Closed summaries still show pending, saving, failure or conflict
 states. Saving the final set leaves its controls visible.
 
+Active supersets present rounds vertically inside that same disclosure: 1a, 1b,
+2a, 2b. Each row keeps its exercise name, targets, inputs and individual check.
+A compact Round N header contains the saved fraction and a fixed 44px check to
+save the round's unfinished or edited sets; its green state requires every
+member's acknowledgement. The saved round control can undo that round. Partial
+success remains visible per row; conflicts and unconfirmed Undo block the round
+action until resolved individually. Do not auto-scroll, auto-collapse or add
+nested round disclosures. Preserve authored appearance identity, unequal counts
+and three-or-more-member groups without inventing rows. Legacy multi-set records
+remain explicit batches instead of pretending to be independent physical sets.
+
 Set rows have visible Reps and Weight (unit) labels above generously sized numeric
 inputs and separate save feedback. The same fixed-size check saves and unlogs a
 set: green and pressed after acknowledgement, with an accessible Undo action
