@@ -59,8 +59,8 @@ test("build a three-day superset program with direct fields, copy, reorder and o
   const session = await (await started).json();
   expect(session.sets).toHaveLength(10);
   expect(session.sets.filter((set: { exercise_name: string }) => set.exercise_name === "One-arm dumbbell row").every((set: { calculated_weight: number }) => set.calculated_weight === 42.5)).toBe(true);
-  await page.getByRole("button", { name: "Save set 1", exact: true }).first().click();
-  await expect(page.getByRole("button", { name: "Undo set 1", exact: true }).first()).toBeEnabled();
+  await page.getByRole("button", { name: "Save set 1a", exact: true }).first().click();
+  await expect(page.getByRole("button", { name: "Undo set 1a", exact: true }).first()).toBeEnabled();
   await page.reload();
-  await expect(page.getByRole("button", { name: "Undo set 1", exact: true }).first()).toBeEnabled();
+  await expect(page.getByRole("button", { name: "Undo set 1a", exact: true }).first()).toBeEnabled();
 });

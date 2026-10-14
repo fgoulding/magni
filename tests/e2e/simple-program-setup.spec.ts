@@ -45,11 +45,11 @@ test("template builder creates the full scheduled program and logs its actual pr
   const spoto = session.sets.filter((set: { exercise_name: string }) => /Spoto/.test(set.exercise_name));
   expect(spoto).toHaveLength(5);
   expect(JSON.parse(spoto[0].editor_json).set).toMatchObject({ repMin: 6, repMax: 8, tempo: "1-second hover pause" });
-  await page.getByRole("button", { name: "Save set 1", exact: true }).first().click();
-  await expect(page.getByRole("button", { name: "Undo set 1", exact: true }).first()).toBeEnabled();
+  await page.getByRole("button", { name: "Save set 1a", exact: true }).first().click();
+  await expect(page.getByRole("button", { name: "Undo set 1a", exact: true }).first()).toBeEnabled();
   await page.screenshot({ path: info.outputPath("simple-program-training.png"), fullPage: true });
   await page.reload();
-  await expect(page.getByRole("button", { name: "Undo set 1", exact: true }).first()).toBeEnabled();
+  await expect(page.getByRole("button", { name: "Undo set 1a", exact: true }).first()).toBeEnabled();
 });
 
 for (const lostOperation of ["save", "activation"] as const) {
