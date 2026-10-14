@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { execFileSync } from "node:child_process";
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { CORE_RELEASE_CHECKS, RELEASE_CHECKS } from "./release-check.mjs";
@@ -14,8 +14,8 @@ const cases = projects.flatMap(project => [1, 2].map(index => ({ id: `${project}
 function report(items = cases, shard = null, discovery = false) {
   return {
     config: { forbidOnly: true, fullyParallel: false, workers: 1, shard, projects: projects.map(name => ({ name, repeatEach: 1 })) },
-    suites: [{ specs: items.map(item => ({
-      id: item.id, file: item.file, title: item.title, ok: true,
+    suites: [{ title: "example.spec.ts", specs: items.map(item => ({
+      id: item.id, file: item.file, title: item.title, line: Number(item.id.at(-1)), column: 1, ok: true,
       tests: [{ projectName: item.project, expectedStatus: "passed", status: discovery ? "skipped" : "expected", results: discovery ? [] : [{ status: "passed", retry: 0, errors: [] }] }],
     })) }],
     errors: [],
@@ -39,10 +39,32 @@ test("shard commands accept only both known projects and either half, without fi
   for (const args of [[], ["--project=webkit", "--shard=1/2"], ["--project=chromium", "--shard=1/3"], ["--project=chromium", "--shard=3/2"], ["--project=chromium", "--shard=1/2", "--grep=smoke"]]) assert.throws(() => parseBrowserShard(args));
 });
 
+test("grouped multi-project discovery matches separate project reports without trusting spec.id", () => {
+  const grouped = report(cases, null, true);
+  const specs = grouped.suites[0].specs;
+  grouped.suites[0].specs = specs.slice(0, 2).map((spec, index) => ({ ...spec, tests: [...spec.tests, ...specs[index + 2].tests] }));
+  const expected = discoveryManifest(grouped);
+  const ungrouped = discoveryManifest(report(cases, null, true));
+  assert.equal(expected.length, 4);
+  assert.equal(new Set(expected.map(item => item.id)).size, 4);
+  assert.deepEqual(expected, ungrouped);
+  const executed = projects.flatMap(project => [1, 2].flatMap(current => {
+    const value = report(cases.filter(item => item.project === project && item.id.endsWith(String(current))), { current, total: 2 });
+    value.suites[0].specs[0].id = `arbitrary-${project}-${current}`;
+    return compactBrowserReport(value).tests;
+  }));
+  assert.deepEqual(executed.map(item => item.id).sort(), expected.map(item => item.id).sort());
+  const inputs = fixture();
+  inputs.manifest.tests = expected;
+  assert.equal(aggregateReleaseEvidence(inputs).browser.passed, 4);
+  grouped.suites[0].specs[0].tests.push(grouped.suites[0].specs[0].tests[0]);
+  assert.throws(() => discoveryManifest(grouped), /Duplicate/);
+});
+
 test("discovery records every project-specific ID, including nested suites", () => {
   const value = report(cases, null, true);
   value.suites = [{ suites: value.suites, specs: [] }];
-  assert.deepEqual(discoveryManifest(value), cases);
+  assert.deepEqual(discoveryManifest(value).map(({ id, ...item }) => item).sort((a, b) => `${a.project}${a.title}`.localeCompare(`${b.project}${b.title}`)), cases.map(({ id, ...item }) => item));
   for (const edit of [value => value.suites = [], value => value.errors.push({ message: "load error" }), value => value.config.shard = { current: 1, total: 2 }, value => value.suites[0].specs[0].tests[0].expectedStatus = "skipped", value => value.suites[0].specs.push(value.suites[0].specs[0])]) {
     const invalid = report(cases, null, true); edit(invalid); assert.throws(() => discoveryManifest(invalid));
   }
@@ -53,7 +75,8 @@ test("browser compaction accepts only actual first-attempt passes and excludes b
   value.suites[0].specs[0].tests[0].results[0].attachments = [{ body: "large", path: "private.png" }];
   const compact = compactBrowserReport(value);
   assert.equal(compact.tests.length, 1);
-  assert.equal(compact.tests[0].id, cases[0].id);
+  assert.match(compact.tests[0].id, /^[a-f0-9]{64}$/);
+  assert.equal(compact.tests[0].id, discoveryManifest(report(cases, null, true)).find(item => item.project === cases[0].project && item.title === cases[0].title).id);
   assert.doesNotMatch(JSON.stringify(compact), /large|private\.png/);
   const failures = [
     value => value.stats.skipped++, value => value.stats.flaky++, value => value.stats.unexpected++,
@@ -69,6 +92,23 @@ test("browser compaction accepts only actual first-attempt passes and excludes b
     value => value.suites[0].specs[0].tests[0].results.push(value.suites[0].specs[0].tests[0].results[0]),
   ];
   for (const edit of failures) { const invalid = report(cases.slice(0, 1), { current: 1, total: 2 }); edit(invalid); assert.throws(() => compactBrowserReport(invalid)); }
+});
+
+test("case identity preserves describe paths and source locations without collapsing equal titles", () => {
+  const original = report([cases[0], cases[2]], null, true);
+  original.suites[0] = { title: "example.spec.ts", specs: [], suites: [
+    { title: "first group", specs: original.suites[0].specs },
+    { title: "second group", specs: structuredClone(original.suites[0].specs) },
+  ] };
+  const manifest = discoveryManifest(original);
+  assert.equal(manifest.length, 4);
+  assert.equal(new Set(manifest.map(item => item.id)).size, 4);
+  const differentLine = structuredClone(original);
+  differentLine.suites[0].suites[0].specs[0].line++;
+  assert.notDeepEqual(discoveryManifest(differentLine), manifest);
+  const differentColumn = structuredClone(original);
+  differentColumn.suites[0].suites[0].specs[0].column++;
+  assert.notDeepEqual(discoveryManifest(differentColumn), manifest);
 });
 
 test("aggregate retains the eight-gate release contract and proves exact full-suite coverage", () => {
@@ -108,7 +148,7 @@ test("aggregate fails closed for missing, duplicate, skipped, foreign and unveri
 test("real Playwright discovery and four isolated shard reports cover each case once", () => {
   // Exercise the installed reporter/sharding protocol without starting an app,
   // opening a browser or touching application data. These tests use no fixtures.
-  const directory = mkdtempSync(path.join(os.tmpdir(), "magni-shard-protocol-"));
+  const directory = realpathSync(mkdtempSync(path.join(os.tmpdir(), "magni-shard-protocol-")));
   const root = path.resolve(import.meta.dirname, "..");
   try {
     const config = path.join(directory, "playwright.config.mjs");

@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { createHash } from "node:crypto";
 import path from "node:path";
 import { CORE_RELEASE_CHECKS, RELEASE_CHECKS } from "./release-check.mjs";
 
@@ -25,14 +26,23 @@ function assertReportConfig(report) {
 
 function reportCases(report) {
   const result = [];
-  const walk = suites => {
+  const walk = (suites, parents = []) => {
     for (const suite of suites) {
+      const titles = typeof suite.title === "string" ? [...parents, suite.title] : parents;
       for (const spec of suite.specs ?? []) {
-        assert.equal(spec.tests.length, 1, "Each Playwright ID must identify exactly one project case");
-        const test = spec.tests[0];
-        result.push({ id: spec.id, project: test.projectName, file: spec.file, title: spec.title, spec, test });
+        assert.ok(Array.isArray(spec.tests) && spec.tests.length > 0, "A browser spec must contain project cases");
+        assert.ok(typeof spec.file === "string" && spec.file && typeof spec.title === "string" && spec.title);
+        assert.ok(Number.isInteger(spec.line) && spec.line > 0 && Number.isInteger(spec.column) && spec.column > 0, "Browser cases require source locations");
+        for (const test of spec.tests) {
+          // JSON reports can merge projects into one spec, retaining only the
+          // first project's spec.id. Use source identity plus the project so
+          // full discovery and separately executed shards agree in either form.
+          const identity = [test.projectName, spec.file, [...titles, spec.title], spec.line, spec.column];
+          const id = createHash("sha256").update(JSON.stringify(identity)).digest("hex");
+          result.push({ id, project: test.projectName, file: spec.file, title: spec.title, spec, test });
+        }
       }
-      walk(suite.suites ?? []);
+      walk(suite.suites ?? [], titles);
     }
   };
   walk(report.suites);
