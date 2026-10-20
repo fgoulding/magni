@@ -36,7 +36,7 @@ const disclosure = (number = 1, expanded = true) => screen.getByRole("button", {
 const round = (number = 1) => within(screen.getByRole("group", { name: `Round ${number} of superset A` }));
 const edit = (name: string, value: string) => fireEvent.change(screen.getByRole("spinbutton", { name }), { target: { value } });
 async function ready() { await screen.findByRole("spinbutton", { name: "Squat set 1a reps" }); }
-async function logSet(label = "1a") { fireEvent.click(setAction(label)); await waitFor(() => expect(setAction(label, true)).toBeEnabled()); }
+async function logSet(label = "1a") { fireEvent.click(setAction(label)); await waitFor(() => expect(screen.getByLabelText(`Undo set ${label}`, { selector: 'button[aria-pressed="true"]' })).toBeEnabled()); }
 async function undoSet(label = "1a") { fireEvent.click(setAction(label, true)); await waitFor(() => expect(setAction(label)).toBeEnabled()); }
 beforeEach(() => {
   const storage = new Map<string, string>();
@@ -66,21 +66,92 @@ describe("active superset rounds", () => {
     expect(api.puts()).toEqual([]);
   });
 
-  it("reopens a saved round without undoing it and never collapses on acknowledgement", async () => {
-    const api = server(); render(<WorkoutCard {...props} />); await ready();
-    await logSet("1a"); await logSet("1b");
-    expect(disclosure()).toHaveAttribute("aria-expanded", "true");
+  it("collapses only after the final acknowledgement and reopens without undoing or replacing saved fields", async () => {
+    let resolve!: (response: Response) => void;
+    const pending = new Promise<Response>(done => { resolve = done; });
+    let calls = 0;
+    const api = server(session(), async () => ++calls === 2 ? pending : response({ success: true }));
+    render(<WorkoutCard {...props} />); await ready();
     const input = screen.getByRole("spinbutton", { name: "Row set 1b weight (kg)" });
+    edit("Row set 1b weight (kg)", "46.25");
+    await logSet("1a");
+    expect(disclosure()).toHaveAttribute("aria-expanded", "true");
+    const toggle = disclosure(); const focus = vi.spyOn(toggle, "focus");
+    input.focus(); fireEvent.click(setAction("1b"));
+    expect(toggle).toHaveAttribute("aria-expanded", "true");
+    expect(input).toHaveFocus(); expect(input).toBeVisible();
+    await act(async () => { resolve(response({ success: true })); });
+    expect(toggle).toHaveAttribute("aria-expanded", "false");
+    expect(input).not.toBeVisible(); expect(toggle).toHaveFocus();
+    expect(focus).toHaveBeenCalledWith({ preventScroll: true });
     const writes = structuredClone(api.puts());
-    fireEvent.click(disclosure());
-    const toggle = disclosure(1, false);
+    expect(disclosure(1, false)).toBe(toggle);
     expect(toggle).toHaveTextContent("2/2 saved");
     expect(toggle).not.toHaveAttribute("aria-pressed");
     fireEvent.click(toggle);
     expect(screen.getByRole("spinbutton", { name: "Row set 1b weight (kg)" })).toBe(input);
+    expect(input).toHaveValue(46.25);
     expect(setAction("1a", true)).toHaveAttribute("aria-pressed", "true");
     expect(setAction("1b", true)).toHaveAttribute("aria-pressed", "true");
     expect(api.puts()).toEqual(writes);
+  });
+
+  it("does not steal external focus and keeps a reopened completed round open through unrelated updates", async () => {
+    const api = server(); render(<WorkoutCard {...props} />); await ready();
+    await logSet("1a");
+    const outside = screen.getByRole("spinbutton", { name: "Squat set 2a reps" }); outside.focus();
+    await logSet("1b");
+    expect(disclosure(1, false)).toHaveTextContent("2/2 saved");
+    expect(outside).toHaveFocus();
+    const writes = structuredClone(api.puts());
+    fireEvent.click(disclosure(1, false));
+    expect(api.puts()).toEqual(writes);
+    edit("Squat set 2a reps", "7"); await logSet("2a");
+    expect(disclosure()).toHaveAttribute("aria-expanded", "true");
+    expect(setAction("1a", true)).toBeEnabled(); expect(setAction("1b", true)).toBeEnabled();
+    expect(api.puts().map(data => data.setId)).toEqual([11, 21, 12]);
+  });
+
+  it.each([false, true])("recovers focus lost when Save becomes disabled without overriding later external focus (%s)", async (moveOutside) => {
+    let resolve!: (response: Response) => void;
+    const pending = new Promise<Response>(done => { resolve = done; });
+    let calls = 0;
+    server(session(), async () => ++calls === 2 ? pending : response({ success: true }));
+    render(<WorkoutCard {...props} />); await ready(); await logSet("1a");
+    const toggle = disclosure(); const focus = vi.spyOn(toggle, "focus");
+    const save = setAction("1b"); save.focus(); fireEvent.click(save);
+    expect(save).toBeDisabled();
+    // Browsers blur a newly disabled button; jsdom needs that native step made explicit.
+    document.body.tabIndex = -1; document.body.focus(); document.body.removeAttribute("tabindex");
+    expect(document.activeElement).toBe(document.body);
+    const outside = screen.getByRole("spinbutton", { name: "Squat set 2a reps" });
+    if (moveOutside) outside.focus();
+    await act(async () => { resolve(response({ success: true })); });
+    expect(disclosure(1, false)).toHaveTextContent("2/2 saved");
+    if (moveOutside) {
+      expect(outside).toHaveFocus(); expect(focus).not.toHaveBeenCalled();
+    } else {
+      expect(toggle).toHaveFocus(); expect(focus).toHaveBeenCalledWith({ preventScroll: true });
+    }
+  });
+
+  it("does not collapse after an acknowledgement with newer edits, or after discarding those edits", async () => {
+    let resolve!: (response: Response) => void;
+    const pending = new Promise<Response>(done => { resolve = done; });
+    let calls = 0;
+    const api = server(session(), async () => ++calls === 2 ? pending : response({ success: true }));
+    render(<WorkoutCard {...props} />); await ready(); await logSet("1a");
+    fireEvent.click(setAction("1b")); edit("Row set 1b reps", "7");
+    await act(async () => { resolve(response({ success: true })); });
+    expect(disclosure()).toHaveAttribute("aria-expanded", "true");
+    expect(round().getByText("1/2 saved")).toBeVisible();
+    expect(screen.getByRole("spinbutton", { name: "Row set 1b reps" })).toHaveValue(7);
+    fireEvent.click(screen.getByRole("button", { name: "Discard set 1b changes" }));
+    expect(disclosure()).toHaveAttribute("aria-expanded", "true");
+    expect(round().getByText("2/2 saved")).toBeVisible();
+    expect(api.puts()).toHaveLength(2);
+    edit("Row set 1b reps", "6"); await logSet("1b");
+    expect(disclosure(1, false)).toHaveTextContent("2/2 saved");
   });
 
   it("marks only rounds with remaining unlogged sets skipped, preserving fully saved rounds", async () => {
@@ -88,7 +159,7 @@ describe("active superset rounds", () => {
     await logSet("1a"); await logSet("1b"); await logSet("2a");
     const writes = structuredClone(api.puts());
     fireEvent.click(screen.getByRole("button", { name: "Skip lift" }));
-    fireEvent.click(disclosure()); fireEvent.click(disclosure(2));
+    fireEvent.click(disclosure(2));
     expect(disclosure(1, false)).toHaveTextContent("2/2 saved");
     expect(disclosure(1, false)).not.toHaveTextContent(/skipped/i);
     expect(disclosure(2, false)).toHaveTextContent("1/2 saved");
@@ -117,13 +188,16 @@ describe("active superset rounds", () => {
     fireEvent.click(screen.getByText("Details", { exact: true }));
     const input = screen.getByRole("spinbutton", { name: "Row set 1b weight (kg)" });
     input.focus(); edit("Squat set 1a reps", "6"); edit("Row set 1b weight (kg)", "45.5");
-    const button = setAction("1b"); await logSet("1a"); await logSet("1b");
+    const button = setAction("1b"); await logSet("1a");
+    expect(input).toHaveFocus(); await logSet("1b");
     expect(api.puts()).toEqual([
       { setId: 11, actualReps: 6, actualWeight: 100, expectedActual: { reps: null, weight: null } },
       { setId: 21, actualReps: 8, actualWeight: 45.5, expectedActual: { reps: null, weight: null } },
     ]);
+    expect(disclosure(1, false)).toHaveFocus();
+    fireEvent.click(disclosure(1, false));
     expect(setAction("1b", true)).toBe(button); expect(button).toHaveAttribute("aria-pressed", "true");
-    expect(screen.getByRole("spinbutton", { name: "Row set 1b weight (kg)" })).toBe(input); expect(input).toHaveFocus();
+    expect(screen.getByRole("spinbutton", { name: "Row set 1b weight (kg)" })).toBe(input);
     const announcement = round().getByText("2/2 saved");
     expect(announcement).toBeVisible();
     expect(announcement).toHaveAttribute("aria-atomic", "true");
@@ -197,10 +271,12 @@ describe("active superset rounds", () => {
 
   it("saves only the dirty member with its current baseline and keeps the other member acknowledged", async () => {
     const body = session(true); const api = server(body); render(<WorkoutCard {...props} />); await ready();
+    expect(disclosure()).toHaveTextContent("2/2 saved");
     edit("Row set 1b reps", "7"); expect(setAction("1b")).toHaveAttribute("aria-pressed", "false");
     expect(round().getByText("1/2 saved")).toBeVisible();
     await logSet("1b");
     expect(api.puts()).toEqual([{ setId: 21, actualReps: 7, actualWeight: 42.5, expectedActual: { reps: 8, weight: 42.5 } }]);
+    fireEvent.click(disclosure(1, false));
     expect(setAction("1a", true)).toBeEnabled();
   });
 
@@ -209,6 +285,7 @@ describe("active superset rounds", () => {
     const api = server(session(), async () => ++attempts === 2 ? response({ error: "Connection failed" }, 500) : response({ success: true }));
     render(<WorkoutCard {...props} />); await ready(); await logSet("1a"); fireEvent.click(setAction("1b"));
     expect(await screen.findByRole("alert")).toHaveTextContent("Connection failed");
+    expect(disclosure()).toHaveAttribute("aria-expanded", "true");
     expect(round().getByText("1/2 saved")).toBeVisible();
     expect(setAction("1a", true)).toBeEnabled();
     fireEvent.click(disclosure());
@@ -216,6 +293,7 @@ describe("active superset rounds", () => {
     fireEvent.click(disclosure(1, false));
     expect(api.puts().map(data => data.setId)).toEqual([11, 21]);
     await logSet("1b");
+    expect(disclosure(1, false)).toHaveTextContent("2/2 saved");
     expect(api.puts().map(data => data.setId)).toEqual([11, 21, 21]);
   });
 
@@ -243,7 +321,7 @@ describe("active superset rounds", () => {
     const api = server(session(true)); render(<WorkoutCard {...props} />); await ready();
     await undoSet("1b");
     expect(round().getByText("1/2 saved")).toBeVisible(); expect(setAction("1a", true)).toBeEnabled();
-    await logSet("1b"); await undoSet("1a"); await undoSet("1b");
+    await logSet("1b"); fireEvent.click(disclosure(1, false)); await undoSet("1a"); await undoSet("1b");
     expect(round().getByText("0/2 saved")).toBeVisible();
     expect(api.puts().map(data => [data.setId, data.actualReps, data.actualWeight])).toEqual([[21, null, null], [21, 8, 42.5], [11, null, null], [21, null, null]]);
     expect(screen.getByRole("spinbutton", { name: "Row set 1b weight (kg)" })).toHaveValue(42.5);
@@ -398,6 +476,14 @@ describe("active superset rounds", () => {
     fireEvent.click(disclosure(1, false));
     expect(screen.queryByRole("spinbutton", { name: "Curl set 2c reps" })).not.toBeInTheDocument();
     expect(api.puts()).toEqual([]);
+    await logSet("1a"); await logSet("1b");
+    expect(disclosure()).toHaveTextContent("2/3 saved");
+    await logSet("2a"); await logSet("2b");
+    expect(disclosure(2, false)).toHaveTextContent("2/2 saved");
+    expect(disclosure()).toHaveAttribute("aria-expanded", "true");
+    await logSet("1c");
+    expect(disclosure(1, false)).toHaveTextContent("3/3 saved");
+    expect(api.puts().map(data => data.setId)).toEqual([11, 21, 12, 22, 31]);
   });
 
   it("retains explicit batch rows without a physical round action", async () => {

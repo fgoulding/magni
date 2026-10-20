@@ -96,6 +96,7 @@ export function WorkoutCard({
   // Main lifts edit weight via the training max instead, so they're excluded.
   const [weights, setWeights] = useState<Record<number, number>>({});
   const [completedSetIds, setCompletedSetIds] = useState<Set<number>>(new Set());
+  const [setSaveVersions, setSetSaveVersions] = useState<Record<number, number>>({});
   // Lifts the user chose to skip this session, keyed by the group's leading set
   // id. Client-only: skipped lifts are simply left unlogged, so the recap marks
   // them skipped at finish. A full reload resets this (the lift returns as "to do").
@@ -375,6 +376,9 @@ export function WorkoutCard({
         writeDrafts(session.id, latest);
         setConflicts((prev) => { const next = { ...prev }; delete next[set.id]; return next; });
         setSavingIds((prev) => new Set([...prev].filter((id) => id !== set.id)));
+        // Publish after acknowledgement cleanup so rounds inspect the current
+        // saved/dirty state. Undo and read-only recovery never trigger collapse.
+        if (!undo) setSetSaveVersions(prev => ({ ...prev, [set.id]: (prev[set.id] ?? 0) + 1 }));
       }
     } catch (err) {
       if (savingId != null) setFailedIds((prev) => new Set(prev).add(savingId));
@@ -722,6 +726,7 @@ export function WorkoutCard({
                 const rows = round.entries.map(entry => entry.set);
                 const roundSavedCount = rows.filter(set => isSetSaved(set) && !conflicts[set.id]).length;
                 return <SupersetRoundCard key={round.number} number={round.number} superset={group.supersetGroup!} saved={roundSavedCount} total={rows.length}
+                  saveVersion={rows.reduce((sum, set) => sum + (setSaveVersions[set.id] ?? 0), 0)}
                   names={Array.from(new Set(rows.map(set => set.exercise_name)))} status={setsStatus(rows, isGroupSkipped(group))}>
                   {round.entries.map(entry => renderRow(entry.set, entry.label))}
                 </SupersetRoundCard>;

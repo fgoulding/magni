@@ -83,13 +83,15 @@ async function perform(page: Page, actualReps?: number[]): Promise<Completion> {
   expect(count).toBeGreaterThan(0);
   await expect(rows).toHaveCount(count);
   for (let index = 0; index < count; index++) {
-    if (actualReps) await reps.nth(index).fill(String(actualReps[index]));
     const row = rows.nth(index);
+    if (actualReps) await row.getByRole("spinbutton", { name: / set \d+[a-z]* reps$/ }).fill(String(actualReps[index]));
     const save = row.getByRole("button", { name: /^Save set \d+[a-z]*$/ });
     await save.click();
     await expect(save).toHaveCount(0);
-    await expect(row.getByText("Saved", { exact: true })).toBeVisible();
-    await expect(row.getByRole("button", { name: /^Undo set \d+[a-z]*$/ })).toBeEnabled();
+    // Completed rounds can close, but their acknowledged controls remain mounted.
+    await expect(row.getByText("Saved", { exact: true })).toHaveText("Saved");
+    await expect(row.getByRole("button", { name: /^Undo set \d+[a-z]*$/, pressed: true, includeHidden: true })).toBeEnabled();
+    await expect(row.getByRole("button", { name: /^Undo set \d+[a-z]*$/, pressed: true, includeHidden: true })).toHaveAttribute("aria-pressed", "true");
   }
   const fromCalendar = new URL(page.url()).pathname === "/calendar";
   const response = page.waitForResponse(item => item.url().endsWith("/complete-and-advance") && item.request().method() === "POST");

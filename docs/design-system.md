@@ -183,10 +183,14 @@ Keep the round heading attached to its first row without an intervening divider
 or extra row padding; retain separators between lifts and rounds.
 A compact Round N header is a full-width, 44px disclosure target with a muted
 saved fraction and chevron. It only expands/collapses the round; individual set
-checks save and undo. All rounds start open. Manual collapse retains mounted
-inputs, and its closed summary shows exercise names plus unsaved, saving, failed,
-conflicting or unconfirmed Undo feedback. Reopening never changes saved work.
-Do not auto-scroll or auto-collapse after a save. Preserve authored appearance identity, unequal counts
+checks save and undo. All rounds start open. A round automatically collapses once
+its final member is successfully saved, after acknowledgement. Reopening stays
+open for review and never changes saved work. Do not close on pending or failed
+saves, accepting conflicting values, discarding edits, or unrelated updates.
+Keep inputs mounted; closed summaries show exercise names plus unsaved, saving,
+failed, conflicting or unconfirmed Undo feedback. If focus would be hidden by
+automatic collapse, move it to that round's header without scrolling. Preserve
+focus elsewhere. Do not auto-scroll. Preserve authored appearance identity, unequal counts
 and three-or-more-member groups without inventing rows. Legacy multi-set records
 remain explicit batches instead of pretending to be independent physical sets.
 

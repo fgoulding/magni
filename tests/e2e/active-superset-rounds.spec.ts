@@ -54,13 +54,13 @@ async function stored(page: Page, id: number) {
   return response.json() as Promise<{ sets: WorkoutSet[]; status: string; loggedSets: number; volume: number }>;
 }
 
-test("active supersets collapse independently of individual saves across Today and Calendar", async ({ page }, info) => {
+test("active supersets auto-collapse after saving and reopen without undo across Today and Calendar", async ({ page }, info) => {
   test.setTimeout(90_000);
   await page.setViewportSize({ width: 375, height: 629 });
   const { session, pair } = await startSupersets(page);
   const save = async (label: string) => {
     await pair.getByRole("button", { name: `Save set ${label}`, exact: true }).click();
-    await expect(pair.getByRole("button", { name: `Undo set ${label}`, exact: true })).toHaveAttribute("aria-pressed", "true");
+    await expect(pair.getByRole("button", { name: `Undo set ${label}`, exact: true, pressed: true, includeHidden: true })).toHaveAttribute("aria-pressed", "true");
   };
   const undo = async (label: string) => {
     await pair.getByRole("button", { name: `Undo set ${label}`, exact: true }).click();
@@ -90,26 +90,34 @@ test("active supersets collapse independently of individual saves across Today a
     if (route.request().method() === "PUT") writes.push(route.request().postDataJSON());
     await route.continue();
   });
-  await save("1a"); await save("1b");
+  await save("1a");
   await expect(roundToggle(page, "Collapse")).toHaveAttribute("aria-expanded", "true");
-  await expect(roundToggle(page, "Collapse")).toContainText("2/2 saved");
+  // Keyboard activation exercises focus recovery when the saved control hides.
+  await pair.getByRole("button", { name: "Save set 1b", exact: true }).focus();
+  await page.keyboard.press("Enter");
+  await expect(roundToggle(page, "Expand")).toContainText("2/2 saved");
+  await expect(roundToggle(page, "Expand")).toBeFocused();
   expect(writes.map(write => write.setId)).toEqual([squat[0].id, row[0].id]);
   await expect(page.getByRole("progressbar", { name: "Saved sets", exact: true })).toHaveAttribute("value", "2");
   // Looking at or hiding completed work never changes the logged sets.
-  await roundToggle(page, "Collapse").click();
   await expect(roundToggle(page, "Expand")).toHaveAttribute("aria-expanded", "false");
   await expect(roundToggle(page, "Expand")).toContainText("Squat");
+  await page.screenshot({ path: info.outputPath("auto-collapsed-mini.png"), animations: "disabled" });
   await expect(pair.locator('input[aria-label="Squat set 1a weight (lb)"]')).toBeHidden();
   await expect(pair.locator('input[aria-label="Squat set 1a weight (lb)"]')).toHaveValue("137.5");
   await roundToggle(page, "Expand").click();
+  expect(writes).toHaveLength(2);
+  await pair.getByRole("spinbutton", { name: "Squat set 2a reps", exact: true }).fill("6");
+  await expect(roundToggle(page, "Collapse")).toHaveAttribute("aria-expanded", "true");
   expect(writes).toHaveLength(2);
   await expect(pair.getByRole("button", { name: "Undo set 1a", exact: true })).toHaveAttribute("aria-pressed", "true");
   await undo("1a");
   await expect(roundToggle(page, "Collapse")).toContainText("1/2 saved");
   await expect(pair.getByRole("button", { name: "Undo set 1b", exact: true })).toHaveAttribute("aria-pressed", "true");
   await save("1a");
-  await expect(roundToggle(page, "Collapse")).toContainText("2/2 saved");
+  await expect(roundToggle(page, "Expand")).toContainText("2/2 saved");
   expect(writes.map(write => write.setId)).toEqual([squat[0].id, row[0].id, squat[0].id, squat[0].id]);
+  await roundToggle(page, "Expand").click();
   await undo("1a"); await undo("1b");
   expect(writes.slice(-2).map(write => [write.setId, write.actualReps, write.actualWeight])).toEqual([[squat[0].id, null, null], [row[0].id, null, null]]);
   await expect(pair.getByRole("spinbutton", { name: "Squat set 1a weight (lb)", exact: true })).toHaveValue("137.5");
@@ -127,6 +135,7 @@ test("active supersets collapse independently of individual saves across Today a
   await expect(pair.getByRole("spinbutton", { name: "Squat set 2a reps", exact: true })).toHaveValue("7");
   expect(writes).toHaveLength(writesBeforeCollapse);
   await save("2a"); await save("2b");
+  await expect(roundToggle(page, "Expand", 2)).toContainText("2/2 saved");
   await page.reload();
   await expect(roundToggle(page, "Collapse")).toContainText("2/2 saved");
   await expect(pair.getByRole("spinbutton", { name: "Squat set 2a reps", exact: true })).toHaveValue("7");
@@ -187,6 +196,9 @@ test("a partially saved round recovers a lost response after reload without rewr
   await expect(roundToggle(page, "Collapse")).toContainText("1/2 saved");
   await expect(pair.getByRole("button", { name: "Undo set 1a", exact: true })).toHaveAttribute("aria-pressed", "true");
   await pair.getByRole("button", { name: "Save set 1b", exact: true }).click();
+  await expect(roundToggle(page, "Expand")).toContainText("2/2 saved");
+  await page.screenshot({ path: info.outputPath("auto-collapsed-iphone16.png"), animations: "disabled" });
+  await roundToggle(page, "Expand").click();
   await expect(pair.getByRole("button", { name: "Undo set 1b", exact: true })).toHaveAttribute("aria-pressed", "true");
   expect(writes.map(write => write.setId)).toEqual([squat.id, row.id, row.id]);
   expect(writes[2]).toEqual(writes[1]);
