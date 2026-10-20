@@ -2,10 +2,42 @@
 import "@testing-library/jest-dom/vitest";
 import { cleanup, fireEvent, render, screen } from "@testing-library/react";
 import { afterEach, expect, it, vi } from "vitest";
-import { SetLogRow } from "./ExerciseLogCard";
+import { ExerciseLogCard, SetLogRow } from "./ExerciseLogCard";
 
 afterEach(cleanup);
 const props = { number: 1, reps: "10", weight: "100", unit: "lb", repsLabel: "Reps", weightLabel: "Weight", saved: false, logged: false, pending: false, saving: false, failed: false, saveLabel: "Log set 1", onChange: vi.fn(), onSave: vi.fn(), onUndo: vi.fn() };
+
+it("uses a compact open title while retaining full disclosure names and mounted edits when closed", () => {
+  render(<ExerciseLogCard name="Squat + Row" expandedName="Superset A" saved={0} total={4}><input aria-label="Working weight" defaultValue="42.5" /></ExerciseLogCard>);
+  const collapse = screen.getByRole("button", { name: "Collapse Squat + Row · Superset A" });
+  expect(collapse).toHaveTextContent("Superset A");
+  expect(collapse).not.toHaveTextContent("Squat + Row");
+  const input = screen.getByRole("textbox", { name: "Working weight" });
+  fireEvent.change(input, { target: { value: "45.5" } });
+  fireEvent.click(collapse);
+  expect(screen.getByRole("button", { name: "Expand Squat + Row · Superset A" })).toHaveTextContent("Squat + Row");
+  expect(input).not.toBeVisible();
+  fireEvent.click(screen.getByRole("button", { name: "Expand Squat + Row · Superset A" }));
+  expect(screen.getByRole("textbox", { name: "Working weight" })).toBe(input);
+  expect(input).toHaveValue("45.5");
+});
+
+it("quiets only routine unlogged status while keeping acknowledgement and recovery visible", () => {
+  const { rerender } = render(<SetLogRow {...props} />);
+  const status = screen.getByText("Not logged");
+  expect(status).toHaveClass("sr-only");
+  expect(status).toHaveAttribute("aria-live", "polite");
+  for (const state of [
+    { saved: true, logged: true, text: "Saved" },
+    { pending: true, text: "Unsaved" },
+    { saving: true, text: "Saving…" },
+    { failed: true, text: "Save failed" },
+    { saved: true, missingWeight: true, text: "Saved · load not recorded" },
+  ]) {
+    rerender(<SetLogRow {...props} {...state} />);
+    expect(screen.getByText(state.text)).not.toHaveClass("sr-only");
+  }
+});
 
 it("keeps the same check and inputs while toggling an acknowledged set off", () => {
   const onSave = vi.fn(), onUndo = vi.fn();

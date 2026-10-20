@@ -51,8 +51,13 @@ describe("active superset rounds", () => {
     ]);
     expect(round().getAllByText(/Top-set target · 5–8 reps/)).toHaveLength(2);
     expect(round(2).getAllByText(/Back-off target · 5–8 reps/)).toHaveLength(2);
-    expect(round().getAllByText("RPE 8 · Rest 90 s · Tempo 3-1-1")).toHaveLength(2);
-    expect(round().getByText("Row cue")).toBeVisible();
+    expect(round().queryByText(/RPE 8/)).not.toBeInTheDocument();
+    const details = screen.getByText("Details", { exact: true }).closest("details")!;
+    expect(details).not.toHaveAttribute("open");
+    fireEvent.click(screen.getByText("Details", { exact: true }));
+    expect(within(details).getAllByText("RPE 8 · Rest 90 s · Tempo 3-1-1")).toHaveLength(2);
+    expect(within(details).getAllByText("Row cue")).toHaveLength(1);
+    fireEvent.click(screen.getByText("Details", { exact: true }));
     const input = screen.getByRole("spinbutton", { name: "Row set 1b weight (kg)" });
     input.focus(); edit("Squat set 1a reps", "6"); edit("Row set 1b weight (kg)", "45.5");
     const button = action(); fireEvent.click(button); await saved();
@@ -67,6 +72,62 @@ describe("active superset rounds", () => {
     expect(announcement).toHaveAttribute("aria-atomic", "true");
     expect(announcement).toHaveTextContent("Round 1: 2 of 2 saved");
     expect(action(2)).toHaveAttribute("aria-pressed", "false");
+  });
+
+  it("keeps same-name appearances and mixed cues distinct in one group disclosure without writing or replacing inputs", async () => {
+    const body = session();
+    body.sets.forEach(set => { set.exercise_name = "Squat"; });
+    const second = JSON.parse(body.sets[1].editor_json!);
+    second.set.effortKind = "rir"; second.set.effort = 1; second.set.restSeconds = 150;
+    body.sets[1].editor_json = JSON.stringify(second);
+    const previous = { sessionId: 71, exerciseId: "same-history", date: "2026-10-01", unit: "kg" as const, reps: [5, 6], topWeight: 80, bodyweight: false };
+    body.lastPerformance = Object.fromEntries(body.sets.map(set => [String(set.id), previous]));
+    const original = JSON.stringify(body);
+    const api = server(body); render(<WorkoutCard {...props} />); await ready();
+    const header = screen.getByRole("button", { name: "Collapse Squat · Superset A" });
+    expect(header).toHaveTextContent("Superset A");
+    expect(header).not.toHaveTextContent("Squat");
+    const details = screen.getByText("Details", { exact: true }).closest("details")!;
+    for (const link of screen.getAllByRole("link", { name: /^Previous/ })) expect(link).not.toBeVisible();
+    expect(within(details).getByText("Squat cue")).not.toBeVisible();
+    const input = screen.getByRole("spinbutton", { name: "Squat set 1b weight (kg)" });
+    fireEvent.change(input, { target: { value: "45.5" } });
+    fireEvent.click(screen.getByText("Details", { exact: true }));
+    const first = within(within(details).getByRole("group", { name: "Squat · 1a, 2a" }));
+    const other = within(within(details).getByRole("group", { name: "Squat · 1b, 2b" }));
+    expect(first.getByText("Squat cue")).toBeVisible();
+    expect(first.getByText("1a · RPE 8 · Rest 90 s · Tempo 3-1-1")).toBeVisible();
+    expect(first.getByText("2a · RIR 1 · Rest 150 s · Tempo 3-1-1")).toBeVisible();
+    expect(other.getByText("RPE 8 · Rest 90 s · Tempo 3-1-1")).toBeVisible();
+    expect(other.getByText("Row cue")).toBeVisible();
+    expect(within(details).getAllByRole("link", { name: /^Previous/ })).toHaveLength(2);
+    expect(within(details).getAllByText("Squat cue")).toHaveLength(1);
+    fireEvent.click(screen.getByText("Details", { exact: true }));
+    fireEvent.click(header);
+    expect(screen.getByRole("button", { name: "Expand Squat · Superset A" })).toHaveTextContent("Squat");
+    fireEvent.click(screen.getByRole("button", { name: "Expand Squat · Superset A" }));
+    expect(screen.getByRole("spinbutton", { name: "Squat set 1b weight (kg)" })).toBe(input);
+    expect(input).toHaveValue(45.5);
+    expect(api.puts()).toEqual([]);
+    expect(JSON.stringify(body)).toBe(original);
+  });
+
+  it.each([
+    { mode: "working", compact: "Top-set target · 5–8 reps", full: "Top-set target · 5–8 reps · 0 kg" },
+    { mode: "fixed", compact: "Top-set target · 5–8 reps · 0 kg", full: "Top-set target · 5–8 reps · 0 kg" },
+    { mode: "bodyweight", compact: "Top-set target · 5–8 reps · BW", full: "Top-set target · 5–8 reps · BW" },
+  ])("preserves exact $mode targets without treating prior weight as a prescription", async ({ mode, compact, full }) => {
+    const body = session();
+    const first = body.sets[0]; first.calculated_weight = 0;
+    const metadata = JSON.parse(first.editor_json!); metadata.set.loadMode = mode; first.editor_json = JSON.stringify(metadata);
+    body.lastPerformance = { [String(first.id)]: { sessionId: 71, exerciseId: "Squat", date: "2026-10-01", reps: [6], topWeight: 175, bodyweight: false, unit: "kg" } };
+    server(body); render(<WorkoutCard {...props} />); await ready();
+    const row = within(screen.getByRole("spinbutton", { name: "Squat set 1a reps" }).closest("[data-set-log-row]")! as HTMLElement);
+    expect(row.getByText(compact, { exact: true })).toBeVisible();
+    expect(row.getByRole("spinbutton", { name: "Squat set 1a weight (kg)" })).toHaveValue(0);
+    fireEvent.click(screen.getByText("Details", { exact: true }));
+    const details = screen.getByText("Details", { exact: true }).closest("details")!;
+    expect(within(details).getByText(`1a · ${full}`)).toBeVisible();
   });
 
   it("validates every submitted member before writing any row", async () => {
@@ -239,9 +300,9 @@ describe("active superset rounds", () => {
     const api = server(); const first = render(<WorkoutCard {...props} />); await ready();
     edit("Row set 1b weight (kg)", "46.25");
     const input = screen.getByRole("spinbutton", { name: "Row set 1b weight (kg)" }); const id = input.id;
-    fireEvent.click(screen.getByRole("button", { name: "Collapse Squat + Row" }));
-    expect(input).not.toBeVisible(); expect(screen.getByRole("button", { name: "Expand Squat + Row" })).toHaveTextContent("Unsaved changes");
-    fireEvent.click(screen.getByRole("button", { name: "Expand Squat + Row" })); expect(input).toBeVisible(); expect(input.id).toBe(id);
+    fireEvent.click(screen.getByRole("button", { name: "Collapse Squat + Row · Superset A" }));
+    expect(input).not.toBeVisible(); expect(screen.getByRole("button", { name: "Expand Squat + Row · Superset A" })).toHaveTextContent("Unsaved changes");
+    fireEvent.click(screen.getByRole("button", { name: "Expand Squat + Row · Superset A" })); expect(input).toBeVisible(); expect(input.id).toBe(id);
     first.unmount(); render(<WorkoutCard {...props} />); await ready();
     expect(screen.getByRole("spinbutton", { name: "Row set 1b weight (kg)" })).toHaveValue(46.25); expect(api.puts()).toEqual([]);
     fireEvent.click(action()); await saved(); expect(api.puts().map(data => data.actualWeight)).toEqual([100, 46.25]);

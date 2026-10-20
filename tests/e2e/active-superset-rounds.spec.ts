@@ -70,6 +70,10 @@ test("active supersets interleave rounds and save or undo paired sets across Tod
   ]);
   await expect(pair).toContainText("RIR 2");
   await expect(pair).toContainText("Tempo 2-0-1");
+  await expect(pair.getByText("Controlled reps", { exact: true }).first()).toBeHidden();
+  await pair.getByText("Details", { exact: true }).click();
+  await expect(pair.getByText("Controlled reps", { exact: true }).first()).toBeVisible();
+  await pair.getByText("Details", { exact: true }).click();
   await pair.getByRole("spinbutton", { name: "Squat set 1a weight (lb)", exact: true }).fill("137.5");
   await pair.getByRole("spinbutton", { name: "Dumbbell row set 1b reps", exact: true }).fill("9");
   const writes: ActualWrite[] = [];
@@ -94,9 +98,9 @@ test("active supersets interleave rounds and save or undo paired sets across Tod
   await roundAction(page, "Save").click();
   await expect(roundAction(page, "Undo")).toBeEnabled();
   await pair.getByRole("spinbutton", { name: "Squat set 2a reps", exact: true }).fill("7");
-  await pair.getByRole("button", { name: "Collapse Squat + Dumbbell row", exact: true }).click();
+  await pair.getByRole("button", { name: "Collapse Squat + Dumbbell row · Superset A", exact: true }).click();
   await expect(pair).toContainText("Unsaved changes");
-  await pair.getByRole("button", { name: "Expand Squat + Dumbbell row", exact: true }).click();
+  await pair.getByRole("button", { name: "Expand Squat + Dumbbell row · Superset A", exact: true }).click();
   await expect(pair.getByRole("spinbutton", { name: "Squat set 2a reps", exact: true })).toHaveValue("7");
   await roundAction(page, "Save", 2).click();
   await expect(roundAction(page, "Undo", 2)).toBeEnabled();

@@ -5,18 +5,18 @@ import { useId, useRef, useState, type ReactNode } from "react";
 import styles from "./ExerciseLogCard.module.css";
 
 /** Shared disclosure keeps its children mounted so closing a lift never resets input. */
-export function ExerciseLogCard({ name, saved, total, status, disabled, children }: {
-  name: string; saved: number; total: number; status?: string; disabled?: boolean; children: ReactNode;
+export function ExerciseLogCard({ name, expandedName, saved, total, status, disabled, children }: {
+  name: string; expandedName?: string; saved: number; total: number; status?: string; disabled?: boolean; children: ReactNode;
 }) {
   const [expanded, setExpanded] = useState(true);
   const contentId = useId();
   return <section data-exercise-log-card className="min-w-0 border-b border-line last:border-b-0">
     <h3 aria-label={name}>
-      <button type="button" aria-label={`${expanded ? "Collapse" : "Expand"} ${name}`} aria-expanded={expanded} aria-controls={contentId} aria-describedby={`${contentId}-summary`}
+      <button type="button" aria-label={`${expanded ? "Collapse" : "Expand"} ${name}${expandedName ? ` · ${expandedName}` : ""}`} aria-expanded={expanded} aria-controls={contentId} aria-describedby={`${contentId}-summary`}
         disabled={disabled} onClick={() => setExpanded(!expanded)} className="touch-target flex w-full items-center gap-3 px-4 py-3 text-left outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-brand active:bg-surface-muted">
-        <span className="min-w-0 flex-1">
-          <span className="display block break-words text-xl leading-tight">{name}</span>
-          <span id={`${contentId}-summary`} aria-live="polite" className="mt-1 block text-xs font-semibold text-muted">{saved} of {total} sets saved{!expanded && status ? ` · ${status}` : ""}</span>
+        <span className={`min-w-0 flex-1 ${expanded && expandedName ? "flex flex-wrap items-baseline justify-between gap-x-3 gap-y-1" : ""}`}>
+          <span className="display block break-words text-xl leading-tight">{expanded ? expandedName ?? name : name}</span>
+          <span id={`${contentId}-summary`} aria-live="polite" className={`${expanded && expandedName ? "" : "mt-1 "}block text-xs font-semibold text-muted`}>{saved} of {total} sets saved{!expanded && status ? ` · ${status}` : ""}</span>
         </span>
         <ChevronDown aria-hidden="true" size={20} className={`shrink-0 text-muted ${expanded ? "rotate-180" : ""}`} />
       </button>
@@ -44,7 +44,7 @@ export function SetLogRow({ number, count = 1, name, reps, weight, unit, addedWe
   return <div data-set-log-row className="min-w-0 border-t border-line py-3 first:border-t-0 first:pt-0">
     <div className="flex flex-wrap items-center justify-between gap-x-3 gap-y-1">
       <p className="text-sm font-semibold">{typeof number === "string" && name ? `${number} · ${name}` : <>{name ? `${name} · ` : ""}{count > 1 ? `${count} sets · batch` : `Set ${number}`}</>}</p>
-      <span aria-live="polite" className={`text-xs font-semibold ${failed || undoPending ? "text-danger-ink" : saved ? "text-success-ink" : "text-muted"}`}>{status}</span>
+      <span aria-live="polite" className={`${status === "Not logged" ? "sr-only " : ""}text-xs font-semibold ${failed || undoPending ? "text-danger-ink" : saved ? "text-success-ink" : "text-muted"}`}>{status}</span>
     </div>
     {prescription}
     <div className={styles.entryContainer}>
@@ -60,7 +60,7 @@ export function SetLogRow({ number, count = 1, name, reps, weight, unit, addedWe
         <div className={styles.actions}>
           <button ref={primaryRef} type="button" aria-label={primaryIsUndo ? undoLabel : count > 1 ? `Save ${count}-set log` : saveLabel}
             aria-pressed={saved} disabled={actionDisabled} onClick={primaryIsUndo ? onUndo : onSave}
-            className={`${styles.iconAction} touch-target inline-flex items-center justify-center rounded-xl border transition-colors outline-none focus-visible:ring-2 focus-visible:ring-brand disabled:opacity-70 ${saved ? "border-success-line bg-success-soft text-success-ink active:opacity-90" : undoPending ? "border-danger-line bg-danger-soft text-danger-ink active:opacity-90" : "border-foreground bg-foreground text-background active:opacity-90"}`}>
+            className={`${styles.iconAction} touch-target inline-flex items-center justify-center rounded-xl border transition-colors outline-none focus-visible:ring-2 focus-visible:ring-brand disabled:opacity-70 ${saved ? "border-success-line bg-success-soft text-success-ink active:opacity-90" : undoPending ? "border-danger-line bg-danger-soft text-danger-ink active:opacity-90" : "border-line bg-surface text-muted active:bg-surface-muted"}`}>
             <Check aria-hidden="true" size={18} />
           </button>
           <button type="button" hidden={!secondaryUndo} aria-label={undoLabel} disabled={actionDisabled || !secondaryUndo} onClick={() => {

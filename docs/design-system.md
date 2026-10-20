@@ -173,7 +173,9 @@ entered values. Closed summaries still show pending, saving, failure or conflict
 states. Saving the final set leaves its controls visible.
 
 Active supersets present rounds vertically inside that same disclosure: 1a, 1b,
-2a, 2b. Each row keeps its exercise name, targets, inputs and individual check.
+2a, 2b. While open, use a compact Superset A heading and saved count; show the
+full exercise names in the closed summary and accessible heading. Each row keeps
+its exercise name, concise targets, inputs and individual check.
 Keep the round heading attached to its first row without an intervening divider
 or extra row padding; retain separators between lifts and rounds.
 A compact Round N header contains the saved fraction and a fixed 44px check to
@@ -186,7 +188,10 @@ and three-or-more-member groups without inventing rows. Legacy multi-set records
 remain explicit batches instead of pretending to be independent physical sets.
 
 Set rows have visible Reps and Weight (unit) labels above generously sized numeric
-inputs and separate save feedback. The same fixed-size check saves and unlogs a
+inputs and separate save feedback. Routine Not logged feedback is screen-reader
+only; Saved and exceptional states remain visible. Unsaved checks use neutral
+outlined styling, with green and visible Saved feedback after acknowledgement.
+The same fixed-size check saves and unlogs a
 set: green and pressed after acknowledgement, with an accessible Undo action
 name. Do not replace the icon with text or change its width. Editing a saved row
 shows Save and a secondary Undo icon together. At normal phone sizes, inputs and actions share
@@ -194,8 +199,13 @@ one line. Keep the controls mounted across state changes to preserve focus.
 Fields and actions
 wrap when space is tight or text is enlarged; never squeeze decimal digits behind
 native input steppers. Use `text-muted` for meaningful secondary labels and at
-least 44px targets. Keep authored targets, roles, effort, rest, tempo, notes,
-bodyweight and superset context available. Legacy rows storing multiple sets
+least 44px targets. Keep authored targets, roles, bodyweight and superset context
+visible in the rows. One Details disclosure per planned superset contains
+previous-workout links and authored effort, rest, tempo and notes. Combine
+identical guidance only within the same exercise appearance; label differing
+guidance with its exact sets. Keep the complete target there, including zero
+working loads omitted from the compact row. Do not infer loads from history.
+Legacy rows storing multiple sets
 remain clearly labeled as a batch. Undo clears actuals only after acknowledgement,
 retaining the input values without treating them as unsaved performed work.
 

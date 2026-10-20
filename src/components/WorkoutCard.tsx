@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation";
 import Link from "next/link";
 import { type ReactNode, useCallback, useEffect, useMemo, useState, useSyncExternalStore, useTransition } from "react";
 import { ExerciseLogCard, SetLogRow } from "./ExerciseLogCard";
+import { formatLastPerformance, workoutTarget, WorkoutGroupDetails } from "./WorkoutGroupDetails";
 import { buildSupersetRounds } from "./superset-rounds";
 import { WorkoutSaveStatus } from "./WorkoutSaveStatus";
 import { AddSessionExerciseForm } from "@/components/AddSessionExerciseForm";
@@ -23,7 +24,6 @@ import {
   isFlatSingle,
   readResponseJson,
   summaryDetail,
-  type LastPerformance,
   type SessionResponse,
   type WorkoutGroup,
   type WorkoutSet,
@@ -36,15 +36,6 @@ import styles from "./WorkoutCard.module.css";
 const KG_TO_LB = 2.2046226218487757;
 
 function isPending(draft?: SetDraft): boolean { return !!draft && draft.intent !== "retained"; }
-
-/** Compact "last time" line, e.g. "5/5/8 @ 225 lb" or "12/12/12 BW +25". */
-function formatLastPerformance(last: LastPerformance): string {
-  const scheme = last.reps.join("/");
-  if (last.topWeight === null) return `${scheme} reps · load not recorded`;
-  const missing = last.hasMissingWeight ? " · some load not recorded" : "";
-  if (last.bodyweight) return `${scheme} BW${last.topWeight > 0 ? ` +${last.topWeight} ${last.unit ?? "lb"}` : ""}${missing}`;
-  return `${scheme} @ ${last.topWeight} ${last.unit ?? "lb"}${missing}`;
-}
 
 export function WorkoutCard({
   occurrenceId,
@@ -697,10 +688,6 @@ export function WorkoutCard({
                 const saved = isSetSaved(set);
                 const editor = editorMetadata(set);
                 const spec = editor?.set;
-                const role = spec?.role ?? (set.rep_out_target > set.reps ? "amrap" : "work");
-                const roleLabel = { work: "Target", warmup: "Warm-up target", top: "Top-set target", backoff: "Back-off target", amrap: "AMRAP target" }[role];
-                const range = set.reps === set.rep_out_target ? String(set.reps) : `${set.reps}–${set.rep_out_target}`;
-                const loadLabel = isBodyweight(set) ? `BW${set.calculated_weight > 0 ? ` +${set.calculated_weight} ${rowUnit}` : ""}` : `${set.calculated_weight} ${rowUnit}`;
                 return <SetLogRow key={set.id} number={number} count={set.sets} name={group.supersetGroup ? set.exercise_name : undefined}
                   reps={inputValues(set).reps} weight={inputValues(set).weight} unit={rowUnit} addedWeight={isBodyweight(set)}
                   repsLabel={`${set.exercise_name} set ${number} reps`} weightLabel={`${set.exercise_name} set ${number} weight (${rowUnit})`}
@@ -708,9 +695,9 @@ export function WorkoutCard({
                   saveDisabled={saving || !!conflicts[set.id]} saveLabel={`Save set ${number}`}
                   onChange={(field, value) => editSet(set, field, value)} onSave={() => { unskipLift(group); void saveSets([set]); }} onUndo={() => { void saveSets([set], {}, true); }}
                   prescription={<>
-                    <p className="mt-1 text-sm text-muted">{roleLabel} · {range} reps · {loadLabel}</p>
-                    {spec ? <p className="mt-1 text-xs text-muted">{[spec.effortKind !== "none" ? `${spec.effortKind.toUpperCase()} ${spec.effort}` : "", `Rest ${spec.restSeconds} s`, spec.tempo ? `Tempo ${spec.tempo}` : ""].filter(Boolean).join(" · ")}</p> : null}
-                    {spec?.notes ? <p className="mt-1 whitespace-pre-wrap text-sm text-muted">{spec.notes}</p> : null}
+                    <p className="mt-1 text-sm text-muted">{workoutTarget(set, unit, !!group.supersetGroup)}</p>
+                    {!group.supersetGroup && spec ? <p className="mt-1 text-xs text-muted">{[spec.effortKind !== "none" ? `${spec.effortKind.toUpperCase()} ${spec.effort}` : "", `Rest ${spec.restSeconds} s`, spec.tempo ? `Tempo ${spec.tempo}` : ""].filter(Boolean).join(" · ")}</p> : null}
+                    {!group.supersetGroup && spec?.notes ? <p className="mt-1 whitespace-pre-wrap text-sm text-muted">{spec.notes}</p> : null}
                   </>}>
                   {conflicts[set.id] ? <div className="mt-3 rounded-xl border border-warn-line bg-warn-soft p-3 text-sm text-warn-ink">
                     <p>Saved elsewhere: {conflicts[set.id].reps == null ? "unperformed" : `${conflicts[set.id].reps} reps at ${conflicts[set.id].weight ?? 0} ${rowUnit}`}.</p>
@@ -720,9 +707,8 @@ export function WorkoutCard({
                   {pending && !rowSaving && draft?.intent !== "undo" ? <button type="button" aria-label={`Discard set ${number} changes`} onClick={() => discardSetChanges(set)} className="touch-target mt-1 w-full rounded-xl px-3 py-2 text-sm font-semibold text-muted">Discard changes</button> : null}
                 </SetLogRow>;
             };
-            return <ExerciseLogCard key={groupKey(group)} name={groupExerciseNames(group).join(" + ")} saved={savedCount} total={group.sets.reduce((sum, set) => sum + Math.max(1, set.sets), 0)} status={status}>
-              {group.supersetGroup && <p className="mb-2 text-xs font-semibold text-muted">Superset · {group.supersetGroup}</p>}
-              {group.sets.filter((set, index, all) => {
+            return <ExerciseLogCard key={groupKey(group)} name={groupExerciseNames(group).join(" + ")} expandedName={group.supersetGroup ? `Superset ${group.supersetGroup}` : undefined} saved={savedCount} total={group.sets.reduce((sum, set) => sum + Math.max(1, set.sets), 0)} status={status}>
+              {group.supersetGroup ? <WorkoutGroupDetails group={group} rounds={rounds} lastPerformance={session.lastPerformance} returnTo={trainingHref} unit={unit} /> : group.sets.filter((set, index, all) => {
                 const last = session.lastPerformance?.[String(set.id)];
                 return last && !all.slice(0, index).some(prior => { const other = session.lastPerformance?.[String(prior.id)]; return other?.sessionId === last.sessionId && other?.exerciseId === last.exerciseId; });
               }).map(set => { const last = session.lastPerformance![String(set.id)]; return <Link key={set.id} href={withWorkoutReturn(`/workouts/${last.sessionId}`, trainingHref)} className="touch-target mb-2 flex items-center text-sm text-muted underline decoration-line underline-offset-2" aria-label={`Previous ${set.exercise_name} workout, ${last.date}: ${formatLastPerformance(last)}`}>Last{group.supersetGroup ? ` · ${set.exercise_name}` : ""}: {formatLastPerformance(last)}</Link>; })}
@@ -735,13 +721,13 @@ export function WorkoutCard({
                 const actionLabel = `${roundSaved ? "Undo" : "Save"} round ${round.number} of superset ${group.supersetGroup}`;
                 return <div key={round.number} role="group" aria-label={`Round ${round.number} of superset ${group.supersetGroup}`} data-superset-round={round.number} className="border-t border-line pt-2 first:border-t-0">
                   <div className="mb-2 flex min-h-11 items-center justify-between gap-3">
-                    <div className="min-w-0">
+                    <div className="flex min-w-0 flex-wrap items-baseline gap-x-3 gap-y-1">
                       <h4 className="text-sm font-semibold">Round {round.number}</h4>
                       <p aria-live="polite" aria-atomic="true" className="text-xs text-muted"><span className="sr-only">Round {round.number}: </span>{roundSavedCount} of {rows.length} saved</p>
                     </div>
                     <button type="button" aria-label={actionLabel} title={actionLabel} aria-pressed={roundSaved} disabled={blocked}
                       onClick={() => { unskipLift(group); void saveSets(roundSaved ? rows : rows.filter(set => !isSetSaved(set)), {}, roundSaved); }}
-                      className={`touch-target inline-flex h-11 w-11 shrink-0 items-center justify-center rounded-xl border outline-none transition-colors focus-visible:ring-2 focus-visible:ring-brand disabled:opacity-70 ${roundSaved ? "border-success-line bg-success-soft text-success-ink active:opacity-90" : "border-foreground bg-foreground text-background active:opacity-90"}`}>
+                      className={`touch-target inline-flex h-11 w-11 shrink-0 items-center justify-center rounded-xl border outline-none transition-colors focus-visible:ring-2 focus-visible:ring-brand disabled:opacity-70 ${roundSaved ? "border-success-line bg-success-soft text-success-ink active:opacity-90" : "border-line bg-surface text-muted active:bg-surface-muted"}`}>
                       <Check aria-hidden="true" size={18} />
                     </button>
                   </div>
