@@ -1,19 +1,36 @@
 "use client";
 
 import { ChevronDown, Check, Undo2 } from "lucide-react";
-import { useId, useRef, useState, type ReactNode } from "react";
+import { useId, useLayoutEffect, useRef, useState, type ReactNode } from "react";
 import styles from "./ExerciseLogCard.module.css";
 
 /** Shared disclosure keeps its children mounted so closing a lift never resets input. */
-export function ExerciseLogCard({ name, expandedName, saved, total, status, disabled, children }: {
-  name: string; expandedName?: string; saved: number; total: number; status?: string; disabled?: boolean; children: ReactNode;
+export function ExerciseLogCard({ name, expandedName, saved, total, saveVersion, status, disabled, children }: {
+  name: string; expandedName?: string; saved: number; total: number; saveVersion?: number; status?: string; disabled?: boolean; children: ReactNode;
 }) {
-  const [expanded, setExpanded] = useState(true);
+  const [view, setView] = useState({ expanded: true, saveVersion });
+  // Only supersets receive a save version. Consume it once, so reopening or
+  // read-only recovery cannot replay a completed save's automatic collapse.
+  if (view.saveVersion !== saveVersion) {
+    setView({ saveVersion, expanded: saveVersion !== undefined && total > 0 && saved === total && !status ? false : view.expanded });
+  }
+  const { expanded } = view;
+  const header = useRef<HTMLButtonElement>(null);
+  const content = useRef<HTMLDivElement>(null);
+  const focusDisplaced = useRef(false);
+  useLayoutEffect(() => {
+    if (expanded) return;
+    const active = document.activeElement;
+    // Child round effects run first. The parent must leave focus on its visible
+    // header when both levels close, including a disabled Save dropping to body.
+    if (content.current?.contains(active) || focusDisplaced.current && active === document.body) header.current?.focus({ preventScroll: true });
+    focusDisplaced.current = false;
+  }, [expanded]);
   const contentId = useId();
   return <section data-exercise-log-card className="min-w-0 border-b border-line last:border-b-0">
     <h3 aria-label={name}>
-      <button type="button" aria-label={`${expanded ? "Collapse" : "Expand"} ${name}${expandedName ? ` · ${expandedName}` : ""}`} aria-expanded={expanded} aria-controls={contentId} aria-describedby={`${contentId}-summary`}
-        disabled={disabled} onClick={() => setExpanded(!expanded)} className="touch-target flex w-full items-center gap-3 px-4 py-3 text-left outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-brand active:bg-surface-muted">
+      <button ref={header} type="button" aria-label={`${expanded ? "Collapse" : "Expand"} ${name}${expandedName ? ` · ${expandedName}` : ""}`} aria-expanded={expanded} aria-controls={contentId} aria-describedby={`${contentId}-summary`}
+        disabled={disabled} onClick={() => setView(value => ({ ...value, expanded: !value.expanded }))} className="touch-target flex w-full items-center gap-3 px-4 py-3 text-left outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-brand active:bg-surface-muted">
         <span className={`min-w-0 flex-1 ${expanded && expandedName ? "flex flex-wrap items-baseline justify-between gap-x-3 gap-y-1" : ""}`}>
           <span className="display block break-words text-xl leading-tight">{expanded ? expandedName ?? name : name}</span>
           <span id={`${contentId}-summary`} aria-live="polite" className={`${expanded && expandedName ? "" : "mt-1 "}block text-xs font-semibold text-muted`}>{saved} of {total} sets saved{!expanded && status ? ` · ${status}` : ""}</span>
@@ -21,7 +38,12 @@ export function ExerciseLogCard({ name, expandedName, saved, total, status, disa
         <ChevronDown aria-hidden="true" size={20} className={`shrink-0 text-muted ${expanded ? "rotate-180" : ""}`} />
       </button>
     </h3>
-    <div id={contentId} hidden={!expanded} className="px-4 pb-3">{children}</div>
+    <div ref={content} id={contentId} hidden={!expanded} className="px-4 pb-3"
+      onFocusCapture={() => { focusDisplaced.current = true; }}
+      onBlurCapture={event => {
+        const lostToBody = !event.relatedTarget || event.relatedTarget === document.body;
+        focusDisplaced.current = lostToBody && (event.target.matches(":disabled") || event.currentTarget.hidden);
+      }}>{children}</div>
   </section>;
 }
 

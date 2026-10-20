@@ -222,3 +222,82 @@ test("a partially saved round recovers a lost response after reload without rewr
   await page.getByRole("group", { name: "Round 1 of superset A", exact: true }).evaluate(element => element.scrollIntoView({ block: "start" }));
   await page.screenshot({ path: info.outputPath("superset-round-recovered.png"), animations: "disabled" });
 });
+
+test("completed supersets close after acknowledgement and reopen with their round state and saved values intact", async ({ page }, info) => {
+  test.setTimeout(90_000);
+  await page.setViewportSize({ width: 375, height: 629 });
+  const { session, pair } = await startSupersets(page);
+  const parent = (action: "Expand" | "Collapse") => pair.getByRole("button", { name: `${action} Squat + Dumbbell row · Superset A`, exact: true });
+  const last = session.sets.filter(set => set.exercise_name === "Squat").at(-1)!;
+  const firstInput = await pair.getByRole("spinbutton", { name: "Squat set 1a weight (lb)", exact: true }).elementHandle();
+  const writes: ActualWrite[] = [];
+  let failFinalSave = true;
+  await page.route(`**/api/sessions/${session.id}/sets`, async route => {
+    if (route.request().method() !== "PUT") return route.continue();
+    const body: ActualWrite = route.request().postDataJSON(); writes.push(body);
+    if (body.setId === last.id && failFinalSave) {
+      failFinalSave = false;
+      return route.fulfill({ status: 500, json: { error: "Temporary save failure" } });
+    }
+    await route.continue();
+  });
+  for (const label of ["1a", "1b", "2a", "2b"]) {
+    await pair.getByRole("button", { name: `Save set ${label}`, exact: true }).click();
+    await expect(pair.getByRole("button", { name: `Undo set ${label}`, exact: true, pressed: true, includeHidden: true })).toBeEnabled();
+    await expect(parent("Collapse")).toHaveAttribute("aria-expanded", "true");
+  }
+  // Manually reopened rounds retain that state when their parent closes.
+  await roundToggle(page, "Expand").click();
+  await pair.getByRole("button", { name: "Save set 3a", exact: true }).click();
+  await expect(pair.getByText("Save failed", { exact: true })).toBeVisible();
+  await expect(parent("Collapse")).toContainText("4 of 5 sets saved");
+  await expect(roundToggle(page, "Collapse", 3)).toBeVisible();
+  await pair.getByRole("button", { name: "Save set 3a", exact: true }).focus();
+  await page.keyboard.press("Enter");
+  await expect(parent("Expand")).toContainText("5 of 5 sets saved");
+  await expect(parent("Expand")).toBeFocused();
+  await expect(pair.getByRole("button", { name: "Expand Round 3 of superset A", exact: true, includeHidden: true })).toBeHidden();
+  expect(await firstInput!.evaluate(input => input.isConnected && (input as HTMLInputElement).value === "135")).toBe(true);
+  expect(writes.filter(write => write.setId === last.id)).toHaveLength(2);
+  expect(writes).toHaveLength(6);
+  const completed = await stored(page, session.id);
+  expect(completed.loggedSets).toBe(5);
+  expect(completed.sets.filter(set => set.actual_reps != null)).toHaveLength(5);
+  await parent("Expand").evaluate(element => element.scrollIntoView({ block: "start" }));
+  await page.screenshot({ path: info.outputPath("superset-complete-mini.png"), animations: "disabled" });
+  await parent("Expand").click();
+  await expect(roundToggle(page, "Collapse")).toBeVisible();
+  await expect(roundToggle(page, "Expand", 2)).toBeVisible();
+  await expect(roundToggle(page, "Expand", 3)).toBeVisible();
+  expect(await pair.getByRole("spinbutton", { name: "Squat set 1a weight (lb)", exact: true }).evaluate((input, original) => input === original, firstInput)).toBe(true);
+  expect(writes).toHaveLength(6);
+  expect((await stored(page, session.id)).sets).toEqual(completed.sets);
+
+  const triple = page.locator("[data-exercise-log-card]").filter({ has: page.getByRole("heading", { name: "Pull-up + Dumbbell press + Calf raise", exact: true }) });
+  const tripleParent = (action: "Expand" | "Collapse") => triple.getByRole("button", { name: `${action} Pull-up + Dumbbell press + Calf raise · Superset B`, exact: true });
+  for (const label of ["1a", "1b", "1c"]) {
+    await triple.getByRole("button", { name: `Save set ${label}`, exact: true }).click();
+    await expect(triple.getByRole("button", { name: `Undo set ${label}`, exact: true, pressed: true, includeHidden: true })).toBeEnabled();
+    await expect(parent("Collapse")).toBeVisible();
+    if (label !== "1c") await expect(tripleParent("Collapse")).toBeVisible();
+  }
+  await expect(tripleParent("Expand")).toContainText("3 of 3 sets saved");
+  expect(writes).toHaveLength(9);
+  const allSaved = await stored(page, session.id);
+  expect(allSaved.loggedSets).toBe(8);
+  await parent("Collapse").click();
+  for (const [width, height, fontSize] of [[393, 659, 16], [375, 812, 20]] as const) {
+    await page.setViewportSize({ width, height });
+    await page.evaluate(size => { document.documentElement.dataset.theme = "dark"; document.documentElement.style.fontSize = `${size}px`; }, fontSize);
+    await parent("Expand").evaluate(element => element.scrollIntoView({ block: "start" }));
+    expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
+    const box = (await parent("Expand").boundingBox())!;
+    expect(box.width).toBeGreaterThanOrEqual(44); expect(box.height).toBeGreaterThanOrEqual(44);
+    await page.screenshot({ path: info.outputPath(`supersets-complete-${width}-${fontSize}.png`), animations: "disabled" });
+  }
+  await tripleParent("Expand").click();
+  await triple.getByRole("button", { name: "Expand Round 1 of superset B", exact: true }).click();
+  await expect(triple.getByRole("button", { name: "Undo set 1c", exact: true })).toHaveAttribute("aria-pressed", "true");
+  expect(writes).toHaveLength(9);
+  expect((await stored(page, session.id)).sets).toEqual(allSaved.sets);
+});

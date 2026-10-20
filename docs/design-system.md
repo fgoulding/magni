@@ -168,7 +168,7 @@ Progression explanation panel. Finishing still applies the configured rules.
 **Active workout exercises:** Quick Workout, planned Today, Calendar details and
 planned resume share the same exercise disclosure and set-row presentation.
 Use a full-width header button with the exercise name, saved count and
-`aria-expanded`. Collapse is manual and does not mean completion; it preserves
+`aria-expanded`. For ordinary exercises, collapse is manual and does not mean completion; it preserves
 entered values. Closed summaries still show pending, saving, failure or conflict
 states. Saving the final set leaves its controls visible.
 
@@ -193,6 +193,13 @@ automatic collapse, move it to that round's header without scrolling. Preserve
 focus elsewhere. Do not auto-scroll. Preserve authored appearance identity, unequal counts
 and three-or-more-member groups without inventing rows. Legacy multi-set records
 remain explicit batches instead of pretending to be independent physical sets.
+The whole superset follows the same acknowledgement rule: close after its final
+actual member is successfully saved and no pending or recovery state remains.
+Reopening the superset preserves each round's disclosure state and every saved
+value; it makes no request and stays open for review. When the final round and
+superset close together, focus must land on the visible superset header, unless
+the user has moved focus elsewhere. Loaded saved supersets start open. Ordinary
+exercise and Quick workout disclosures retain manual behavior.
 
 Set rows have visible Reps and Weight (unit) labels above generously sized numeric
 inputs and separate save feedback. Routine Not logged feedback is screen-reader

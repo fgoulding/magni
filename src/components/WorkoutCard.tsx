@@ -716,7 +716,8 @@ export function WorkoutCard({
                   {pending && !rowSaving && draft?.intent !== "undo" ? <button type="button" aria-label={`Discard set ${number} changes`} onClick={() => discardSetChanges(set)} className="touch-target mt-1 w-full rounded-xl px-3 py-2 text-sm font-semibold text-muted">Discard changes</button> : null}
                 </SetLogRow>;
             };
-            return <ExerciseLogCard key={groupKey(group)} name={groupExerciseNames(group).join(" + ")} expandedName={group.supersetGroup ? `Superset ${group.supersetGroup}` : undefined} saved={savedCount} total={group.sets.reduce((sum, set) => sum + Math.max(1, set.sets), 0)} status={status}>
+            return <ExerciseLogCard key={groupKey(group)} name={groupExerciseNames(group).join(" + ")} expandedName={group.supersetGroup ? `Superset ${group.supersetGroup}` : undefined} saved={savedCount} total={group.sets.reduce((sum, set) => sum + Math.max(1, set.sets), 0)} status={status}
+              saveVersion={group.supersetGroup ? group.sets.reduce((sum, set) => sum + (setSaveVersions[set.id] ?? 0), 0) : undefined}>
               {group.supersetGroup ? <WorkoutGroupDetails group={group} rounds={rounds} lastPerformance={session.lastPerformance} returnTo={trainingHref} unit={unit} /> : group.sets.filter((set, index, all) => {
                 const last = session.lastPerformance?.[String(set.id)];
                 return last && !all.slice(0, index).some(prior => { const other = session.lastPerformance?.[String(prior.id)]; return other?.sessionId === last.sessionId && other?.exerciseId === last.exerciseId; });
