@@ -66,3 +66,23 @@ Private artifacts and exact release receipts belong under
 - Release evidence is recorded privately under the directory above. CI,
   immutable-image staging, promotion and public readiness must all pass; restore
   the updater after the guarded rollout.
+
+## CI follow-up
+
+- The first CI attempt hit a registration-request `ECONNRESET` before an editor
+  test navigated. Its diagnostic retry passed, but the strict flaky-test gate
+  rejected the attempt. The failure evidence was retained and the full unchanged
+  workflow restarted on fresh runners after independent review.
+- The second attempt exposed a separate editor-test synchronization race. The
+  trace showed the test filling the basic editor's name field while the initial
+  save for switching to advanced editing was pending. That input was replaced;
+  both acknowledged saves contained an empty name. Reload correctly restored the
+  submitted document. No accepted named document was lost.
+- The editor browser test now deliberately holds that first response and waits
+  for the advanced-only Prescriptions control before typing. Existing reload,
+  progression, activation and workout assertions remain intact. Independent
+  review confirmed the trace and test-only correction; production code is
+  unchanged by this follow-up. A new complete strict CI run is required.
+- The corrected full editor workflow passed Chrome and WebKit with zero retries;
+  targeted lint and diff checks passed. Evidence is in the private
+  `editor-mode-readiness.log` and `editor-mode-readiness/` artifacts.

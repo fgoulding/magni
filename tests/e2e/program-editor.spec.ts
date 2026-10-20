@@ -87,8 +87,27 @@ test("author a custom double progression program, preview, reload and activate",
   test.setTimeout(90_000);
   await registerViaApi(page, "direct-editor");
   await page.goto("/programs");
+  let releaseModeSave!: () => void;
+  let modeSaveStarted!: () => void;
+  const modeSaveGate = new Promise<void>(resolve => { releaseModeSave = resolve; });
+  const modeSavePending = new Promise<void>(resolve => { modeSaveStarted = resolve; });
+  await page.route("**/api/program-drafts/*", async route => {
+    const saved = await route.fetch();
+    modeSaveStarted();
+    await modeSaveGate;
+    await route.fulfill({ response: saved });
+  }, { times: 1 });
   await page.getByRole("link", { name: "Build a program", exact: true }).click();
-  await page.getByRole("button", { name: "Advanced editing", exact: true }).click();
+  try {
+    await page.getByRole("button", { name: "Advanced editing", exact: true }).click();
+    await modeSavePending;
+    await expect(page.getByRole("button", { name: "Advanced editing", exact: true })).toBeVisible();
+    // Both modes label their field Program name. Wait for the advanced mode's
+    // own controls so fill cannot target the builder input being replaced.
+    const advancedReady = expect(page.getByRole("button", { name: "Prescriptions", exact: true })).toBeVisible();
+    releaseModeSave();
+    await advancedReady;
+  } finally { releaseModeSave(); }
   await page.getByLabel("Program name", { exact: true }).fill("Exact double progression");
   await page.getByLabel("Repeat cycles").fill("3");
   await page.getByRole("button", { name: "Prescriptions", exact: true }).click();
