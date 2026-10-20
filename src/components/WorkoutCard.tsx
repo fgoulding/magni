@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation";
 import Link from "next/link";
 import { type ReactNode, useCallback, useEffect, useMemo, useState, useSyncExternalStore, useTransition } from "react";
 import { ExerciseLogCard, SetLogRow } from "./ExerciseLogCard";
+import { SupersetRoundCard } from "./SupersetRoundCard";
 import { formatLastPerformance, workoutTarget, WorkoutGroupDetails } from "./WorkoutGroupDetails";
 import { buildSupersetRounds } from "./superset-rounds";
 import { WorkoutSaveStatus } from "./WorkoutSaveStatus";
@@ -136,6 +137,10 @@ export function WorkoutCard({
   const liftCount = summaryRows.length;
   function isSetSaved(set: WorkoutSet): boolean {
     return completedSetIds.has(set.id) && !isPending(drafts[set.id]) && !savingIds.has(set.id);
+  }
+
+  function setsStatus(sets: WorkoutSet[], skipped = false): string | undefined {
+    return sets.some(set => conflicts[set.id]) ? "Resolve conflicting changes" : sets.some(set => savingIds.has(set.id)) ? "Saving…" : sets.some(set => drafts[set.id]?.intent === "undo") ? "Undo unconfirmed" : sets.some(set => failedIds.has(set.id)) ? "Save failed" : sets.some(set => isPending(drafts[set.id])) ? "Unsaved changes" : skipped && sets.some(set => !completedSetIds.has(set.id)) ? "Remaining sets skipped" : undefined;
   }
 
   // Load a session into the card, restoring any already-logged sets (a set with
@@ -676,7 +681,7 @@ export function WorkoutCard({
           {error ? <div className="px-4 pb-3"><ErrorBanner message={error} /></div> : null}
           {groups.map(group => {
             const savedCount = group.sets.filter(isSetSaved).reduce((sum, set) => sum + Math.max(1, set.sets), 0);
-            const status = group.sets.some(set => conflicts[set.id]) ? "Resolve conflicting changes" : group.sets.some(set => savingIds.has(set.id)) ? "Saving…" : group.sets.some(set => drafts[set.id]?.intent === "undo") ? "Undo unconfirmed" : group.sets.some(set => failedIds.has(set.id)) ? "Save failed" : group.sets.some(set => isPending(drafts[set.id])) ? "Unsaved changes" : isGroupSkipped(group) ? "Skipped" : undefined;
+            const status = setsStatus(group.sets, isGroupSkipped(group));
             const first = group.sets[0];
             const rounds = buildSupersetRounds(group);
             const renderRow = (set: WorkoutSet, number: number | string) => {
@@ -715,24 +720,11 @@ export function WorkoutCard({
               {isGroupSkipped(group) ? <div className="mb-3 flex flex-wrap items-center justify-between gap-2"><p className="text-sm text-muted">Unlogged sets skipped</p><button type="button" onClick={() => unskipLift(group)} className="touch-target rounded-xl border border-line px-3 text-sm font-semibold">Do this lift</button></div> : null}
               {rounds ? rounds.map(round => {
                 const rows = round.entries.map(entry => entry.set);
-                const roundSaved = rows.every(set => isSetSaved(set) && !conflicts[set.id]);
                 const roundSavedCount = rows.filter(set => isSetSaved(set) && !conflicts[set.id]).length;
-                const blocked = saving || rows.some(set => conflicts[set.id] || drafts[set.id]?.intent === "undo");
-                const actionLabel = `${roundSaved ? "Undo" : "Save"} round ${round.number} of superset ${group.supersetGroup}`;
-                return <div key={round.number} role="group" aria-label={`Round ${round.number} of superset ${group.supersetGroup}`} data-superset-round={round.number} className="border-t border-line pt-2 first:border-t-0">
-                  <div className="mb-2 flex min-h-11 items-center justify-between gap-3">
-                    <div className="flex min-w-0 flex-wrap items-baseline gap-x-3 gap-y-1">
-                      <h4 className="text-sm font-semibold">Round {round.number}</h4>
-                      <p aria-live="polite" aria-atomic="true" className="text-xs text-muted"><span className="sr-only">Round {round.number}: </span>{roundSavedCount} of {rows.length} saved</p>
-                    </div>
-                    <button type="button" aria-label={actionLabel} title={actionLabel} aria-pressed={roundSaved} disabled={blocked}
-                      onClick={() => { unskipLift(group); void saveSets(roundSaved ? rows : rows.filter(set => !isSetSaved(set)), {}, roundSaved); }}
-                      className={`touch-target inline-flex h-11 w-11 shrink-0 items-center justify-center rounded-xl border outline-none transition-colors focus-visible:ring-2 focus-visible:ring-brand disabled:opacity-70 ${roundSaved ? "border-success-line bg-success-soft text-success-ink active:opacity-90" : "border-line bg-surface text-muted active:bg-surface-muted"}`}>
-                      <Check aria-hidden="true" size={18} />
-                    </button>
-                  </div>
-                  <div>{round.entries.map(entry => renderRow(entry.set, entry.label))}</div>
-                </div>;
+                return <SupersetRoundCard key={round.number} number={round.number} superset={group.supersetGroup!} saved={roundSavedCount} total={rows.length}
+                  names={Array.from(new Set(rows.map(set => set.exercise_name)))} status={setsStatus(rows, isGroupSkipped(group))}>
+                  {round.entries.map(entry => renderRow(entry.set, entry.label))}
+                </SupersetRoundCard>;
               }) : group.sets.map((set, index) => renderRow(set, index + 1))}
               <div className="flex flex-wrap items-center gap-2 border-t border-line pt-2">
                 {!isGroupSkipped(group) && !allSetsInGroupLogged(group) ? <button type="button" disabled={saving || group.sets.some(set => isPending(drafts[set.id]))} onClick={() => skipLift(group)} className="touch-target inline-flex items-center justify-center gap-2 rounded-xl px-3 text-sm font-semibold text-muted active:bg-surface-muted disabled:opacity-50"><SkipForward aria-hidden="true" size={16} />Skip lift</button> : null}

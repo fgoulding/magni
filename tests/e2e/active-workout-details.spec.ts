@@ -46,10 +46,10 @@ test("copied workout guidance stays available without crowding superset logging"
   await expect(group.getByText(squatNote, { exact: true })).toHaveCount(1);
   await details.click();
   await expect(weight).toHaveValue("175.5");
-  await group.getByRole("button", { name: /^Collapse / }).click();
+  await group.getByRole("button", { name: "Collapse Barbell back squat + One-arm dumbbell row · Superset A", exact: true }).click();
   await expect(group).toContainText("Barbell back squat + One-arm dumbbell row");
   await expect(group).toContainText("Unsaved changes");
-  await group.getByRole("button", { name: /^Expand / }).click();
+  await group.getByRole("button", { name: "Expand Barbell back squat + One-arm dumbbell row · Superset A", exact: true }).click();
   await expect(weight).toHaveValue("175.5");
   await group.getByRole("button", { name: "Discard set 1a changes", exact: true }).click();
   for (const [width, height, fontSize, theme] of [[375, 629, 16, "light"], [393, 659, 16, "dark"], [375, 812, 20, "dark"]] as const) {
@@ -60,7 +60,7 @@ test("copied workout guidance stays available without crowding superset logging"
     }, { fontSize, theme });
     await group.evaluate(element => element.scrollIntoView({ block: "start" }));
     expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
-    for (const control of [weight, group.getByRole("button", { name: "Save set 1a", exact: true }), group.getByRole("button", { name: "Save round 1 of superset A", exact: true })]) {
+    for (const control of [weight, group.getByRole("button", { name: "Save set 1a", exact: true }), group.getByRole("button", { name: "Collapse Round 1 of superset A", exact: true })]) {
       const box = (await control.boundingBox())!;
       expect(box.width).toBeGreaterThanOrEqual(44);
       expect(box.height).toBeGreaterThanOrEqual(44);

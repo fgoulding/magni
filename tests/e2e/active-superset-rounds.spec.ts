@@ -44,8 +44,8 @@ async function startSupersets(page: Page) {
   return { session, pair };
 }
 
-function roundAction(page: Page, action: "Save" | "Undo", round = 1) {
-  return page.getByRole("button", { name: `${action} round ${round} of superset A`, exact: true });
+function roundToggle(page: Page, action: "Expand" | "Collapse", round = 1) {
+  return page.getByRole("button", { name: `${action} Round ${round} of superset A`, exact: true });
 }
 
 async function stored(page: Page, id: number) {
@@ -54,10 +54,19 @@ async function stored(page: Page, id: number) {
   return response.json() as Promise<{ sets: WorkoutSet[]; status: string; loggedSets: number; volume: number }>;
 }
 
-test("active supersets interleave rounds and save or undo paired sets across Today and Calendar", async ({ page }, info) => {
+test("active supersets collapse independently of individual saves across Today and Calendar", async ({ page }, info) => {
   test.setTimeout(90_000);
   await page.setViewportSize({ width: 375, height: 629 });
   const { session, pair } = await startSupersets(page);
+  const save = async (label: string) => {
+    await pair.getByRole("button", { name: `Save set ${label}`, exact: true }).click();
+    await expect(pair.getByRole("button", { name: `Undo set ${label}`, exact: true })).toHaveAttribute("aria-pressed", "true");
+  };
+  const undo = async (label: string) => {
+    await pair.getByRole("button", { name: `Undo set ${label}`, exact: true }).click();
+    await expect(pair.getByRole("button", { name: `Save set ${label}`, exact: true })).toBeEnabled();
+  };
+  await expect(page.getByRole("button", { name: /^(Save|Undo) round / })).toHaveCount(0);
   const squat = session.sets.filter(set => set.exercise_name === "Squat");
   const row = session.sets.filter(set => set.exercise_name === "Dumbbell row");
   await expect(pair.locator('[data-set-log-row] input')).toHaveCount(10);
@@ -81,31 +90,45 @@ test("active supersets interleave rounds and save or undo paired sets across Tod
     if (route.request().method() === "PUT") writes.push(route.request().postDataJSON());
     await route.continue();
   });
-  await roundAction(page, "Save").click();
-  await expect(roundAction(page, "Undo")).toHaveAttribute("aria-pressed", "true");
+  await save("1a"); await save("1b");
+  await expect(roundToggle(page, "Collapse")).toHaveAttribute("aria-expanded", "true");
+  await expect(roundToggle(page, "Collapse")).toContainText("2/2 saved");
   expect(writes.map(write => write.setId)).toEqual([squat[0].id, row[0].id]);
   await expect(page.getByRole("progressbar", { name: "Saved sets", exact: true })).toHaveAttribute("value", "2");
-  await pair.getByRole("button", { name: "Undo set 1a", exact: true }).click();
-  await expect(roundAction(page, "Save")).toBeEnabled();
+  // Looking at or hiding completed work never changes the logged sets.
+  await roundToggle(page, "Collapse").click();
+  await expect(roundToggle(page, "Expand")).toHaveAttribute("aria-expanded", "false");
+  await expect(roundToggle(page, "Expand")).toContainText("Squat");
+  await expect(pair.locator('input[aria-label="Squat set 1a weight (lb)"]')).toBeHidden();
+  await expect(pair.locator('input[aria-label="Squat set 1a weight (lb)"]')).toHaveValue("137.5");
+  await roundToggle(page, "Expand").click();
+  expect(writes).toHaveLength(2);
+  await expect(pair.getByRole("button", { name: "Undo set 1a", exact: true })).toHaveAttribute("aria-pressed", "true");
+  await undo("1a");
+  await expect(roundToggle(page, "Collapse")).toContainText("1/2 saved");
   await expect(pair.getByRole("button", { name: "Undo set 1b", exact: true })).toHaveAttribute("aria-pressed", "true");
-  await roundAction(page, "Save").click();
-  await expect(roundAction(page, "Undo")).toBeEnabled();
+  await save("1a");
+  await expect(roundToggle(page, "Collapse")).toContainText("2/2 saved");
   expect(writes.map(write => write.setId)).toEqual([squat[0].id, row[0].id, squat[0].id, squat[0].id]);
-  await roundAction(page, "Undo").click();
-  await expect(pair.getByRole("button", { name: "Save set 1b", exact: true })).toBeEnabled();
+  await undo("1a"); await undo("1b");
   expect(writes.slice(-2).map(write => [write.setId, write.actualReps, write.actualWeight])).toEqual([[squat[0].id, null, null], [row[0].id, null, null]]);
   await expect(pair.getByRole("spinbutton", { name: "Squat set 1a weight (lb)", exact: true })).toHaveValue("137.5");
-  await roundAction(page, "Save").click();
-  await expect(roundAction(page, "Undo")).toBeEnabled();
+  await save("1a"); await save("1b");
   await pair.getByRole("spinbutton", { name: "Squat set 2a reps", exact: true }).fill("7");
+  const writesBeforeCollapse = writes.length;
+  await roundToggle(page, "Collapse", 2).click();
+  await expect(roundToggle(page, "Expand", 2)).toContainText("Unsaved changes");
+  await expect(pair.locator('input[aria-label="Squat set 2a reps"]')).toBeHidden();
   await pair.getByRole("button", { name: "Collapse Squat + Dumbbell row · Superset A", exact: true }).click();
   await expect(pair).toContainText("Unsaved changes");
   await pair.getByRole("button", { name: "Expand Squat + Dumbbell row · Superset A", exact: true }).click();
+  await expect(roundToggle(page, "Expand", 2)).toHaveAttribute("aria-expanded", "false");
+  await roundToggle(page, "Expand", 2).click();
   await expect(pair.getByRole("spinbutton", { name: "Squat set 2a reps", exact: true })).toHaveValue("7");
-  await roundAction(page, "Save", 2).click();
-  await expect(roundAction(page, "Undo", 2)).toBeEnabled();
+  expect(writes).toHaveLength(writesBeforeCollapse);
+  await save("2a"); await save("2b");
   await page.reload();
-  await expect(roundAction(page, "Undo")).toBeEnabled();
+  await expect(roundToggle(page, "Collapse")).toContainText("2/2 saved");
   await expect(pair.getByRole("spinbutton", { name: "Squat set 2a reps", exact: true })).toHaveValue("7");
   const persisted = await stored(page, session.id);
   expect(persisted.sets.map(set => set.id)).toEqual(session.sets.map(set => set.id));
@@ -117,16 +140,20 @@ test("active supersets interleave rounds and save or undo paired sets across Tod
     await page.evaluate(({ fontSize, theme }) => { document.documentElement.style.fontSize = `${fontSize}px`; document.documentElement.dataset.theme = theme; }, { fontSize, theme });
     await page.getByRole("group", { name: "Round 1 of superset A", exact: true }).evaluate(element => element.scrollIntoView({ block: "start" }));
     expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
-    for (const field of [pair.getByRole("spinbutton", { name: "Squat set 1a weight (lb)", exact: true }), roundAction(page, "Undo")]) {
+    for (const field of [pair.getByRole("spinbutton", { name: "Squat set 1a weight (lb)", exact: true }), roundToggle(page, "Collapse")]) {
       const box = (await field.boundingBox())!;
       expect(box.width).toBeGreaterThanOrEqual(44); expect(box.height).toBeGreaterThanOrEqual(44);
     }
     await page.screenshot({ path: info.outputPath(`superset-rounds-${width}-${fontSize}.png`), animations: "disabled" });
+    await roundToggle(page, "Collapse").click();
+    await roundToggle(page, "Expand").evaluate(element => element.scrollIntoView({ block: "start" }));
+    await page.screenshot({ path: info.outputPath(`superset-rounds-closed-${width}-${fontSize}.png`), animations: "disabled" });
+    await roundToggle(page, "Expand").click();
   }
   await page.goto(`/workouts/${session.id}`);
   await page.getByRole("link", { name: "Resume planned workout", exact: true }).click();
   await expect(page.getByRole("dialog")).toBeVisible();
-  await expect(roundAction(page, "Undo")).toBeEnabled();
+  await expect(roundToggle(page, "Collapse")).toContainText("2/2 saved");
   await expect(pair.getByRole("spinbutton", { name: "Squat set 1a weight (lb)", exact: true })).toHaveValue("137.5");
   await page.getByRole("button", { name: "Finish Workout", exact: true }).click();
   await expect.poll(async () => (await stored(page, session.id)).status).toBe("completed");
@@ -149,30 +176,35 @@ test("a partially saved round recovers a lost response after reload without rewr
       await route.abort("failed");
     } else await route.continue();
   });
-  await roundAction(page, "Save").click();
+  await pair.getByRole("button", { name: "Save set 1a", exact: true }).click();
   await expect(pair.getByRole("button", { name: "Undo set 1a", exact: true })).toHaveAttribute("aria-pressed", "true");
+  await pair.getByRole("button", { name: "Save set 1b", exact: true }).click();
   await expect(pair.getByText("Save failed", { exact: true })).toBeVisible();
-  await expect(roundAction(page, "Save")).toHaveAttribute("aria-pressed", "false");
+  await roundToggle(page, "Collapse").click();
+  await expect(roundToggle(page, "Expand")).toContainText("Save failed");
   await expect(page.getByRole("button", { name: "Finish Workout", exact: true })).toBeDisabled();
   await page.reload();
-  await expect(roundAction(page, "Save")).toBeEnabled();
+  await expect(roundToggle(page, "Collapse")).toContainText("1/2 saved");
   await expect(pair.getByRole("button", { name: "Undo set 1a", exact: true })).toHaveAttribute("aria-pressed", "true");
-  await roundAction(page, "Save").click();
-  await expect(roundAction(page, "Undo")).toBeEnabled();
+  await pair.getByRole("button", { name: "Save set 1b", exact: true }).click();
+  await expect(pair.getByRole("button", { name: "Undo set 1b", exact: true })).toHaveAttribute("aria-pressed", "true");
   expect(writes.map(write => write.setId)).toEqual([squat.id, row.id, row.id]);
   expect(writes[2]).toEqual(writes[1]);
   const recovered = await stored(page, session.id);
   expect(recovered.loggedSets).toBe(2);
   expect(recovered.sets.map(set => set.id)).toEqual(session.sets.map(set => set.id));
   await expect(page.getByRole("button", { name: "Finish Workout", exact: true })).toBeEnabled();
-  // A genuine concurrent change must block group save until the user chooses.
+  // A genuine concurrent change stays discoverable in a collapsed round.
   await pair.getByRole("spinbutton", { name: "Dumbbell row set 1b weight (lb)", exact: true }).fill("45");
   expect((await page.request.put(`/api/sessions/${session.id}/sets`, { data: { setId: row.id, actualReps: 11, actualWeight: 50, expectedActual: { reps: 10, weight: 42.5 } } })).ok()).toBe(true);
-  await roundAction(page, "Save").click();
+  await pair.getByRole("button", { name: "Save set 1b", exact: true }).click();
   await expect(pair.getByText(/Saved elsewhere: 11 reps at 50 lb/)).toBeVisible();
-  await expect(roundAction(page, "Save")).toBeDisabled();
+  await roundToggle(page, "Collapse").click();
+  await expect(roundToggle(page, "Expand")).toContainText("Resolve conflicting changes");
+  await roundToggle(page, "Expand").click();
+  await expect(pair.getByRole("button", { name: "Save set 1b", exact: true })).toBeDisabled();
   await pair.getByRole("button", { name: "Use saved values", exact: true }).click();
-  await expect(roundAction(page, "Undo")).toBeEnabled();
+  await expect(pair.getByRole("button", { name: "Undo set 1b", exact: true })).toBeEnabled();
   await expect(pair.getByRole("spinbutton", { name: "Dumbbell row set 1b weight (lb)", exact: true })).toHaveValue("50");
   await expect(page.getByText(/This set changed in another tab or device/)).toHaveCount(0);
   await page.getByRole("group", { name: "Round 1 of superset A", exact: true }).evaluate(element => element.scrollIntoView({ block: "start" }));

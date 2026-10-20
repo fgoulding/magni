@@ -138,7 +138,7 @@ it.each(["structure", "correction"])("requires explicit review before rebasing a
     fireEvent.click(screen.getByRole("button", { name: "Save workout changes" }));
     fireEvent.click(await screen.findByRole("button", { name: "Review saved workout" }));
     await screen.findByText(/Saved workout: Other device/);
-    expect(screen.getByLabelText("Saved workout review")).toHaveFocus();
+    await waitFor(() => expect(screen.getByLabelText("Saved workout review")).toHaveFocus());
     expect(writes).toHaveLength(1);
     fireEvent.click(screen.getByRole("button", { name: "Keep my workout edits" }));
     expect(screen.getByLabelText("Workout name")).toHaveValue("My name");
@@ -153,7 +153,7 @@ it.each(["structure", "correction"])("requires explicit review before rebasing a
     fireEvent.click(await screen.findByRole("button", { name: "Save correction" }));
     fireEvent.click(await screen.findByRole("button", { name: "Review saved actuals" }));
     await screen.findByText(/Row set 1: 9 reps at 40 lb/);
-    expect(screen.getByLabelText("Saved actuals review")).toHaveFocus();
+    await waitFor(() => expect(screen.getByLabelText("Saved actuals review")).toHaveFocus());
     expect(writes).toHaveLength(1);
     fireEvent.click(screen.getByRole("button", { name: "Keep my actual edits" }));
     expect(screen.getByLabelText("Correct reps for set 1")).toHaveValue(8);
