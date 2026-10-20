@@ -79,22 +79,26 @@ test("Calendar move/swap, duplicate, skip and each-day Add with durable API undo
 });
 
 test("Calendar touch drag offers the same explicit occupied-date choice",async({page},info)=>{
+  // The install hint mounts after hydration and can shift coordinates between
+  // measuring the grip and starting the drag. Model the dismissed/installed UI.
+  await page.addInitScript(()=>localStorage.setItem("install-help-dismissed","1"));
   await fixture(page);
   const day=page.locator('[data-calendar-date="2090-06-05"]');
-  await day.evaluate(element=>element.scrollIntoView({block:"start"}));
   const handle=day.getByRole("button",{name:"Drag Lower to another day"});
+  await handle.scrollIntoViewIfNeeded();
   const from=await handle.boundingBox();
-  const to=await page.locator('[data-calendar-date="2090-06-06"]').boundingBox();
   const start={x:from!.x+from!.width/2,y:from!.y+from!.height/2};
-  const end={x:start.x,y:to!.y+20};
   await dispatchTouch(handle,"touchstart",start);
   await expect(handle).toHaveAttribute("aria-pressed","true");
+  const to=await page.locator('[data-calendar-date="2090-06-06"]').boundingBox();
+  const end={x:start.x,y:to!.y+to!.height/2};
   await dispatchTouch(handle,"touchmove",end);
   const dragPreview=await page.locator("[data-drag-preview]").boundingBox();
   expect(dragPreview!.x).toBeGreaterThanOrEqual(0);
   expect(dragPreview!.x+dragPreview!.width).toBeLessThanOrEqual(page.viewportSize()!.width);
   await page.screenshot({path:info.outputPath("calendar-touch-drag.png")});
   await dispatchTouch(handle,"touchend",end);
+  await expect(page.getByRole("dialog").getByText("Tue, Jun 6 already has Upper.",{exact:true})).toBeVisible();
   await expect(page.getByRole("dialog").getByRole("button",{name:"Swap with Upper"})).toBeVisible();
   // The library deliberately suppresses synthetic post-touch clicks for 50ms.
   // Model the next separate human tap, rather than that browser-generated click.

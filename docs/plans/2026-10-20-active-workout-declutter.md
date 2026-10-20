@@ -75,3 +75,14 @@ superset flow without extra navigation.
   remain separate work.
 - Private release evidence lives under `.playwright/quiet-supersets/release/`;
   publication, immutable-image staging and promotion follow the existing gates.
+- First CI run `39446563122` passed core checks, both Chromium shards and the
+  second Safari shard. The first Safari shard rejected two flaky existing tests;
+  publication remained blocked. Traces showed the builder helper choosing a
+  desktop locator during the phone's hydration fallback, and a synthetic calendar
+  drag using coordinates displaced by the late iPhone install hint.
+  Test-only repairs wait for the actual responsive navigator, initialize the
+  dismissed install-hint state for coordinate-based dragging, measure the target
+  after drag activation and assert the exact destination date in the dialog.
+  No retries, assertions or release gates are relaxed.
+  Both repaired Safari workflows passed three consecutive runs each with zero
+  retries; focused lint and independent source/trace review also passed.

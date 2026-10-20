@@ -2,8 +2,12 @@ import { expect, type Page } from "@playwright/test";
 
 export async function selectBuilderDay(page: Page, index: number) {
   const selector = page.getByRole("combobox", { name: "Day", exact: true });
+  const dayButton = page.getByRole("complementary", { name: "Program days", exact: true }).getByRole("button").nth(index);
+  // Reload can finish while the hydration fallback still hides both layouts.
+  // Wait for the actual navigator before choosing its responsive interaction.
+  await expect(selector.or(dayButton)).toBeVisible();
   if (await selector.isVisible()) await selector.selectOption(String(index));
-  else await page.getByRole("complementary", { name: "Program days", exact: true }).getByRole("button").nth(index).click();
+  else await dayButton.click();
 }
 
 export async function saveBuilder(page: Page) {
