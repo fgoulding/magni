@@ -25,11 +25,11 @@ export function ExerciseLogCard({ name, expandedName, saved, total, status, disa
   </section>;
 }
 
-export function SetLogRow({ number, count = 1, name, reps, weight, unit, addedWeight = false, repsLabel, weightLabel, prescription,
+export function SetLogRow({ number, count = 1, name, reps, weight, unit, addedWeight = false, repsLabel, weightLabel, target, prescription,
   saved, logged, pending, saving, failed, undoPending, missingWeight, disabled, saveDisabled, saveLabel, onChange, onSave, onUndo, children,
 }: {
   number: number | string; count?: number; name?: string; reps: string; weight: string; unit: string; addedWeight?: boolean;
-  repsLabel: string; weightLabel: string; prescription?: ReactNode;
+  repsLabel: string; weightLabel: string; target?: string; prescription?: ReactNode;
   saved: boolean; logged: boolean; pending: boolean; saving: boolean; failed: boolean; undoPending?: boolean; missingWeight?: boolean;
   disabled?: boolean; saveDisabled?: boolean; saveLabel: string;
   onChange: (field: "reps" | "weight", value: string) => void; onSave: () => void; onUndo: () => void; children?: ReactNode;
@@ -42,8 +42,11 @@ export function SetLogRow({ number, count = 1, name, reps, weight, unit, addedWe
   const undoLabel = `${undoPending ? "Retry undo" : "Undo"} ${count > 1 ? `${count}-set log` : `set ${number}`}`;
   const actionDisabled = disabled || saving || saveDisabled;
   return <div data-set-log-row className="min-w-0 border-t border-line py-3 first:border-t-0 first:pt-0">
-    <div className="flex flex-wrap items-center justify-between gap-x-3 gap-y-1">
-      <p className="text-sm font-semibold">{typeof number === "string" && name ? `${number} · ${name}` : <>{name ? `${name} · ` : ""}{count > 1 ? `${count} sets · batch` : `Set ${number}`}</>}</p>
+    <div className="flex flex-wrap items-baseline justify-between gap-x-3 gap-y-1">
+      <p className="flex min-w-0 flex-wrap items-baseline gap-x-2 text-sm font-semibold">
+        <span className="min-w-0 break-words">{typeof number === "string" && name ? `${number} · ${name}` : <>{name ? `${name} · ` : ""}{count > 1 ? `${count} sets · batch` : `Set ${number}`}</>}</span>
+        {target ? <span className="min-w-0 text-xs font-normal text-muted">{target}</span> : null}
+      </p>
       <span aria-live="polite" className={`${status === "Not logged" ? "sr-only " : ""}text-xs font-semibold ${failed || undoPending ? "text-danger-ink" : saved ? "text-success-ink" : "text-muted"}`}>{status}</span>
     </div>
     {prescription}

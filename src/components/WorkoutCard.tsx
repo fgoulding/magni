@@ -694,8 +694,8 @@ export function WorkoutCard({
                   saved={saved} logged={logged} pending={pending} saving={rowSaving} failed={failedIds.has(set.id)} missingWeight={set.actual_reps != null && set.actual_weight == null} undoPending={draft?.intent === "undo"}
                   saveDisabled={saving || !!conflicts[set.id]} saveLabel={`Save set ${number}`}
                   onChange={(field, value) => editSet(set, field, value)} onSave={() => { unskipLift(group); void saveSets([set]); }} onUndo={() => { void saveSets([set], {}, true); }}
+                  target={workoutTarget(set, unit, !!group.supersetGroup)}
                   prescription={<>
-                    <p className="mt-1 text-sm text-muted">{workoutTarget(set, unit, !!group.supersetGroup)}</p>
                     {!group.supersetGroup && spec ? <p className="mt-1 text-xs text-muted">{[spec.effortKind !== "none" ? `${spec.effortKind.toUpperCase()} ${spec.effort}` : "", `Rest ${spec.restSeconds} s`, spec.tempo ? `Tempo ${spec.tempo}` : ""].filter(Boolean).join(" · ")}</p> : null}
                     {!group.supersetGroup && spec?.notes ? <p className="mt-1 whitespace-pre-wrap text-sm text-muted">{spec.notes}</p> : null}
                   </>}>

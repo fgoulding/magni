@@ -176,6 +176,9 @@ Active supersets present rounds vertically inside that same disclosure: 1a, 1b,
 2a, 2b. While open, use a compact Superset A heading and saved count; show the
 full exercise names in the closed summary and accessible heading. Each row keeps
 its exercise name, concise targets, inputs and individual check.
+Place the muted target beside the exercise/set name on the same baseline when
+space permits. Wrap naturally for long names, detailed targets or enlarged text;
+keep the full name, target role and prescribed load readable.
 Keep the round heading attached to its first row without an intervening divider
 or extra row padding; retain separators between lifts and rounds.
 A compact Round N header contains the saved fraction and a fixed 44px check to

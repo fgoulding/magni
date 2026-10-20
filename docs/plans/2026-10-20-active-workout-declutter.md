@@ -86,3 +86,24 @@ superset flow without extra navigation.
   No retries, assertions or release gates are relaxed.
   Both repaired Safari workflows passed three consecutive runs each with zero
   retries; focused lint and independent source/trace review also passed.
+
+## Follow-up: inline targets
+
+The user requested target reps alongside the exercise name for further
+compression. Baseline `52e8d9d` matches fetched `origin/main`; the previous pass is
+live and its private release receipt records passing CI, staging and public
+readiness. Use the shared row's name line for a smaller muted target, wrapping
+when the combined text is too wide. Preserve the full target, roles, loads,
+status and existing controls. No new behavior or data changes.
+
+Coordinator owns the two component edits, documentation, browser rendering and
+release. Independent verification reviews source and 375px/393px/enlarged-text
+screenshots. Reuse existing component and browser coverage for this presentation
+change, then pass the unchanged release gates.
+
+Local verification: 57 existing component cases and six WebKit workflows pass,
+with no retries. Typecheck, focused lint and diff checks pass. Both 375px and
+393px render the first round at approximately 282px instead of 330px; 20px text
+wraps without horizontal overflow. Saved-state renders retain visible status
+beside the compact row header. Private release evidence for this follow-up lives
+under `.playwright/inline-targets/release/`.
