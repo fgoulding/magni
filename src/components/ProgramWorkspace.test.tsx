@@ -16,7 +16,7 @@ beforeEach(() => {
   vi.stubGlobal("localStorage", { getItem: (key: string) => storage.get(key) ?? null, setItem: (key: string,value: string) => storage.set(key,value), removeItem: (key: string) => storage.delete(key) });
   router.push.mockClear(); router.refresh.mockClear();
 });
-afterEach(() => { cleanup(); vi.restoreAllMocks(); vi.unstubAllGlobals(); });
+afterEach(() => { cleanup(); vi.useRealTimers(); vi.restoreAllMocks(); vi.unstubAllGlobals(); });
 const rename = (name: string) => fireEvent.change(screen.getByLabelText("Program name"), { target: { value: name } });
 
 describe("program workspace recovery and authoring", () => {
@@ -162,6 +162,34 @@ describe("program workspace recovery and authoring", () => {
     expect(activationReply).toHaveBeenCalledTimes(2);
     await waitFor(() => expect(screen.getByLabelText("Change scope")).toBeEnabled());
     expect(fetchMock).toHaveBeenNthCalledWith(3, "/api/programs/42/editor-changes", expect.objectContaining({ method: "GET" }));
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+  });
+  it("keeps a failed activation visible after a pending autosave and retries the same draft", async () => {
+    vi.useFakeTimers();
+    const activationReply = vi.fn().mockRejectedValueOnce(new Error("Activation response lost")).mockResolvedValueOnce(response({ programId: 42 }));
+    const fetchMock = vi.fn(async (url: string, options: RequestInit) => {
+      if (url === `/api/program-drafts/${id}` && options.method === "PUT") return response({ revision: 2 });
+      if (url === `/api/program-drafts/${id}/activate` && options.method === "POST") return activationReply();
+      if (url === "/api/programs/42/editor-changes" && options.method === "GET") return response({ draftId: id, publishedRevisionId: null, occurrences: [] });
+      throw new Error(`Unexpected request: ${options.method} ${url}`);
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    render(<ProgramWorkspace {...props} advanced={false} />);
+    rename("Interrupted program");
+    await act(async () => fireEvent.click(screen.getByRole("button", { name: "Save now" })));
+    expect(screen.getByText("Draft saved")).toBeVisible();
+    fireEvent.click(screen.getAllByRole("button", { name: "Review & start" })[0]);
+    await act(async () => fireEvent.click(screen.getByRole("button", { name: "Start program" })));
+    expect(screen.getByRole("alert")).toHaveTextContent("Activation response lost");
+    await act(async () => vi.advanceTimersByTimeAsync(600));
+    expect(screen.getByRole("alert")).toHaveTextContent("Activation response lost");
+    expect(fetchMock.mock.calls.filter(([, options]) => options.method === "PUT")).toHaveLength(1);
+    await act(async () => fireEvent.click(screen.getByRole("button", { name: "Start program" })));
+    expect(screen.getByText("Program activated")).toBeVisible();
+    const attempts = fetchMock.mock.calls.filter(([url]) => url.endsWith("/activate"));
+    expect(attempts).toHaveLength(2);
+    expect(attempts[0]).toEqual(attempts[1]);
+    expect(JSON.parse(attempts[0][1].body as string)).toEqual({ expectedRevision: 2 });
     expect(screen.queryByRole("alert")).not.toBeInTheDocument();
   });
   it("restores local pending text after navigation without claiming it is saved", () => {

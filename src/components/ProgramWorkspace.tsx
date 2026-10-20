@@ -106,6 +106,10 @@ function HydratedWorkspace({ userId, draftId, initialDocument, initialRevision, 
   }
 
   async function save(): Promise<boolean> {
+    // A manual save consumes the pending autosave too; a later clean save must
+    // not erase the outcome of the action that followed it (such as activation).
+    if (timer.current) clearTimeout(timer.current);
+    timer.current = null;
     if (saving.current) return saving.current;
     if (conflict.current) return false;
     const operation = async () => {

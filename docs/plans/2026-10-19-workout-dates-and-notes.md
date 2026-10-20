@@ -80,3 +80,14 @@ release receipts belong under `.playwright/workout-dates-and-notes/`.
 - Independent source and visual reviews pass. Inspected screenshots cover
   the full date picker and active workouts at both phone widths, with light/dark
   themes. This is WebKit emulation, not a physical-device claim.
+- First CI run `39370304516` passed the new date workflows but blocked release
+  on an interrupted-activation Safari retry. Its trace exposed a separate real
+  race: a pending autosave ran after manual save and erased the activation
+  failure without writing anything. Cancel that timer when save begins.
+  A fake-timer regression fails before the correction and passes after it,
+  verifying the error persists and retry uses the same draft revision.
+  Independent review confirms save serialization is preserved. The original
+  browser assertion and all release gates remain unchanged.
+- The correction passes 43 workspace/builder component tests, typecheck and
+  focused lint; the original Safari activation workflow passes three consecutive
+  runs with zero retries.
