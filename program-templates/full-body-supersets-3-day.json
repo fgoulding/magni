@@ -1,9 +1,9 @@
 {
   "schemaVersion": 1,
   "id": "full-body-supersets-3-day",
-  "revision": 1,
+  "revision": 2,
   "title": "Full Body Supersets 3-Day",
-  "description": "Three full-body days on nonconsecutive weekdays. Complete five rounds of A, five of B and three of C: 26 working sets per session. Abs are separate.\n\nChoose your working loads during setup or when logging; the initial 0 values are placeholders, not recommended weights. Pull-ups use bodyweight.\n\nKeep about two good reps in reserve, or three for the exercise paired with the main lift in A. Warm-up sets are additional to the listed work sets.\n\nAllow 3–4 minutes between sets of the main lift in A, including its partner exercise; extend the rest as needed. For B/C, rest 90–120 seconds after each pair. Complete both sides of unilateral exercises before moving on.\n\nProgress manually: when all sets reach the top of their rep range with clean technique and the intended effort, raise the working load by the smallest practical increment. Logged weights do not change future targets automatically.\n\nThe three-day week repeats for four cycles by default. Choose your repeat cycles and training weekdays before activation.",
+  "description": "Three full-body days: Squat, Bench and Deadlift. Five rounds of A and B, three of C. Choose your working loads. Manual progression.",
   "unit": "lb",
   "cycles": 4,
   "weekdays": [
@@ -35,8 +35,7 @@
     {
       "id": "pull-up",
       "name": "Pull-up",
-      "loadMode": "bodyweight",
-      "notes": "For weighted pull-ups, change each set's Load basis to Bodyweight + load in the editor and enter the added load. For a chin-up alternative, rename the Pull-up slots before activation and use that variation consistently."
+      "loadMode": "bodyweight"
     },
     {
       "id": "lateral-raise",
@@ -97,8 +96,7 @@
           "repMin": 4,
           "repMax": 6,
           "effortRir": 2,
-          "restSeconds": 45,
-          "notes": "Allow 3–4 minutes between sets of the main lift, including its partner."
+          "restSeconds": 45
         },
         {
           "id": "squat-row",
@@ -108,8 +106,7 @@
           "repMin": 8,
           "repMax": 12,
           "effortRir": 3,
-          "restSeconds": 120,
-          "notes": "Complete the reps on each side. Support your free hand on a bench; keep your chest free."
+          "restSeconds": 120
         },
         {
           "id": "squat-rdl",
@@ -130,7 +127,6 @@
           "repMax": 8,
           "effortRir": 2,
           "restSeconds": 120,
-          "notes": "Pause for 1 second with the bar just above your chest, then press.",
           "tempo": "1-second hover pause"
         },
         {
@@ -167,8 +163,7 @@
           "repMin": 4,
           "repMax": 6,
           "effortRir": 2,
-          "restSeconds": 45,
-          "notes": "Allow 3–4 minutes between sets of the main lift, including its partner."
+          "restSeconds": 45
         },
         {
           "id": "bench-rdl",
@@ -178,8 +173,7 @@
           "repMin": 8,
           "repMax": 10,
           "effortRir": 3,
-          "restSeconds": 120,
-          "notes": "Complete the reps on each side. The rear foot provides balance; the front leg does most of the work."
+          "restSeconds": 120
         },
         {
           "id": "bench-split-squat",
@@ -189,8 +183,7 @@
           "repMin": 8,
           "repMax": 10,
           "effortRir": 2,
-          "restSeconds": 45,
-          "notes": "Complete the reps on each leg, holding a kettlebell."
+          "restSeconds": 45
         },
         {
           "id": "bench-press",
@@ -210,8 +203,7 @@
           "repMin": 10,
           "repMax": 12,
           "effortRir": 2,
-          "restSeconds": 45,
-          "notes": "Complete the reps on each side. Support your free hand on a bench; keep your chest free."
+          "restSeconds": 45
         },
         {
           "id": "bench-lateral-raise",
@@ -237,8 +229,7 @@
           "repMin": 3,
           "repMax": 5,
           "effortRir": 2,
-          "restSeconds": 45,
-          "notes": "Allow 3–4 minutes between sets of the main lift, including its partner."
+          "restSeconds": 45
         },
         {
           "id": "deadlift-bench",
@@ -258,8 +249,7 @@
           "repMin": 10,
           "repMax": 15,
           "effortRir": 2,
-          "restSeconds": 45,
-          "notes": "Keep the load moderate after the heavier deadlifts."
+          "restSeconds": 45
         },
         {
           "id": "deadlift-pull-up",
@@ -279,8 +269,7 @@
           "repMin": 10,
           "repMax": 15,
           "effortRir": 2,
-          "restSeconds": 45,
-          "notes": "Complete the reps on each side. Support your free hand on a bench; keep your chest free."
+          "restSeconds": 45
         },
         {
           "id": "deadlift-calf-raise",
@@ -290,8 +279,7 @@
           "repMin": 12,
           "repMax": 20,
           "effortRir": 2,
-          "restSeconds": 120,
-          "notes": "Complete the reps on each leg, holding a dumbbell."
+          "restSeconds": 120
         }
       ]
     }

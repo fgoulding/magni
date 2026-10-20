@@ -68,7 +68,7 @@ test("History resumes a future occurrence with its saved set identity instead of
   const resumed = waitForExactResume();
   await page.getByRole("link", { name: "Resume planned workout", exact: true }).click();
   await resumed;
-  await expect(page).toHaveURL(`/calendar?month=2026-09&date=2026-09-08&workout=occurrence-${occurrenceId}`);
+  await expect(page).toHaveURL(`/calendar?month=${session.date.slice(0, 7)}&date=${session.date}&workout=occurrence-${occurrenceId}`);
   await expect(page.getByRole("dialog").getByRole("heading", { name: "Dumbbell Row", exact: true })).toBeVisible();
   await expect(page.getByRole("dialog").getByRole("heading", { name: "Squat", exact: true })).toHaveCount(0);
   const reloaded = waitForExactResume();

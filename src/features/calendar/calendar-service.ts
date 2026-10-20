@@ -15,7 +15,8 @@ export type CalendarConflict = { key:string; id:number|null; date:string; name:s
 export type CalendarResult = { operationId?: string; undone?: boolean; changes: Change[]; conflicts?: CalendarConflict[] };
 type Journal = { id: string; before_json: string; after_json: string; undone_at: string | null };
 type RunState = { id:number; programId:number; status:string; is_active:number; archived_at:string|null };
-type SavedAfter = { request: string; rows: Row[]; runs:RunState[]; progression:EditorCompletionDecision[]; skipSessionId?: number; result: CalendarResult };
+type SessionDateState = { id:number; occurrence_id:number; date:string; status:string; revision:number };
+type SavedAfter = { request: string; rows: Row[]; runs:RunState[]; sessions?:SessionDateState[]; progression:EditorCompletionDecision[]; skipSessionId?: number; result: CalendarResult };
 type Body = Record<string, unknown>;
 
 export class CalendarError extends Error {
@@ -33,6 +34,16 @@ function pending(row: Row, revision: unknown) {
   const run = db.prepare("SELECT status,archived_at FROM program_runs WHERE id=?").get(row.program_run_id) as { status:string; archived_at:string|null } | undefined;
   if (!run || run.status !== "active" || run.archived_at) throw new CalendarError("Resume the program before rearranging its workouts.",409);
 }
+function sessionDateState(userId:number, occurrenceId:number):SessionDateState|undefined {
+  return db.prepare("SELECT id,occurrence_id,date,status,revision FROM sessions WHERE user_id=? AND occurrence_id=?").get(userId,occurrenceId) as SessionDateState|undefined;
+}
+function activeMove(row:Row, revision:unknown, sessionRevision:unknown):SessionDateState {
+  const session=sessionDateState(row.user_id,row.id);
+  if (row.revision!==revision || !session || session.status!=="in_progress" || session.revision!==sessionRevision) {
+    throw new CalendarError("Workout changed. Refresh the calendar and try again.",409);
+  }
+  return session;
+}
 function date(value: unknown): string {
   if (!validDateKey(value)) throw new CalendarError("Choose a valid date.");
   return value;
@@ -42,7 +53,7 @@ function requestFingerprint(body: Body): string {
 }
 function conflictsAt(userId: number, dates: string[], excluded: number[]) {
   const rows=db.prepare(`SELECT 'occurrence-' || o.id AS key,o.id,
-    CASE WHEN o.status='completed' THEN COALESCE(s.date,o.scheduled_date) ELSE o.scheduled_date END AS date,
+    CASE WHEN o.status IN ('in_progress','completed') THEN COALESCE(s.date,o.scheduled_date) ELSE o.scheduled_date END AS date,
     o.day_name AS name,o.revision,
     o.status='scheduled' AND s.id IS NULL AND pr.status='active' AND pr.archived_at IS NULL AS canSwap
     FROM workout_occurrences o JOIN program_runs pr ON pr.id=o.program_run_id
@@ -68,11 +79,15 @@ function undo(userId: number, body: Body): CalendarResult {
   if (!journal) throw new CalendarError("Calendar change not found",404);
   const after = JSON.parse(journal.after_json) as SavedAfter;
   if (journal.undone_at) return { operationId:journal.id, undone:true, changes:[] };
-  const before = JSON.parse(journal.before_json) as {rows:Row[];runs:RunState[]};
+  const before = JSON.parse(journal.before_json) as {rows:Row[];runs:RunState[];sessions?:SessionDateState[]};
   for (const row of after.rows) {
     const current = rowFor(userId,row.id);
-    const session = db.prepare("SELECT id,status FROM sessions WHERE occurrence_id=?").get(row.id) as {id:number;status:string}|undefined;
-    if (JSON.stringify(current)!==JSON.stringify(row) || (session && (session.id!==after.skipSessionId || session.status!=="skipped"))) throw new CalendarError("Workout changed or logging started. This change can no longer be undone.",409);
+    const session = sessionDateState(userId,row.id);
+    const movedSession=after.sessions?.find(saved=>saved.occurrence_id===row.id);
+    const sessionChanged=movedSession
+      ? JSON.stringify(session)!==JSON.stringify(movedSession)
+      : !!session && (session.id!==after.skipSessionId || session.status!=="skipped");
+    if (JSON.stringify(current)!==JSON.stringify(row) || sessionChanged) throw new CalendarError("Workout changed or logging started. This change can no longer be undone.",409);
   }
   for (const run of after.runs) {
     const current=runState(after.rows.find(row=>row.program_run_id===run.id)!);
@@ -86,6 +101,7 @@ function undo(userId: number, body: Body): CalendarResult {
   for (const decision of after.progression) db.prepare("UPDATE program_editor_progression_state SET state_json=?,revision=revision+1,updated_at=datetime('now') WHERE run_id=? AND progression_key=?").run(JSON.stringify(decision.beforeState),after.rows[0].program_run_id,decision.progressionKey);
   if (after.skipSessionId) db.prepare("DELETE FROM program_editor_progression_events WHERE session_id=?").run(after.skipSessionId);
   if (after.skipSessionId) db.prepare("DELETE FROM sessions WHERE id=? AND user_id=? AND status='skipped'").run(after.skipSessionId,userId);
+  for (const session of before.sessions??[]) db.prepare("UPDATE sessions SET date=?,revision=revision+1 WHERE id=? AND user_id=?").run(session.date,session.id,userId);
   for (const row of after.rows) {
     const original = before.rows.find(value => value.id===row.id);
     if (original) db.prepare("UPDATE workout_occurrences SET scheduled_date=?,status=?,moved=?,revision=revision+1 WHERE id=?").run(original.scheduled_date,original.status,original.moved,row.id);
@@ -118,6 +134,7 @@ export function applyCalendarAction(userId: number, input: unknown): CalendarRes
     }
     if (!["move","duplicate","skip","shift"].includes(String(body.type))) throw new CalendarError("Invalid calendar action.");
     let before:Row[]=[];
+    const sessionsBefore:SessionDateState[]=[];
     const runsBefore=new Map<number,RunState>();
     let progression:EditorCompletionDecision[]=[];
     let changes:Change[]=[];
@@ -148,6 +165,9 @@ export function applyCalendarAction(userId: number, input: unknown): CalendarRes
         const run=runsBefore.get(row.program_run_id)!;
         if (!run || run.archived_at || !["active","completed"].includes(run.status)) throw new CalendarError("Resume this program before duplicating its workouts.",409);
         if (body.collision==="swap") throw new CalendarError("A duplicate can share a date; only a move can swap workouts.");
+      } else if (body.type==="move" && row.status==="in_progress") {
+        sessionsBefore.push(activeMove(row,body.revision,body.sessionRevision));
+        if (body.collision==="swap") throw new CalendarError("An active workout can share a date, but cannot swap scheduled workouts.");
       } else pending(row,body.revision);
       before=[row];
       if (body.type==="skip") {
@@ -161,7 +181,7 @@ export function applyCalendarAction(userId: number, input: unknown): CalendarRes
         const conflicts=conflictsAt(userId,[target],body.type==="move"?[row.id]:[]);
         if (conflicts.length && body.collision!=="move" && body.collision!=="swap") throw new CalendarError("That date is occupied. Keep the workouts alongside each other or swap with an unstarted workout.",409,conflicts);
         if (body.type==="move") {
-          changes=[{id:row.id,name:row.day_name,from:row.scheduled_date,to:target}];
+          changes=[{id:row.id,name:row.day_name,from:sessionsBefore[0]?.date??row.scheduled_date,to:target}];
           if (body.collision==="swap") {
             const targetRow=rowFor(userId,body.targetId); pending(targetRow,body.targetRevision);
             runsBefore.set(targetRow.program_run_id,runState(targetRow));
@@ -183,14 +203,23 @@ export function applyCalendarAction(userId: number, input: unknown): CalendarRes
         }
       }
     }
-    if (body.type==="move" || body.type==="shift") for (const change of changes) db.prepare("UPDATE workout_occurrences SET scheduled_date=?,moved=1,revision=revision+1 WHERE id=?").run(change.to,change.id);
+    if (body.type==="move" || body.type==="shift") for (const change of changes) {
+      const session=sessionsBefore.find(saved=>saved.occurrence_id===change.id);
+      if (session) {
+        // Moving an active workout corrects when training happened, without
+        // rewriting its original schedule or any frozen/recorded set values.
+        db.prepare("UPDATE sessions SET date=?,revision=revision+1 WHERE id=? AND user_id=?").run(change.to,session.id,userId);
+        db.prepare("UPDATE workout_occurrences SET revision=revision+1 WHERE id=?").run(change.id);
+      } else db.prepare("UPDATE workout_occurrences SET scheduled_date=?,moved=1,revision=revision+1 WHERE id=?").run(change.to,change.id);
+    }
     const ids=body.type==="skip" ? before.map(row=>row.id) : changes.map(row=>row.id);
     const after=ids.map(id=>rowFor(userId,id));
     for (const programId of new Set(after.map(row=>row.program_id))) syncOccurrencePosition(userId,programId);
     const operationId=randomUUID();
     const result={operationId,changes};
     const runs=[...new Map(after.map(row=>[row.program_run_id,runState(row)])).values()];
-    db.prepare("INSERT INTO calendar_operations(id,user_id,request_key,before_json,after_json) VALUES (?,?,?,?,?)").run(operationId,userId,body.requestKey,JSON.stringify({rows:before,runs:[...runsBefore.values()]}),JSON.stringify({request,rows:after,runs,progression,skipSessionId,result} satisfies SavedAfter));
+    const sessions=sessionsBefore.map(saved=>sessionDateState(userId,saved.occurrence_id)!);
+    db.prepare("INSERT INTO calendar_operations(id,user_id,request_key,before_json,after_json) VALUES (?,?,?,?,?)").run(operationId,userId,body.requestKey,JSON.stringify({rows:before,runs:[...runsBefore.values()],sessions:sessionsBefore}),JSON.stringify({request,rows:after,runs,sessions,progression,skipSessionId,result} satisfies SavedAfter));
     return result;
   }).immediate();
 }

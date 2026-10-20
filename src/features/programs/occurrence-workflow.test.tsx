@@ -153,6 +153,40 @@ describe("authoritative workout occurrence workflows", () => {
     expect(row.day_name).toBe("Upper");
   });
 
+  it.each([
+    { scheduled: "2026-09-01", performed: "2026-08-31", now: "2026-09-01T06:59:00Z" },
+    { scheduled: "2026-08-31", performed: "2026-09-01", now: "2026-09-02T06:59:00Z" },
+  ])("shows a workout scheduled $scheduled on its actual training day $performed from the moment it starts", async ({ scheduled, performed, now }) => {
+    const program = fixture([0, 1, 2, 3, 4, 5, 6], scheduled);
+    db.prepare("INSERT INTO user_settings(user_id,key,value) VALUES (?,'timezone','America/Los_Angeles')").run(authState.userId);
+    const occurrences = await import("./occurrences");
+    const original = occurrences.getOccurrences(authState.userId)[0];
+    const route = await import("@/app/api/programs/[id]/sessions/route");
+    const start = () => route.POST(new Request("http://localhost/api/workout", {
+      method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ occurrenceId: original.id }),
+    }), { params: Promise.resolve({ id: String(program.legacyProgramId) }) });
+    vi.useFakeTimers({ toFake: ["Date"] });
+    vi.setSystemTime(new Date(now));
+    const response = await start();
+    expect(response.status).toBe(201);
+    const session = await response.json();
+    expect(session).toMatchObject({ occurrence_id: original.id, date: performed, scheduled_date: scheduled });
+    expect(occurrences.getOccurrences(authState.userId, performed, performed).map(row => row.id)).toContain(original.id);
+    expect(occurrences.getOccurrences(authState.userId, scheduled, scheduled).map(row => row.id)).not.toContain(original.id);
+    const dashboard = service.getTodayWorkoutDashboard(authState.userId);
+    expect(dashboard.activeWorkouts[0]).toMatchObject({ occurrence_id: original.id, started_date: performed });
+    expect(dashboard.activeWorkouts[0].schedule_label).not.toContain("Missed");
+    expect(occurrences.getOccurrence(authState.userId, original.id)).toMatchObject({
+      scheduled_date: scheduled, original_date: scheduled, prescription_json: original.prescription_json,
+    });
+    vi.setSystemTime(new Date(new Date(now).getTime() + 120_000));
+    const retry = await start();
+    expect(retry.status).toBe(200);
+    expect(await retry.json()).toMatchObject({ id: session.id, date: performed, scheduled_date: scheduled, sets: session.sets });
+    expect(occurrences.getOccurrences(authState.userId, performed, performed).map(row => row.id)).toContain(original.id);
+    expect(db.prepare("SELECT COUNT(*) AS n FROM sessions WHERE occurrence_id=?").get(original.id)).toEqual({ n: 1 });
+  });
+
   it("starts the selected occurrence and resumes it after midnight without duplicating or changing its prescription", async () => {
     const program = fixture();
     const row = service.getTodayWorkoutDashboard(authState.userId, new Date(2026, 8, 5, 12)).scheduledToday[0];

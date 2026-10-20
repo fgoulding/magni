@@ -2,10 +2,12 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
-import bundled from "../../../program-templates/full-body-supersets-3-day.json";
+import currentTemplate from "../../../program-templates/full-body-supersets-3-day.json";
 import { catalogTemplates, publishTemplate, rollbackTemplate, templateHash } from "./storage.mjs";
 
 const directories: string[] = [];
+// Catalog versioning has its own fixture, independent of the shipped default.
+const bundled = { ...currentTemplate, revision: 1 };
 afterEach(() => { for (const directory of directories.splice(0)) fs.rmSync(directory, { recursive: true, force: true }); });
 const directory = () => { const value = fs.mkdtempSync(path.join(os.tmpdir(), "magni-catalog-")); directories.push(value); return value; };
 const revision = (number: number) => ({ ...structuredClone(bundled), revision: number, title: `Revision ${number}` });

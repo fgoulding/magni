@@ -7,6 +7,7 @@ import { createUnexpiredAuthSession } from "@/__tests__/auth-fixture";
 import { WorkoutReuse } from "@/components/WorkoutReuse";
 import { WorkoutCard } from "@/components/WorkoutCard";
 import { CalendarAgenda } from "@/components/CalendarAgenda";
+import { CalendarMoveButton } from "@/components/CalendarWorkoutActions";
 import { CalendarDayButton } from "@/components/CalendarDayButton";
 import { SessionRecapView } from "@/components/SessionRecapView";
 
@@ -269,10 +270,16 @@ describe("CalendarPage", () => {
     expect(session.sets.length).toBeGreaterThan(0);
 
     const rendered = await calendarPage.default({ searchParams: Promise.resolve({ month: "2026-06", view, workout: `occurrence-${occurrence.id}` }) });
-    expect(collectAriaLabels(rendered)).toContain("In progress: Shared Strength - Lower on 2026-06-01");
+    expect(collectAriaLabels(rendered)).not.toContain("In progress: Shared Strength - Lower on 2026-06-01");
+    expect(collectComponentProps(rendered, CalendarAgenda)[0]).toMatchObject({
+      weekStart: "2026-05-25",
+      events: expect.arrayContaining([expect.objectContaining({ occurrenceId: occurrence.id, date: "2026-05-31", status: "in_progress" })]),
+    });
+    expect(collectComponentProps(rendered, CalendarMoveButton)).toEqual([expect.objectContaining({ event: expect.objectContaining({ occurrenceId: occurrence.id, sessionId: session.id, sessionRevision: expect.any(Number), date: "2026-05-31", status: "in_progress" }) })]);
     expect(collectAriaLabels(rendered)).not.toContain("Scheduled: Shared Strength - Lower on 2026-06-01");
     expect(collectRenderedText(rendered)).toContain("Workout in progress");
     expect(collectRenderedText(rendered)).toContain("Originally scheduled 2026-06-01");
+    expect(collectRenderedText(rendered)).toContain("Training date 2026-05-31");
     expect(collectRenderedText(rendered)).not.toContain("Started on 2026-06-01");
     expect(collectComponentProps(rendered, WorkoutCard)).toEqual([expect.objectContaining({
       occurrenceId: occurrence.id,
@@ -311,12 +318,13 @@ describe("CalendarPage", () => {
     dbModule.db.prepare("UPDATE session_sets SET actual_reps = 7, actual_weight = 42.5 WHERE id = ?").run(session.sets[0].id);
     const selection = { month: "2026-06", view, workout: `occurrence-${occurrence.id}` };
     const before = await calendarPage.default({ searchParams: Promise.resolve(selection) });
-    const returnTo = `/calendar?month=2026-06&date=${scheduledDate}${view === "month" ? "&view=month" : ""}`;
-    expect(collectLinks(before, "Close workout")).toEqual([returnTo]);
+    const returnHref = (date: string) => `/calendar?month=2026-06&date=${date}${view === "month" ? "&view=month" : ""}`;
+    expect(collectLinks(before, "Close workout")).toEqual([returnHref(performedDate)]);
 
     dbModule.db.prepare("UPDATE sessions SET status = 'completed', completed = 1 WHERE id = ?").run(session.id);
-    const withoutSelection = await calendarPage.default({ searchParams: Promise.resolve({ month: "2026-06", date: scheduledDate, view }) });
     for (const date of [undefined, scheduledDate]) {
+      const calendarDate = date ?? performedDate;
+      const withoutSelection = await calendarPage.default({ searchParams: Promise.resolve({ month: "2026-06", date: calendarDate, view }) });
       const rendered = await calendarPage.default({ searchParams: Promise.resolve({ ...selection, date }) });
       expect(collectRenderedText(rendered)).toContain("Completed workout");
       expect(collectRenderedText(rendered)).toContain(`Completed on ${performedDate} · Lower`);
@@ -325,7 +333,7 @@ describe("CalendarPage", () => {
       })]);
       expect(collectRepeats(rendered)).toEqual([expect.objectContaining({ sessionId: session.id })]);
       expect(collectComponentProps(rendered, WorkoutCard)).toEqual([]);
-      expect(collectLinks(rendered, "Close workout")).toEqual([returnTo]);
+      expect(collectLinks(rendered, "Close workout")).toEqual([returnHref(calendarDate)]);
       expect(collectComponentProps(rendered, CalendarAgenda)).toEqual(collectComponentProps(withoutSelection, CalendarAgenda));
       expect(collectAriaLabels(rendered)).not.toContain(`Completed: Shared Strength - Lower on ${performedDate}`);
     }
@@ -628,6 +636,7 @@ describe("CalendarPage", () => {
     expect(text).toContain("Run from calendar");
     expect(text).toContain("Originally scheduled 2026-06-01");
     expect(startLabels).toContain("Do workout");
+    expect(collectComponentProps(rendered, CalendarMoveButton)).toEqual([expect.objectContaining({ event: expect.objectContaining({ occurrenceId: selectedOccurrence.id, status: "scheduled", date: "2026-06-01" }) })]);
   });
   it("keeps unfinished workouts on their original dates until selected", async () => {
     const userId = createUser("calendar-carryover@example.com");

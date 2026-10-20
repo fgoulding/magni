@@ -30,7 +30,93 @@ function fixture() {
   return { user, run, rows: occurrences.getOccurrences(user) };
 }
 const key = () => crypto.randomUUID();
+async function activeFixture() {
+  const fixtureState = fixture();
+  authState.userId = fixtureState.user;
+  const first = fixtureState.rows[0];
+  const { POST } = await import("@/app/api/programs/[id]/sessions/route");
+  const start = () => POST(new Request("http://localhost/api/workout", {
+    method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ occurrenceId: first.id }),
+  }), { params: Promise.resolve({ id: String(fixtureState.run.legacyProgramId) }) });
+  const response = await start();
+  expect(response.status).toBe(201);
+  return { ...fixtureState, session: await response.json(), start };
+}
 describe("Calendar occurrence transactions", () => {
+  it("moves an active workout's actual date while preserving its schedule, recorded sets and retry identity", async () => {
+    const { user, run, rows: [first], session, start } = await activeFixture();
+    const history = await import("@/features/workouts/history-service");
+    history.saveActualSet({ userId: user, sessionId: session.id, setId: session.sets[0].id, actualReps: 5, actualWeight: 180 });
+    const before = occurrences.getOccurrence(user, first.id)!;
+    const setsBefore = db.prepare("SELECT * FROM session_sets WHERE session_id=? ORDER BY id").all(session.id);
+    const request = { type: "move", occurrenceId: first.id, revision: before.revision, sessionRevision: before.session_revision, date: "2090-05-31", requestKey: key() };
+    const result = calendar.applyCalendarAction(user, request);
+    expect(result.changes).toEqual([{ id: first.id, name: first.day_name, from: session.date, to: "2090-05-31" }]);
+    expect(occurrences.getOccurrence(user, first.id)).toMatchObject({
+      id: first.id, session_id: session.id, performed_date: "2090-05-31", scheduled_date: first.scheduled_date,
+      original_date: first.original_date, prescription_json: first.prescription_json, revision: before.revision + 1,
+      session_revision: before.session_revision! + 1,
+    });
+    expect(db.prepare("SELECT * FROM session_sets WHERE session_id=? ORDER BY id").all(session.id)).toEqual(setsBefore);
+    expect(calendar.applyCalendarAction(user, request)).toEqual(result);
+    // Starting again, including a response-loss retry, resumes the explicitly
+    // selected training date instead of resetting it to today or the schedule.
+    expect(await (await start()).json()).toMatchObject({ id: session.id, date: "2090-05-31", scheduled_date: first.scheduled_date });
+    expect(db.prepare("SELECT COUNT(*) AS n FROM sessions WHERE program_id=?").get(run.legacyProgramId)).toEqual({ n: 1 });
+    calendar.applyCalendarAction(user, { type: "undo", operationId: result.operationId, requestKey: key() });
+    expect(occurrences.getOccurrence(user, first.id)).toMatchObject({
+      performed_date: session.date, scheduled_date: first.scheduled_date,
+      revision: before.revision + 2, session_revision: before.session_revision! + 2,
+    });
+    expect(db.prepare("SELECT * FROM session_sets WHERE session_id=? ORDER BY id").all(session.id)).toEqual(setsBefore);
+    expect(calendar.applyCalendarAction(user, { type: "undo", operationId: result.operationId, requestKey: key() }).undone).toBe(true);
+    expect(db.pragma("foreign_key_check")).toEqual([]);
+  });
+  it("rejects stale active moves and undo after a later set save or completion", async () => {
+    const { user, rows: [first], session } = await activeFixture();
+    const history = await import("@/features/workouts/history-service");
+    const before = occurrences.getOccurrence(user, first.id)!;
+    const request = { type: "move", occurrenceId: first.id, revision: before.revision, sessionRevision: before.session_revision, date: "2090-05-31", requestKey: key() };
+    history.saveActualSet({ userId: user, sessionId: session.id, setId: session.sets[0].id, actualReps: 5, actualWeight: 180 });
+    expect(() => calendar.applyCalendarAction(user, request)).toThrow(/changed/i);
+    expect(occurrences.getOccurrence(user, first.id)?.performed_date).toBe(session.date);
+    const current = occurrences.getOccurrence(user, first.id)!;
+    const moved = calendar.applyCalendarAction(user, { ...request, sessionRevision: current.session_revision });
+    history.saveActualSet({ userId: user, sessionId: session.id, setId: session.sets[0].id, actualReps: 6, actualWeight: 180 });
+    expect(() => calendar.applyCalendarAction(user, { type: "undo", operationId: moved.operationId, requestKey: key() })).toThrow(/changed/i);
+    expect(occurrences.getOccurrence(user, first.id)?.performed_date).toBe("2090-05-31");
+    const latest = occurrences.getOccurrence(user, first.id)!;
+    const secondMove = calendar.applyCalendarAction(user, { ...request, revision: latest.revision, sessionRevision: latest.session_revision, date: "2090-05-30", requestKey: key() });
+    db.prepare("UPDATE sessions SET completed=1,revision=revision+1 WHERE id=?").run(session.id);
+    expect(() => calendar.applyCalendarAction(user, { type: "undo", operationId: secondMove.operationId, requestKey: key() })).toThrow(/changed/i);
+    const completed = occurrences.getOccurrence(user, first.id)!;
+    expect(() => calendar.applyCalendarAction(user, { ...request, revision: completed.revision, sessionRevision: completed.session_revision, requestKey: key() })).toThrow(/started|resolved/i);
+    expect(occurrences.getOccurrence(user, first.id)?.performed_date).toBe("2090-05-30");
+  });
+  it("requires the owned active session revision and cannot swap an active workout", async () => {
+    const { user, rows: [first, second], session } = await activeFixture();
+    const active = occurrences.getOccurrence(user, first.id)!;
+    const { POST } = await import("@/app/api/calendar/actions/route");
+    const request = { type: "move", occurrenceId: first.id, revision: active.revision, date: "2090-05-31", requestKey: key() };
+    const post = (body: object) => POST(new Request("http://localhost/api/calendar/actions", {
+      method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body),
+    }));
+    expect((await post(request)).status).toBe(409);
+    const other = fixture();
+    authState.userId = other.user;
+    expect((await post({ ...request, sessionRevision: active.session_revision })).status).toBe(404);
+    authState.userId = user;
+    expect(() => calendar.applyCalendarAction(user, { ...request, sessionRevision: active.session_revision, collision: "swap", date: second.scheduled_date, targetId: second.id, targetRevision: second.revision })).toThrow(/swap/i);
+    expect(occurrences.getOccurrence(user, first.id)?.performed_date).toBe(session.date);
+    expect(occurrences.getOccurrence(user, second.id)?.scheduled_date).toBe(second.scheduled_date);
+    const occupied = { ...request, sessionRevision: active.session_revision, date: second.scheduled_date };
+    const conflict = await post(occupied);
+    expect(conflict.status).toBe(409);
+    expect((await conflict.json()).conflicts).toEqual([expect.objectContaining({ id: second.id, date: second.scheduled_date })]);
+    expect((await post({ ...occupied, collision: "move" })).status).toBe(200);
+    expect(occurrences.getOccurrence(user, first.id)?.performed_date).toBe(second.scheduled_date);
+    expect(occurrences.getOccurrence(user, second.id)?.scheduled_date).toBe(second.scheduled_date);
+  });
   it("moves one workout without changing logical identity or prescription and supports reload-safe undo", () => {
     const { user, rows: [first] } = fixture();
     const request = { type: "move", occurrenceId: first.id, revision: first.revision, date: "2090-06-09", requestKey: key() };
@@ -56,7 +142,7 @@ describe("Calendar occurrence transactions", () => {
   });
   it.each(["completed", "skipped", "in_progress"])("discloses %s planned occupancy without offering it as a swap target", (status) => {
     const { user, run, rows: [a,b] } = fixture();
-    const displayDate = status === "completed" ? "2090-07-01" : b.scheduled_date;
+    const displayDate = status === "completed" || status === "in_progress" ? "2090-07-01" : b.scheduled_date;
     db.prepare("INSERT INTO sessions(user_id,program_id,day_id,program_definition_day_id,program_run_id,occurrence_id,date,scheduled_date,status,program_name,day_name,week_number) VALUES (?,?,?,?,?,?,?,?,?,?,?,1)")
       .run(user,run.legacyProgramId,b.legacy_day_id,b.definition_day_id,run.runId,b.id,displayDate,b.scheduled_date,status,b.program_name,b.day_name);
     const request = { type:"move", occurrenceId:a.id, revision:a.revision, date:displayDate, requestKey:key() };

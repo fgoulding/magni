@@ -54,7 +54,8 @@ test("full body default survives editing, reload and activation with all three s
     const metadata = JSON.parse(set.editor_json);
     expect(metadata.set.repMin).toBe(6);
     expect(metadata.set.repMax).toBe(8);
-    expect(metadata.set.notes).toMatch(/second|1.*pause/i);
+    expect(metadata.set.notes).toBe("");
+    expect(metadata.set.tempo).toBe("1-second hover pause");
   }
   await expect(page.getByRole("heading", { name: "Barbell back squat + One-arm dumbbell row", exact: true })).toBeVisible();
   await page.screenshot({ path: info.outputPath("default-program-workout.png"), fullPage: true });

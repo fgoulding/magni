@@ -68,33 +68,23 @@ describe("Full Body Supersets 3-Day default", () => {
       expect(exercise).toMatchObject({ baseLoad: 0, trainingMax: 0, rule: null });
       expect(exercise.sets.every(set => set.role === "work" && set.load === 0 && set.loadMode === (exercise.name === "Pull-up" ? "bodyweight" : "working"))).toBe(true);
     }
-    expect(document.description).toMatch(/choose.*working loads/i);
-    expect(document.description).toMatch(/logged.*do not.*automatically/i);
-    expect(document.description).toMatch(/all sets.*top.*range/i);
-    expect(document.description).toMatch(/warm-up.*additional/i);
+    expect(document.description).toMatch(/manual progression/i);
+    expect(document.description).not.toMatch(/rest|minutes|warm-up|reps in reserve/i);
   });
 
-  it("keeps effort, pair rest and technique instructions in frozen set metadata", () => {
+  it("keeps structured targets without repeating coaching notes in the default workout", () => {
     const document = makeProgram();
     for (const day of document.weeks[0].days) for (const [index, exercise] of day.exercises.entries()) {
       for (const set of exercise.sets) {
         expect(set.effortKind).toBe("rir");
         expect(set.effort).toBe(index === 1 ? 3 : 2);
         expect(set.restSeconds).toBe(index % 2 === 0 ? 45 : 120);
-        expect(set.notes).not.toMatch(/placeholder|choose.*working load|editor|activation/i);
-        if (index === 0) expect(set.notes).toMatch(/3–4 minutes between.*main lift/i);
-        if (exercise.name === "One-arm dumbbell row") expect(set.notes).toMatch(/each side.*free hand.*bench/i);
-        if (exercise.name === "B-stance dumbbell RDL") expect(set.notes).toMatch(/each side/);
-        if (exercise.name === "Kettlebell Bulgarian split squat" || exercise.name === "Single-leg dumbbell calf raise") expect(set.notes).toMatch(/each leg/);
+        expect(set.notes).toBe("");
         if (exercise.name === "Barbell Spoto press") {
-          expect(set.notes).toMatch(/1 second.*above.*chest/i);
           expect(set.tempo).toMatch(/1-second hover pause/);
         }
       }
-      if (exercise.name === "Pull-up") {
-        expect(exercise.notes).toMatch(/chin-up.*alternative/i);
-        expect(exercise.notes).toMatch(/load basis.*bodyweight \+ load.*editor.*added load/i);
-      }
+      expect(exercise.notes).toBe("");
     }
   });
 
@@ -104,7 +94,6 @@ describe("Full Body Supersets 3-Day default", () => {
       exercise.baseLoad = 135;
       expect(exercise.sets.every(set => !/placeholder|initial 0|choose.*load|editor|activation/i.test(set.notes))).toBe(true);
     }
-    expect(document.description).toMatch(/initial 0 values are placeholders/);
   });
 
   it("creates fresh isolated identities while repeated lifts share only their history", () => {

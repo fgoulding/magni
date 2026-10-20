@@ -1,6 +1,6 @@
 import { userDateKey } from "@/lib/user-date";
 import crypto from "node:crypto";
-import { getOccurrences, occurrenceLiftPreview, reflowOccurrences } from "./occurrences";
+import { getOccurrences, occurrenceDisplayDate, occurrenceLiftPreview, reflowOccurrences } from "./occurrences";
 import { resolveTrainingTemplate } from "@/features/training-templates/user-templates";
 import type { ExerciseCategory, TemplateWeek, TrainingTemplate } from "@/features/training-templates/types";
 import { getSettingNumber } from "@/lib/auth";
@@ -946,7 +946,7 @@ export function getTodayWorkoutDashboard(userId: number, today = new Date()): To
   for (const occurrence of getOccurrences(userId)) {
     const active = occurrence.status === "in_progress";
     const terminal = occurrence.status === "completed" || occurrence.status === "skipped";
-    const displayDate = occurrence.status === "completed" ? occurrence.performed_date ?? occurrence.scheduled_date : occurrence.scheduled_date;
+    const displayDate = occurrenceDisplayDate(occurrence);
     if (!active && terminal && displayDate !== todayDateKey) continue;
     if (!active && !terminal && (occurrence.scheduled_date > todayDateKey || !activeIds.has(occurrence.program_id) || isDateHeldForRun(holds, occurrence.program_run_id, todayDateKey))) continue;
     const day = rows.find(row => row.program_id === occurrence.program_id && row.definition_day_id === occurrence.definition_day_id) ?? {

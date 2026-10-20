@@ -204,6 +204,11 @@ Keep special roles explicit: Warm-up target, Top-set target, Back-off target and
 AMRAP target.
 
 **Calendar:** Week is the default, with workout names and quiet status symbols.
+Started workouts appear on their saved training date. Starting from Calendar
+follows that date while preserving Week/Month mode and the selected workout.
+Keep Move available for scheduled and unfinished workouts in both the weekly
+menu and the workout dialog. Moving an unfinished workout changes its training
+date while preserving saved sets. Keep completed and skipped dates fixed in Calendar.
 Use the shared `CalendarStatus` shapes in Week, Month and the legend: completed
 check, scheduled circle, in-progress play and skipped dash. Drag, More and Add
 are borderless controls with visible focus/press feedback and 44px hit areas.

@@ -11,7 +11,16 @@ export type Occurrence = {
   week_number: number; day_number: number; program_name: string; day_name: string;
   scheduled_date: string; original_date: string; status: "scheduled" | "in_progress" | "completed" | "skipped";
   prescription_json: string; revision: number; moved: number; session_id: number | null; performed_date: string | null;
+  session_revision?: number | null;
 };
+
+/** Once training starts, its saved training date is authoritative for display.
+ * The scheduled date stays available as context; skipping still resolves that slot. */
+export function occurrenceDisplayDate(occurrence: Pick<Occurrence, "status" | "performed_date" | "scheduled_date">): string {
+  return occurrence.status === "in_progress" || occurrence.status === "completed"
+    ? occurrence.performed_date ?? occurrence.scheduled_date
+    : occurrence.scheduled_date;
+}
 
 export type PrescriptionSet = {
   week_setting_id: number; legacy_week_setting_id: number | null; exercise_id: number;
@@ -103,16 +112,16 @@ export const ensureScheduledOccurrences = db.transaction((userId: number) => {
 
 export function getOccurrences(userId: number, start = "0001-01-01", end = "9999-12-31"): Occurrence[] {
   ensureScheduledOccurrences.immediate(userId);
-  return db.prepare(`SELECT o.*, s.id AS session_id, s.date AS performed_date FROM workout_occurrences o
+  return db.prepare(`SELECT o.*, s.id AS session_id, s.date AS performed_date, s.revision AS session_revision FROM workout_occurrences o
     LEFT JOIN sessions s ON s.occurrence_id = o.id
     JOIN program_runs pr ON pr.id = o.program_run_id
-    WHERE o.user_id = ? AND CASE WHEN o.status = 'completed' THEN COALESCE(s.date, o.scheduled_date) ELSE o.scheduled_date END BETWEEN ? AND ?
+    WHERE o.user_id = ? AND CASE WHEN o.status IN ('in_progress','completed') THEN COALESCE(s.date, o.scheduled_date) ELSE o.scheduled_date END BETWEEN ? AND ?
     AND (o.status IN ('in_progress','completed','skipped') OR (pr.status = 'active' AND pr.archived_at IS NULL AND pr.schedule_mode = 'scheduled'))
     ORDER BY o.scheduled_date, o.id`).all(userId, start, end) as Occurrence[];
 }
 
 export function getOccurrence(userId: number, id: number): Occurrence | undefined {
-  return db.prepare("SELECT o.*, s.id AS session_id, s.date AS performed_date FROM workout_occurrences o LEFT JOIN sessions s ON s.occurrence_id = o.id WHERE o.id = ? AND o.user_id = ?").get(id, userId) as Occurrence | undefined;
+  return db.prepare("SELECT o.*, s.id AS session_id, s.date AS performed_date, s.revision AS session_revision FROM workout_occurrences o LEFT JOIN sessions s ON s.occurrence_id = o.id WHERE o.id = ? AND o.user_id = ?").get(id, userId) as Occurrence | undefined;
 }
 
 /** Pending loads follow current progression; starting freezes them in session_sets. */

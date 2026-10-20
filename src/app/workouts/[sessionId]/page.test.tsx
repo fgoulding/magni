@@ -48,7 +48,7 @@ it("links a future started workout to its exact occurrence, date and frozen logg
   const { session, future, program } = await futureSession();
   const page = await Page({ params: Promise.resolve({ sessionId: String(session.id) }) });
   const link = href(page)!;
-  expect(link).toBe(`/calendar?month=${future.scheduled_date.slice(0, 7)}&date=${future.scheduled_date}&workout=occurrence-${future.id}`);
+  expect(link).toBe(`/calendar?month=${session.date.slice(0, 7)}&date=${session.date}&workout=occurrence-${future.id}`);
   const current = await import("@/app/api/programs/[id]/sessions/current/route");
   const restored = await (await current.GET(new Request(`http://localhost/api/current?occurrenceId=${future.id}`), { params: Promise.resolve({ id: String(program.legacyProgramId) }) })).json();
   expect(restored.id).toBe(session.id);

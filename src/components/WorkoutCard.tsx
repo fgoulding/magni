@@ -213,10 +213,22 @@ export function WorkoutCard({
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ occurrenceId, dayId, definitionDayId, weekNumber: currentWeek, scheduledDate }),
       });
-      const body = await readResponseJson<SessionResponse & { error?: string; status?: string }>(response);
+      const body = await readResponseJson<SessionResponse & { error?: string; status?: string; date?: string }>(response);
       if (!response.ok || !body) throw new Error(body?.error ?? "Could not start workout");
       if (resumeSessionId && (body.id !== resumeSessionId || body.status !== "in_progress" || !Array.isArray(body.sets))) throw new Error("Could not resume this exact workout. Retry or return to its history.");
       loadSession(body);
+      // Return-link snapshots omit date-less Month links and can lag a router
+      // replace. Use the current location for this acknowledged start instead.
+      if (!resumeSessionId && window.location.pathname === "/calendar") {
+        if (occurrenceId && body.date && /^\d{4}-\d{2}-\d{2}$/.test(body.date)) {
+          const target = new URL(window.location.href);
+          target.searchParams.set("month", body.date.slice(0, 7));
+          target.searchParams.set("date", body.date);
+          target.searchParams.set("workout", `occurrence-${occurrenceId}`);
+          router.replace(`${target.pathname}${target.search}`, { scroll: false });
+        }
+        router.refresh();
+      }
     } catch (err) {
       setError(err instanceof Error ? err.message : "Could not start workout");
     } finally {

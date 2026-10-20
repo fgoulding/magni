@@ -7,6 +7,23 @@ vi.mock("next/link",()=>({default:({children,href}:{children:React.ReactNode;hre
 const source:AgendaEvent={key:"occurrence-1",occurrenceId:1,revision:1,date:"2090-06-05",title:"Lower",dayName:"Lower",href:"/calendar?workout=occurrence-1",status:"scheduled"};
 beforeEach(()=>{HTMLDialogElement.prototype.showModal=function(){this.setAttribute("open","");};HTMLDialogElement.prototype.close=function(){this.removeAttribute("open");};vi.stubGlobal("fetch",vi.fn());});
 afterEach(()=>{cleanup();vi.unstubAllGlobals();});
+describe("Calendar scheduled-workout correction",()=>{
+  it("keeps drag and Move available when a scheduled occurrence is already in progress",async()=>{
+    vi.mocked(fetch).mockResolvedValue(new Response(JSON.stringify({id:9,status:"in_progress",date:source.date,revision:2})));
+    render(<CalendarAgenda compact weekStart="2090-06-05" today="2090-06-05" events={[{...source,status:"in_progress",sessionId:9,sessionRevision:1}]}/>);
+    expect(screen.getByRole("button",{name:"Drag Lower to another day"})).toBeTruthy();
+    fireEvent.click(screen.getByRole("button",{name:"More options for Lower"}));
+    fireEvent.click(screen.getByRole("button",{name:"Move"}));
+    expect(await screen.findByRole("dialog",{name:"Move Lower"})).toBeTruthy();
+    expect(screen.queryByRole("button",{name:"Skip this workout"})).toBeNull();
+  });
+  it.each(["completed","skipped"])("does not expose moving for %s history",status=>{
+    render(<CalendarAgenda compact weekStart="2090-06-05" today="2090-06-05" events={[{...source,status}]}/>);
+    expect(screen.queryByRole("button",{name:"Drag Lower to another day"})).toBeNull();
+    fireEvent.click(screen.getByRole("button",{name:"More options for Lower"}));
+    expect(screen.queryByRole("button",{name:"Move"})).toBeNull();
+  });
+});
 describe("Calendar occupied-date choices",()=>{
   it.each(["button", "escape"])("keeps a pending action and later failure visible after %s dismissal", async method=>{
     let resolve!: (value: Response) => void;

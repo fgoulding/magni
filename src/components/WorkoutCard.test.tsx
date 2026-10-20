@@ -8,6 +8,7 @@ import { WorkoutCard } from "@/components/WorkoutCard";
 
 const routerMock = vi.hoisted(() => ({
   refresh: vi.fn(),
+  replace: vi.fn(),
 }));
 
 vi.mock("next/navigation", () => ({
@@ -24,6 +25,8 @@ afterEach(() => {
   vi.restoreAllMocks();
   vi.unstubAllGlobals();
   routerMock.refresh.mockClear();
+  routerMock.replace.mockClear();
+  window.history.replaceState({}, "", "/today");
 });
 
 function jsonResponse(body: unknown, init?: ResponseInit): Response {
@@ -62,6 +65,45 @@ function makeCardProps(overrides?: Partial<Parameters<typeof WorkoutCard>[0]>) {
 }
 
 describe("WorkoutCard", () => {
+  it.each([
+    { name: "a direct Month link without a date", initial: "/calendar?month=2090-06&view=month&workout=occurrence-7", next: null },
+    { name: "navigation after mount without popstate", initial: "/today", next: "/calendar?month=2090-07&date=2090-07-02&view=month&workout=occurrence-7" },
+  ])("uses the current Calendar location after starting from $name", async ({ initial, next }) => {
+    window.history.replaceState({}, "", initial);
+    const user = userEvent.setup();
+    stubFetch(vi.fn().mockResolvedValue(jsonResponse({ id: 42, date: "2090-05-31", sets: [
+      { id: 9, exercise_name: "Squat", reps: 5, sets: 1, set_number: 1, rep_out_target: 5, calculated_weight: 100, actual_reps: null, actual_weight: null, superset_group: null },
+    ] })));
+    render(<WorkoutCard {...makeCardProps({ occurrenceId: 7, scheduledDate: "2090-06-01" })} />);
+    if (next) window.history.replaceState({}, "", next);
+    await user.click(screen.getByRole("button", { name: "Start Workout" }));
+    expect(await screen.findByRole("spinbutton", { name: "Squat set 1 reps" })).toBeVisible();
+    expect(routerMock.replace).toHaveBeenCalledTimes(1);
+    const [href, options] = routerMock.replace.mock.calls[0];
+    const target = new URL(href, "https://magni.invalid");
+    expect(target.pathname).toBe("/calendar");
+    expect(Object.fromEntries(target.searchParams)).toEqual({ month: "2090-05", date: "2090-05-31", view: "month", workout: "occurrence-7" });
+    expect(options).toEqual({ scroll: false });
+    expect(routerMock.refresh).toHaveBeenCalledTimes(1);
+  });
+
+  it("moves the selected Calendar context to the actual date after starting while retaining logger inputs", async () => {
+    window.history.replaceState({}, "", "/calendar?month=2090-06&date=2090-06-01&view=month&workout=occurrence-7");
+    const user = userEvent.setup();
+    stubFetch(vi.fn().mockResolvedValue(jsonResponse({ id: 42, date: "2090-05-31", sets: [
+      { id: 9, exercise_name: "Squat", reps: 5, sets: 1, set_number: 1, rep_out_target: 5, calculated_weight: 100, actual_reps: null, actual_weight: null, superset_group: null },
+    ] })));
+    const props = makeCardProps({ occurrenceId: 7, scheduledDate: "2090-06-01" });
+    const view = render(<WorkoutCard {...props} />);
+    await user.click(screen.getByRole("button", { name: "Start Workout" }));
+    const reps = await screen.findByRole("spinbutton", { name: "Squat set 1 reps" });
+    expect(routerMock.replace).toHaveBeenCalledWith("/calendar?month=2090-05&date=2090-05-31&view=month&workout=occurrence-7", { scroll: false });
+    expect(routerMock.refresh).toHaveBeenCalledTimes(1);
+    await user.clear(reps); await user.type(reps, "7");
+    view.rerender(<WorkoutCard {...props} />);
+    expect(screen.getByRole("spinbutton", { name: "Squat set 1 reps" })).toBe(reps);
+    expect(reps).toHaveValue(7);
+  });
   it("counts physical saved sets through save, edits and Undo without counting skipped lifts", async () => {
     const user = userEvent.setup();
     const calls = vi.fn().mockResolvedValueOnce(jsonResponse({ id: 442, sets: [

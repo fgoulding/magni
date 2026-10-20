@@ -1,7 +1,7 @@
 import { userDateKey } from "@/lib/user-date";
 import Link from "next/link";
 import { ChevronLeft, ChevronRight } from "lucide-react";
-import { getOccurrences, getOccurrence, occurrenceLiftPreview, type Occurrence } from "@/features/programs/occurrences";
+import { getOccurrences, getOccurrence, occurrenceDisplayDate, occurrenceLiftPreview, type Occurrence } from "@/features/programs/occurrences";
 import { redirect } from "next/navigation";
 import { SessionRecapView } from "@/components/SessionRecapView";
 import { WorkoutCard } from "@/components/WorkoutCard";
@@ -19,6 +19,7 @@ import { withCalendarReturn } from "@/features/calendar/navigation";
 import { CalendarAgenda } from "@/components/CalendarAgenda";
 import { CalendarStatus } from "@/components/CalendarStatus";
 import { CalendarDayButton } from "@/components/CalendarDayButton";
+import { CalendarMoveButton } from "@/components/CalendarWorkoutActions";
 
 type CalendarPageProps = {
   searchParams?: Promise<{ month?: string | string[]; date?: string | string[]; train?: string | string[]; workout?: string | string[]; view?: string | string[]; compact?: string | string[] }>;
@@ -57,6 +58,7 @@ type CalendarEvent = {
   scheduledDate?: string;
   status: string;
   revision?: number;
+  sessionRevision?: number;
   summary?: string;
 };
 
@@ -163,7 +165,7 @@ function getHistoryEvents(userId: number, monthStart: Date, monthEnd: Date): Cal
 
 function occurrenceEvent(row: Occurrence): CalendarEvent {
   const kind = row.status;
-  const date = kind === "completed" ? (row.performed_date ?? row.scheduled_date) : row.scheduled_date;
+  const date = occurrenceDisplayDate(row);
   return {
     key: `occurrence-${row.id}`, occurrenceId: row.id, date, kind,
     title: `${kind === "completed" ? "Completed" : kind === "skipped" ? "Skipped" : kind === "in_progress" ? "In progress" : "Scheduled"}: ${row.program_name} - ${row.day_name}`,
@@ -171,7 +173,7 @@ function occurrenceEvent(row: Occurrence): CalendarEvent {
     programId: row.program_id, dayId: row.legacy_day_id ?? row.definition_day_id,
     definitionDayId: row.definition_day_id, programName: row.program_name, dayName: row.day_name,
     currentWeek: row.week_number, currentDay: row.day_number, scheduledDate: row.scheduled_date,
-    status: row.status, revision: row.revision,
+    status: row.status, revision: row.revision, sessionRevision: row.session_revision ?? undefined,
     summary: occurrenceLiftPreview(row).slice(0, 3).map(lift => `${lift.name} ${formatLiftDetail(lift)}`).join(" · "),
   };
 }
@@ -208,7 +210,8 @@ function modalEyebrow(kind: CalendarEvent["kind"]): string {
 }
 
 function modalDateLine(event: CalendarEvent): string {
-  if (event.kind === "scheduled" || (event.kind === "in_progress" && event.occurrenceId)) return `Originally scheduled ${event.scheduledDate} · ${event.dayName}`;
+  if (event.kind === "scheduled") return `Originally scheduled ${event.scheduledDate} · ${event.dayName}`;
+  if (event.kind === "in_progress" && event.occurrenceId) return `Training date ${event.date} · ${event.dayName}. Originally scheduled ${event.scheduledDate}.`;
   if (event.kind === "in_progress") return `Started on ${event.date} · ${event.dayName}`;
   if (event.kind === "completed") return `Completed on ${event.date} · ${event.dayName}`;
   return `Skipped on ${event.date} · ${event.dayName}`;
@@ -246,9 +249,9 @@ export default async function CalendarPage({ searchParams }: CalendarPageProps) 
   const selectedMonthEvent = events.find((event) => event.key === selectedWorkout);
   const selectedOccurrenceId = typeof selectedWorkout === "string" ? Number(selectedWorkout.match(/^occurrence-([1-9]\d*)$/)?.[1]) : NaN;
   const selectedOccurrence = Number.isSafeInteger(selectedOccurrenceId) ? getOccurrence(user.id, selectedOccurrenceId) : undefined;
-  // Completion can move the selected workout outside this month. Keep its saved
-  // recap open without adding it to the calendar or revealing hidden pending runs.
-  const selectedEvent = selectedMonthEvent ?? (selectedOccurrence?.status === "completed" && selectedOccurrence.session_id
+  // Starting or completing can put the selected workout outside this month.
+  // Keep its exact session open without revealing hidden pending runs.
+  const selectedEvent = selectedMonthEvent ?? ((selectedOccurrence?.status === "completed" || selectedOccurrence?.status === "in_progress") && selectedOccurrence.session_id
     ? occurrenceEvent(selectedOccurrence)
     : undefined);
   const sessionRecap =
@@ -271,7 +274,7 @@ export default async function CalendarPage({ searchParams }: CalendarPageProps) 
   }
   const leadingBlanks = monthStart.getDay();
   const todayKey = toLocalDateKey(today);
-  const selectedDateKey = selectedMonthEvent?.date ?? selectedEvent?.scheduledDate;
+  const selectedDateKey = selectedEvent?.date;
   const selectedDate = queryDate ?? (selectedDateKey ? parseDateKey(selectedDateKey)! : (today.getMonth() === monthStart.getMonth() && today.getFullYear() === monthStart.getFullYear() ? today : monthStart));
   const selectedHref = `${monthHref(monthStart)}&date=${toLocalDateKey(selectedDate)}`;
   const returnTo = `${selectedHref}${viewSuffix}`;
@@ -389,6 +392,9 @@ export default async function CalendarPage({ searchParams }: CalendarPageProps) 
                 Close
               </Link>
             </div>
+            {selectedEvent.occurrenceId && (selectedEvent.kind === "scheduled" || selectedEvent.kind === "in_progress") ? <div className="px-4 py-3">
+              <CalendarMoveButton event={selectedEvent} events={events} weekStart={toLocalDateKey(weekStart)} returnTo={returnTo} />
+            </div> : null}
             {sessionRecap ? (
               <div className="px-4 pt-3">
                 <SessionRecapView recap={sessionRecap} />
