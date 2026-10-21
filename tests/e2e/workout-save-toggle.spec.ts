@@ -4,6 +4,67 @@ import { registerViaApi } from "./helpers";
 
 test.use({ hasTouch: true });
 
+test("Quick workout can finish early with prefilled sets without logging them", async ({ page }, info) => {
+  await page.setViewportSize({ width: 393, height: 659 });
+  await page.addInitScript(() => localStorage.setItem("install-help-dismissed", "1"));
+  await registerViaApi(page, "quick-finish-early");
+  const created = await page.request.post("/api/sessions", { data: { name: "Short workout", date: "2026-10-11", newWorkout: true, requestKey: randomUUID() } });
+  expect(created.status()).toBe(201);
+  const session = await created.json();
+  expect((await page.request.post(`/api/sessions/${session.id}/sets`, { data: { name: "Dumbbell row", sets: 3, reps: 10, weight: 40, requestKey: randomUUID() } })).ok()).toBe(true);
+  await page.goto(`/workouts/${session.id}`);
+  await page.getByRole("button", { name: "Log set 1", exact: true }).click();
+  await expect(page.getByRole("button", { name: "Undo set 1", exact: true })).toHaveAttribute("aria-pressed", "true");
+  await page.getByRole("spinbutton", { name: "Reps for set 2", exact: true }).fill("8");
+  await page.getByRole("spinbutton", { name: "Weight for set 2", exact: true }).fill("45");
+  let setWrites = 0, completions = 0;
+  await page.route(`**/api/sessions/${session.id}/sets`, async route => {
+    if (route.request().method() === "PUT") setWrites++;
+    await route.continue();
+  });
+  await page.route(`**/api/sessions/${session.id}`, async route => {
+    if (route.request().method() !== "PATCH") return route.continue();
+    completions++;
+    if (completions === 1) {
+      expect((await route.fetch()).ok()).toBe(true);
+      return route.fulfill({ status: 503, json: { error: "Completion response lost. Try again." } });
+    }
+    await route.continue();
+  });
+  const finish = page.getByRole("button", { name: "Finish workout", exact: true });
+  const dialog = page.getByRole("dialog", { name: "Finish with saved sets?", exact: true });
+  await expect(finish).toBeEnabled();
+  await finish.click();
+  await expect(dialog.getByRole("button", { name: "Keep training", exact: true })).toBeFocused();
+  await page.keyboard.press("Escape");
+  await expect(dialog).toBeHidden();
+  await expect(finish).toBeFocused();
+  await expect(page.getByRole("spinbutton", { name: "Weight for set 2", exact: true })).toHaveValue("45");
+  expect(completions).toBe(0);
+  await finish.click();
+  await page.evaluate(() => { document.documentElement.dataset.theme = "dark"; document.documentElement.style.fontSize = "20px"; });
+  expect(await dialog.evaluate(node => node.scrollWidth <= node.clientWidth)).toBe(true);
+  await page.screenshot({ path: info.outputPath("quick-finish-early-iphone16-enlarged.png"), animations: "disabled" });
+  const confirm = dialog.getByRole("button", { name: "Finish with saved sets", exact: true });
+  await confirm.click();
+  await expect(dialog.getByRole("alert")).toContainText("Completion response lost. Try again.");
+  const draftKey = `magni.quick-workout.${session.id}.draft.v1`;
+  expect(await page.evaluate(key => localStorage.getItem(key), draftKey)).not.toBeNull();
+  await confirm.click();
+  await expect(dialog).toBeHidden();
+  await expect(page.getByText(/1 lift logged · 400 lb total/)).toBeVisible();
+  expect(await page.evaluate(key => localStorage.getItem(key), draftKey)).toBeNull();
+  expect(completions).toBe(2);
+  expect(setWrites).toBe(0);
+  const response = await page.request.get(`/api/sessions/${session.id}`);
+  expect(response.ok()).toBe(true);
+  const result = await response.json();
+  expect(result).toMatchObject({ status: "completed", loggedSets: 1, volume: 400 });
+  expect(result.sets).toHaveLength(3);
+  expect(result.sets[0]).toMatchObject({ actual_reps: 10, actual_weight: 40 });
+  expect(result.sets.slice(1).every((set: { actual_reps: number | null; actual_weight: number | null }) => set.actual_reps === null && set.actual_weight === null)).toBe(true);
+});
+
 for (const [device, width, height] of [["mini", 375, 629], ["iphone16", 393, 659]] as const) {
   test(`${device} saving and unlogging a Quick set keeps controls stationary`, async ({ page }, info) => {
     await page.setViewportSize({ width, height });

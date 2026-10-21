@@ -180,26 +180,25 @@ export async function POST(request: Request, context: RouteContext) {
         return { response: jsonError("Session has no sets to complete", 400) };
       }
 
-      const exercisedRows = new Map<number, CompletionSetRow>();
+      const finalLegacySets = new Map<number, CompletionSetRow>();
+      const incompleteLegacyExercises = new Set<number>();
 
       for (const row of rows) {
         if (row.editor_json !== null) continue;
-        const existing = exercisedRows.get(row.exercise_id);
-        if (!existing || (row.set_number > existing.set_number && row.actual_reps !== null)) {
-          exercisedRows.set(row.exercise_id, row);
-        } else if (existing && existing.actual_reps === null && row.actual_reps !== null) {
-          exercisedRows.set(row.exercise_id, row);
+        if (row.actual_reps === null) incompleteLegacyExercises.add(row.exercise_id);
+        const existing = finalLegacySets.get(row.exercise_id);
+        if (!existing || row.set_number > existing.set_number) {
+          finalLegacySets.set(row.exercise_id, row);
         }
       }
 
-      const missingAutoProgressionReps = Array.from(exercisedRows.values()).some(
-        (row) => row.auto_progression_enabled && row.actual_reps === null,
+      // Finishing early preserves unperformed sets and holds their lift's max.
+      // Only a fully recorded lift can use its actual final set for progression.
+      const progressionRows = Array.from(finalLegacySets.values()).filter(
+        (row) => !incompleteLegacyExercises.has(row.exercise_id),
       );
-      if (missingAutoProgressionReps) {
-        return { response: jsonError("Log AMRAP reps before completing this workout", 400) };
-      }
 
-      const unavailable = Array.from(exercisedRows.values()).filter(row => row.auto_progression_enabled && row.actual_reps !== null
+      const unavailable = progressionRows.filter(row => row.auto_progression_enabled && row.actual_reps !== null
         && row.progression_type.startsWith("custom:") && !frozenLegacyRule(row.template_snapshot_json, row.progression_type));
       if (unavailable.length && body.unavailableTemplatePolicy !== "hold") return { response: NextResponse.json({
         error: "An original custom progression rule is unavailable. Your logged work is retained. You can finish with no training-max change for the affected lifts.",
@@ -208,7 +207,7 @@ export async function POST(request: Request, context: RouteContext) {
       const legacyDecisions: { exerciseId: number; templateId: string; reason: string; delta: number }[] = [];
       const progressionDecisions = applyEditorCompletion({ userId: user.id, sessionId });
 
-      for (const row of exercisedRows.values()) {
+      for (const row of progressionRows) {
         if (!row.auto_progression_enabled || row.actual_reps === null) {
           continue;
         }

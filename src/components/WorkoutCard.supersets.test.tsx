@@ -494,7 +494,8 @@ describe("active superset rounds", () => {
     fireEvent.click(screen.getByRole("button", { name: "Save set 1a" }));
     expect(await screen.findByRole("alert")).toHaveTextContent("Could not save Squat");
     edit("Squat set 1a reps", "6");
-    expect(screen.queryByText("Save failed")).not.toBeInTheDocument();
+    expect(screen.getByText("Save failed")).toBeVisible();
+    expect(screen.getByRole("button", { name: "Finish Workout" })).toBeDisabled();
     fireEvent.click(screen.getByRole("button", { name: "Discard set 1a changes" }));
     expect(screen.queryByRole("alert")).not.toBeInTheDocument();
     expect(screen.getByRole("spinbutton", { name: "Squat set 1a reps" })).toHaveValue(8);

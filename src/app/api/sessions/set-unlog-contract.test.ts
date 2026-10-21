@@ -151,7 +151,7 @@ describe("in-progress set unlog contract", () => {
     expect(await getSession(session.id)).toEqual(before);
   });
 
-  it("preserves planned prescriptions and requires restored progression reps before completing exactly once", async () => {
+  it("finishes planned work after undo, holding only the incomplete lift and progressing complete lifts once", async () => {
     const template = getProgramDefault("basic-strength-3-day")!;
     const created = await programRoute.POST(request({ name: template.snapshot.name, numWeeks: template.snapshot.numWeeks, snapshot: template.snapshot }));
     expect(created.status).toBe(201);
@@ -161,24 +161,32 @@ describe("in-progress set unlog contract", () => {
     expect(started.status).toBe(201);
     const startedSession = await started.json() as WorkoutSession;
     const session = await getSession(startedSession.id);
-    const lastSets = [...new Map(session.sets.map(set => [set.shared_exercise_key, set])).values()];
     const logged: HistorySet[] = [];
-    for (const set of lastSets) logged.push(await save(session, set, set.rep_out_target, set.calculated_weight));
+    // Progression now requires the whole lift, not just its final AMRAP.
+    for (const set of session.sets) logged.push(await save(session, set, set.rep_out_target + 2, set.calculated_weight));
+    const maxesBefore = database.db.prepare("SELECT shared_exercise_key, expected_max FROM program_run_expected_maxes WHERE program_run_id=? ORDER BY shared_exercise_key")
+      .all(session.program_run_id) as { shared_exercise_key: string; expected_max: number }[];
     const before = await getSession(session.id);
     expect((await setRoute.PUT(request(undoBody(logged[0])), context(session.id))).status).toBe(200);
     const unlogged = await getSession(session.id);
     expect(unlogged.sets).toEqual(before.sets.map(set => set.id === logged[0].id ? { ...set, actual_reps: null, actual_weight: null } : set));
     expect(unlogged).toMatchObject({ id: session.id, program_id: programId, occurrence_id: session.occurrence_id, program_run_id: session.program_run_id });
-    const rejectedFinish = await completeRoute.POST(request({ sessionId: session.id }), programContext(programId));
-    expect(rejectedFinish.status).toBe(400);
-    expect((await getSession(session.id)).status).toBe("in_progress");
-    const undone = unlogged.sets.find(set => set.id === logged[0].id)!;
-    await save(session, undone, undone.rep_out_target + 2, undone.calculated_weight);
     const finish = await completeRoute.POST(request({ sessionId: session.id }), programContext(programId));
     expect(finish.status).toBe(200);
     const progression = database.db.prepare("SELECT * FROM program_run_expected_maxes WHERE program_run_id=? ORDER BY shared_exercise_key").all(session.program_run_id);
     const finished = await getSession(session.id);
     expect(finished.status).toBe("completed");
+    expect(finished.sets.map(set => ({ id: set.id, actual: actual(set) })))
+      .toEqual(unlogged.sets.map(set => ({ id: set.id, actual: actual(set) })));
+    for (const previous of maxesBefore) {
+      const stored = database.db.prepare("SELECT expected_max FROM program_run_expected_maxes WHERE program_run_id=? AND shared_exercise_key=?")
+        .get(session.program_run_id, previous.shared_exercise_key) as { expected_max: number };
+      const lift = session.sets.find(set => set.shared_exercise_key === previous.shared_exercise_key);
+      const prescription = lift ? database.db.prepare("SELECT category FROM session_sets WHERE id=? AND session_id=?")
+        .get(lift.id, session.id) as { category: string } : undefined;
+      const delta = !lift || lift.shared_exercise_key === session.sets[0].shared_exercise_key ? 0 : prescription?.category === "main" ? 5 : 2.5;
+      expect(stored.expected_max).toBe(previous.expected_max + delta);
+    }
     const retry = await completeRoute.POST(request({ sessionId: session.id }), programContext(programId));
     expect(retry.status).toBe(200);
     expect(await retry.json()).toMatchObject({ alreadyCompleted: true });

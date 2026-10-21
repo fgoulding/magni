@@ -15,7 +15,11 @@ test("quick workout preserves pending edits, recovers failed writes, and counts 
 
   await page.getByRole("spinbutton", { name: "Reps for set 1" }).fill("7");
   await expect(page.getByText("Unsaved", { exact: true })).toBeVisible();
-  await expect(page.getByRole("button", { name: "Finish workout", exact: true })).toBeDisabled();
+  const finish = page.getByRole("button", { name: "Finish workout", exact: true });
+  await expect(finish).toBeEnabled();
+  await finish.click();
+  await page.getByRole("dialog", { name: "Finish with saved sets?", exact: true }).getByRole("button", { name: "Keep training", exact: true }).click();
+  await expect(page.getByRole("spinbutton", { name: "Reps for set 1" })).toHaveValue("7");
   await page.getByRole("navigation").getByRole("link", { name: "Programs" }).click();
   await expect(page.getByRole("heading", { name: "Programs", exact: true })).toBeVisible();
   await page.getByRole("navigation").getByRole("link", { name: "Today" }).click();
@@ -46,6 +50,7 @@ test("quick workout preserves pending edits, recovers failed writes, and counts 
   });
   await page.getByRole("button", { name: "Save set 1", exact: true }).click();
   await expect(page.getByText("Save failed", { exact: true })).toBeVisible();
+  await expect(finish).toBeDisabled();
   await expect(page.locator("section").getByRole("alert")).toHaveText("Temporary connection failure");
   await screenshot("failed");
   await page.unroute("**/api/sessions/*/sets");

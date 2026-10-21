@@ -158,6 +158,23 @@ function seedProgram(email: string, autoProgressionEnabled = 1): SeededProgram {
   };
 }
 
+function seedIndividualSetProgram(email: string): SeededProgram {
+  const seeded = seedProgram(email);
+  const definitionExercise = dbModule.db
+    .prepare("SELECT id FROM program_definition_exercises WHERE program_definition_day_id = ?")
+    .get(seeded.definitionDayId) as { id: number };
+  dbModule.db.prepare("UPDATE program_definition_week_settings SET sets = 1 WHERE program_definition_exercise_id = ? AND week_number = 1")
+    .run(definitionExercise.id);
+  dbModule.db.prepare(`INSERT INTO program_definition_week_settings
+    (program_definition_exercise_id, week_number, set_number, intensity_pct, reps, sets, rep_out_target)
+    VALUES (?, 1, 2, 0.7, 5, 1, 10)`).run(definitionExercise.id);
+  dbModule.db.prepare("UPDATE week_settings SET sets = 1 WHERE exercise_id = ? AND week_number = 1").run(seeded.exerciseId);
+  dbModule.db.prepare(`INSERT INTO week_settings
+    (exercise_id, week_number, set_number, intensity_pct, reps, sets, rep_out_target, calculated_weight)
+    VALUES (?, 1, 2, 0.7, 5, 1, 10, 210)`).run(seeded.exerciseId);
+  return seeded;
+}
+
 beforeAll(async () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "workout-session-routes-"));
   process.env.DB_PATH = path.join(dir, "test.db");
@@ -1296,25 +1313,100 @@ describe("session APIs", () => {
     expect(runMax.expected_max).toBe(305);
   });
 
-  it("rejects completion when an auto-progression set has no logged reps", async () => {
+  it("finishes an unlogged automatic-progression lift without inventing actuals or changing its max", async () => {
     const seeded = seedProgram("missing-reps@example.com");
     authenticate(seeded.userId);
 
     const session = await (
       await sessionsRoute.POST(jsonRequest({ dayId: seeded.dayId }), params({ id: String(seeded.programId) }))
     ).json();
+    const setsBefore = dbModule.db.prepare("SELECT * FROM session_sets WHERE session_id = ? ORDER BY id").all(session.id);
+    const maxBefore = dbModule.db.prepare("SELECT * FROM program_run_expected_maxes WHERE program_run_id = ?").all(session.program_run_id);
 
     const response = await completeRoute.POST(
       jsonRequest({ sessionId: session.id }),
       params({ id: String(seeded.programId) }),
     );
 
-    expect(response.status).toBe(400);
+    expect(response.status).toBe(200);
+    expect(await response.json()).toMatchObject({ alreadyCompleted: false, currentWeek: 2, currentDay: 1 });
+    expect(dbModule.db.prepare("SELECT * FROM session_sets WHERE session_id = ? ORDER BY id").all(session.id)).toEqual(setsBefore);
+    expect(dbModule.db.prepare("SELECT * FROM program_run_expected_maxes WHERE program_run_id = ?").all(session.program_run_id)).toEqual(maxBefore);
+    const completed = dbModule.db.prepare("SELECT * FROM sessions WHERE id = ?").get(session.id);
+    expect(completed).toMatchObject({ completed: 1, status: "completed", completed_at: expect.any(String) });
+    const retry = await completeRoute.POST(jsonRequest({ sessionId: session.id }), params({ id: String(seeded.programId) }));
+    expect(retry.status).toBe(200);
+    expect(await retry.json()).toMatchObject({ alreadyCompleted: true, currentWeek: 2, currentDay: 1 });
+    expect(dbModule.db.prepare("SELECT * FROM sessions WHERE id = ?").get(session.id)).toEqual(completed);
+    expect(dbModule.db.prepare("SELECT * FROM program_run_expected_maxes WHERE program_run_id = ?").all(session.program_run_id)).toEqual(maxBefore);
 
     const exercise = dbModule.db.prepare("SELECT training_max FROM exercises WHERE id = ?").get(seeded.exerciseId) as {
       training_max: number;
     };
     expect(exercise.training_max).toBe(300);
+  });
+
+  it.each([1, 2])("holds a partial legacy lift when only set %i is saved, preserving all actuals on retry", async (loggedSetNumber) => {
+    const seeded = seedIndividualSetProgram(`partial-${loggedSetNumber}@example.com`);
+    authenticate(seeded.userId);
+    const session = await (await sessionsRoute.POST(jsonRequest({ dayId: seeded.dayId }), params({ id: String(seeded.programId) }))).json();
+    const set = dbModule.db.prepare("SELECT id, rep_out_target FROM session_sets WHERE session_id = ? AND set_number = ?")
+      .get(session.id, loggedSetNumber) as { id: number; rep_out_target: number };
+    expect((await setRoute.PUT(jsonRequest({ setId: set.id, actualReps: set.rep_out_target + 2, actualWeight: 205, notes: "Saved work" }),
+      params({ sessionId: String(session.id) }))).status).toBe(200);
+    const setsBefore = dbModule.db.prepare("SELECT * FROM session_sets WHERE session_id = ? ORDER BY set_number").all(session.id);
+    const maxBefore = dbModule.db.prepare("SELECT * FROM program_run_expected_maxes WHERE program_run_id = ?").all(session.program_run_id);
+    expect(setsBefore).toHaveLength(2);
+
+    for (const alreadyCompleted of [false, true]) {
+      const response = await completeRoute.POST(jsonRequest({ sessionId: session.id }), params({ id: String(seeded.programId) }));
+      expect(response.status).toBe(200);
+      expect(await response.json()).toMatchObject({ alreadyCompleted, currentWeek: 2, currentDay: 1 });
+      expect(dbModule.db.prepare("SELECT * FROM program_run_expected_maxes WHERE program_run_id = ?").all(session.program_run_id)).toEqual(maxBefore);
+      expect(dbModule.db.prepare("SELECT * FROM session_sets WHERE session_id = ? ORDER BY set_number").all(session.id)).toEqual(setsBefore);
+    }
+    expect(dbModule.db.prepare("SELECT status FROM sessions WHERE id = ?").get(session.id)).toEqual({ status: "completed" });
+  });
+
+  it("uses the actual final set for a fully recorded legacy lift", async () => {
+    const seeded = seedIndividualSetProgram("full-final-set@example.com");
+    authenticate(seeded.userId);
+    const session = await (await sessionsRoute.POST(jsonRequest({ dayId: seeded.dayId }), params({ id: String(seeded.programId) }))).json();
+    const sets = dbModule.db.prepare("SELECT id, set_number FROM session_sets WHERE session_id = ? ORDER BY set_number")
+      .all(session.id) as { id: number; set_number: number }[];
+    expect(sets).toHaveLength(2);
+    for (const set of sets) {
+      expect((await setRoute.PUT(jsonRequest({ setId: set.id, actualReps: set.set_number === 1 ? 12 : 9, actualWeight: 210 }),
+        params({ sessionId: String(session.id) }))).status).toBe(200);
+    }
+
+    for (const alreadyCompleted of [false, true]) {
+      const response = await completeRoute.POST(jsonRequest({ sessionId: session.id }), params({ id: String(seeded.programId) }));
+      expect(response.status).toBe(200);
+      expect(await response.json()).toMatchObject({ alreadyCompleted });
+      expect(dbModule.db.prepare("SELECT expected_max FROM program_run_expected_maxes WHERE program_run_id = ?").get(session.program_run_id))
+        .toEqual({ expected_max: 297.5 });
+      expect(dbModule.db.prepare("SELECT actual_reps, tm_delta_applied FROM session_sets WHERE session_id = ? ORDER BY set_number").all(session.id))
+        .toEqual([{ actual_reps: 12, tm_delta_applied: 0 }, { actual_reps: 9, tm_delta_applied: -2.5 }]);
+    }
+  });
+
+  it("holds an incomplete legacy lift without requiring its unavailable custom progression rule", async () => {
+    const seeded = seedIndividualSetProgram("partial-missing-rule@example.com");
+    authenticate(seeded.userId);
+    const session = await (await sessionsRoute.POST(jsonRequest({ dayId: seeded.dayId }), params({ id: String(seeded.programId) }))).json();
+    dbModule.db.prepare("UPDATE session_sets SET progression_type = 'custom:unavailable', template_snapshot_json = NULL WHERE session_id = ?").run(session.id);
+    const finalSet = dbModule.db.prepare("SELECT id FROM session_sets WHERE session_id = ? AND set_number = 2").get(session.id) as { id: number };
+    expect((await setRoute.PUT(jsonRequest({ setId: finalSet.id, actualReps: 12 }), params({ sessionId: String(session.id) }))).status).toBe(200);
+    const setsBefore = dbModule.db.prepare("SELECT * FROM session_sets WHERE session_id = ? ORDER BY set_number").all(session.id);
+
+    const response = await completeRoute.POST(jsonRequest({ sessionId: session.id }), params({ id: String(seeded.programId) }));
+    expect(response.status).toBe(200);
+    expect(dbModule.db.prepare("SELECT expected_max FROM program_run_expected_maxes WHERE program_run_id = ?").get(session.program_run_id))
+      .toEqual({ expected_max: 300 });
+    expect(dbModule.db.prepare("SELECT * FROM session_sets WHERE session_id = ? ORDER BY set_number").all(session.id)).toEqual(setsBefore);
+    expect(dbModule.db.prepare("SELECT completed, legacy_completion_json FROM sessions WHERE id = ?").get(session.id))
+      .toEqual({ completed: 1, legacy_completion_json: null });
   });
 
   it("does not auto-adjust custom progression exercises", async () => {

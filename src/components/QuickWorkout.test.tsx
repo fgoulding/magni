@@ -228,11 +228,11 @@ describe("QuickWorkout save recovery", () => {
     expect(fetchMock).toHaveBeenLastCalledWith("/api/sessions/42/sets", expect.objectContaining({ body: JSON.stringify({ setId: 7, actualReps: 7, actualWeight: 40, expectedActual: { reps: 10, weight: 40 } }) }));
   });
 
-  it("prevents finish while edits are unsaved or a set is being saved", () => {
+  it("allows ordinary pending inputs but prevents finish while a set is being saved", () => {
     vi.stubGlobal("fetch", vi.fn(() => new Promise(() => {})));
     render(<QuickWorkout initialSession={initialSession} />);
     editReps("7");
-    expect(screen.getByRole("button", { name: "Finish workout" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Finish workout" })).toBeEnabled();
     fireEvent.click(screen.getByRole("button", { name: /Save set 1/ }));
     expect(screen.getByRole("button", { name: "Finish workout" })).toBeDisabled();
   });

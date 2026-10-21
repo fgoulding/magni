@@ -68,8 +68,7 @@ it.each([false, true])("keeps active controls inert until saved values or pendin
     expect(card.getByRole("spinbutton", { name: "Weight for set 1" })).toHaveValue(savedDraft ? 45 : 40);
     expect(card.getByText(savedDraft ? "Unsaved" : "Saved", { exact: true })).toBeInTheDocument();
     expect(card.getByRole("button", { name: "Add exercise" })).toBeEnabled();
-    if (savedDraft) expect(card.getByRole("button", { name: "Finish workout" })).toBeDisabled();
-    else expect(card.getByRole("button", { name: "Finish workout" })).toBeEnabled();
+    expect(card.getByRole("button", { name: "Finish workout" })).toBeEnabled();
     expect(fetchMock).not.toHaveBeenCalled();
   } finally {
     await act(async () => root?.unmount());

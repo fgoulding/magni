@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation";
 import Link from "next/link";
 import { type ReactNode, useCallback, useEffect, useMemo, useState, useSyncExternalStore, useTransition } from "react";
 import { ExerciseLogCard, SetLogRow } from "./ExerciseLogCard";
+import { FinishWorkoutConfirmation } from "./FinishWorkoutConfirmation";
 import { SupersetRoundCard } from "./SupersetRoundCard";
 import { formatLastPerformance, workoutTarget, WorkoutGroupDetails } from "./WorkoutGroupDetails";
 import { buildSupersetRounds } from "./superset-rounds";
@@ -116,6 +117,7 @@ export function WorkoutCard({
   const hasPending = session?.sets.some((set) => isPending(drafts[set.id])) ?? false;
   const [skipping, setSkipping] = useState(false);
   const [completing, setCompleting] = useState(false);
+  const [confirmingFinish, setConfirmingFinish] = useState<boolean | null>(null);
   const [refreshingCompletion, startCompletionRefresh] = useTransition();
   const [canceling, setCanceling] = useState(false);
   const [confirmingCancel, setConfirmingCancel] = useState(false);
@@ -123,6 +125,8 @@ export function WorkoutCard({
   const [skipped, setSkipped] = useState(false);
   const router = useRouter();
   const trainingHref = useSyncExternalStore(subscribeTrainingLocation, currentTrainingHref, () => "/today");
+  const finishNeedsRecovery = failedIds.size > 0 || Object.keys(conflicts).length > 0 || session?.sets.some(set => drafts[set.id]?.intent === "undo");
+  const finishBlocked = completing || refreshingCompletion || saving || savingIds.size > 0 || !!finishNeedsRecovery;
   const [prs, setPrs] = useState<{ exercise: string; e1rm: number; weight: number; reps: number }[]>([]);
 
   const groups = buildGroups(session?.sets ?? []);
@@ -291,7 +295,7 @@ export function WorkoutCard({
     if (!session) return;
     const next = { ...inputValues(set), expectedActual: inputValues(set).expectedActual ?? { reps: set.actual_reps, weight: set.actual_weight }, [field]: value, intent: drafts[set.id]?.intent === "undo" ? "undo" as const : undefined };
     if (!writeDrafts(session.id, { ...parseDrafts(readDraftSnapshot(session.id)), [set.id]: next })) setStorageWarning(true);
-    setFailedIds((prev) => new Set([...prev].filter((id) => id !== set.id)));
+    // A later edit does not resolve a failed or unconfirmed save.
   }
 
   function discardSetChanges(set: WorkoutSet) {
@@ -389,8 +393,17 @@ export function WorkoutCard({
     }
   }
 
-  async function complete(holdUnavailable = false) {
-    if (!session || saving || hasPending) return;
+  function requestComplete(trigger: HTMLButtonElement, holdUnavailable = false) {
+    if (finishBlocked) return;
+    if (hasPending) {
+      trigger.focus({ preventScroll: true });
+      setError("");
+      setConfirmingFinish(holdUnavailable);
+    } else void complete(holdUnavailable);
+  }
+
+  async function complete(holdUnavailable = false, useSavedSets = false): Promise<boolean> {
+    if (!session || finishBlocked || hasPending && !useSavedSets) return false;
     setError("");
     setCompleting(true);
     try {
@@ -405,7 +418,20 @@ export function WorkoutCard({
         throw new Error(body?.error ?? "Could not complete workout");
       }
       if (body?.success !== true) throw new Error("Could not confirm completion. Retry finishing to recover the saved result.");
+      if (useSavedSets) {
+        // A restored draft may have reached the server before its response was
+        // lost. The completed server session, never local inputs, owns the recap.
+        const result = await fetch(`/api/sessions/${session.id}`, { cache: "no-store" });
+        const saved = await readResponseJson<SessionResponse>(result);
+        if (!result.ok || !saved || saved.id !== session.id || !Array.isArray(saved.sets)
+          || saved.sets.some(set => !(set.actual_reps === null || Number.isSafeInteger(set.actual_reps))
+            || !(set.actual_weight === null || typeof set.actual_weight === "number" && Number.isFinite(set.actual_weight)))) {
+          throw new Error("Could not confirm the saved workout result. Retry finishing to recover it.");
+        }
+        loadSession(saved);
+      }
       writeDrafts(session.id, {});
+      setConfirmingFinish(null);
       // Today can replace this card with its saved recap. Commit the local
       // completion and refreshed route together so navigation never starts
       // from a transient, already-complete view during that replacement.
@@ -423,8 +449,10 @@ export function WorkoutCard({
       } catch {
         /* PRs are a bonus — never block the finish on them */
       }
+      return true;
     } catch (err) {
       setError(err instanceof Error ? err.message : "Could not complete workout");
+      return false;
     } finally {
       setCompleting(false);
     }
@@ -742,12 +770,12 @@ export function WorkoutCard({
           {!focusMode && addExerciseControl}
 
           <div className="flex flex-col gap-2 px-4 pb-4 pt-3">
-            {hasPending ? <p className="text-xs text-muted">Save pending edits before finishing. Sets left unlogged stay unperformed.</p> : null}
+            {finishNeedsRecovery ? <p className="text-xs text-muted">Resolve the set save or Undo before finishing.</p> : null}
             <div className="flex flex-wrap items-start gap-2">
               <button
                 type="button"
-                disabled={completing || refreshingCompletion || saving || hasPending}
-                onClick={() => { void complete(); }}
+                disabled={finishBlocked}
+                onClick={event => requestComplete(event.currentTarget)}
                 className="touch-target flex-[1_1_12rem] whitespace-normal break-words rounded-xl bg-foreground px-4 py-2.5 text-sm font-semibold text-background transition-colors active:opacity-90 disabled:opacity-50"
               >
                 {completing || refreshingCompletion ? "Finishing…" : "Finish Workout"}
@@ -757,11 +785,14 @@ export function WorkoutCard({
                 <div className="rounded-xl border border-line bg-surface py-2">{addExerciseControl}{cancelControl}</div>
               </details>}
             </div>
-            {unavailableTemplate ? <button type="button" className="touch-target rounded-xl border border-warn-line bg-warn-soft px-4 py-3 text-sm font-semibold text-warn-ink disabled:opacity-50" disabled={completing || refreshingCompletion || saving || hasPending} onClick={() => { void complete(true); }}>Finish without changing affected training maxes</button> : null}
+            {unavailableTemplate && confirmingFinish === null ? <button type="button" className="touch-target rounded-xl border border-warn-line bg-warn-soft px-4 py-3 text-sm font-semibold text-warn-ink disabled:opacity-50" disabled={finishBlocked} onClick={event => requestComplete(event.currentTarget, true)}>Finish without changing affected training maxes</button> : null}
             {!focusMode && cancelControl}
           </div>
         </fieldset>
       )}
+      {confirmingFinish !== null && <FinishWorkoutConfirmation disabled={finishBlocked} error={error}
+        onConfirm={() => complete(confirmingFinish, true)} onClose={() => setConfirmingFinish(null)}
+        onHoldProgression={unavailableTemplate && !confirmingFinish ? () => complete(true, true) : undefined} /> }
     </section>
   );
 }

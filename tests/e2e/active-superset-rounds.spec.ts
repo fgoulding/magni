@@ -54,6 +54,66 @@ async function stored(page: Page, id: number) {
   return response.json() as Promise<{ sets: WorkoutSet[]; status: string; loggedSets: number; volume: number }>;
 }
 
+test("finish a planned superset early keeps only saved actuals through a lost completion response", async ({ page }, info) => {
+  test.setTimeout(90_000);
+  await page.setViewportSize({ width: 375, height: 629 });
+  const { session, pair } = await startSupersets(page);
+  await pair.getByRole("button", { name: "Save set 1a", exact: true }).click();
+  await expect(pair.getByRole("button", { name: "Undo set 1a", exact: true })).toHaveAttribute("aria-pressed", "true");
+  await pair.getByRole("spinbutton", { name: "Dumbbell row set 1b reps", exact: true }).fill("8");
+  await pair.getByRole("spinbutton", { name: "Squat set 2a weight (lb)", exact: true }).fill("140");
+  let setWrites = 0, completions = 0;
+  await page.route(`**/api/sessions/${session.id}/sets`, async route => {
+    if (route.request().method() === "PUT") setWrites++;
+    await route.continue();
+  });
+  await page.route("**/complete-and-advance", async route => {
+    completions++;
+    if (completions === 1) {
+      expect((await route.fetch()).ok()).toBe(true);
+      return route.fulfill({ status: 503, json: { error: "Completion response lost. Try again." } });
+    }
+    await route.continue();
+  });
+  const finish = page.getByRole("button", { name: "Finish Workout", exact: true });
+  const dialog = page.getByRole("dialog", { name: "Finish with saved sets?", exact: true });
+  const confirm = dialog.getByRole("button", { name: "Finish with saved sets", exact: true });
+  await expect(finish).toBeEnabled();
+  await finish.click();
+  await expect(dialog.getByRole("button", { name: "Keep training", exact: true })).toBeFocused();
+  await dialog.getByRole("button", { name: "Keep training", exact: true }).click();
+  await expect(dialog).toBeHidden();
+  await expect(finish).toBeFocused();
+  await expect(pair.getByRole("spinbutton", { name: "Dumbbell row set 1b reps", exact: true })).toHaveValue("8");
+  expect(completions).toBe(0);
+  await finish.click();
+  for (const [width, height, fontSize, theme] of [[375, 629, 16, "light"], [393, 659, 20, "dark"]] as const) {
+    await page.setViewportSize({ width, height });
+    await page.evaluate(({ fontSize, theme }) => { document.documentElement.style.fontSize = `${fontSize}px`; document.documentElement.dataset.theme = theme; }, { fontSize, theme });
+    expect(await dialog.evaluate(node => node.scrollWidth <= node.clientWidth)).toBe(true);
+    const box = (await confirm.boundingBox())!;
+    expect(box.height).toBeGreaterThanOrEqual(44);
+    expect(box.width).toBeGreaterThanOrEqual(44);
+    await page.screenshot({ path: info.outputPath(`finish-early-${width}-${fontSize}.png`), animations: "disabled" });
+  }
+  await confirm.click();
+  await expect(dialog.getByRole("alert")).toContainText("Completion response lost. Try again.");
+  expect((await stored(page, session.id)).status).toBe("completed");
+  await expect(pair.getByRole("spinbutton", { name: "Squat set 2a weight (lb)", exact: true, includeHidden: true })).toHaveValue("140");
+  await confirm.click();
+  await expect(dialog).toBeHidden();
+  await expect(page.getByText("Workout complete today", { exact: true })).toBeVisible();
+  await expect(page.getByText("675 lb total", { exact: true })).toBeVisible();
+  expect(await page.evaluate(id => localStorage.getItem(`magni.planned-workout.${id}.draft.v1`), session.id)).toBeNull();
+  expect(completions).toBe(2);
+  expect(setWrites).toBe(0);
+  const result = await stored(page, session.id);
+  expect(result).toMatchObject({ status: "completed", loggedSets: 1, volume: 675 });
+  expect(result.sets.map(set => set.id)).toEqual(session.sets.map(set => set.id));
+  expect(result.sets[0]).toMatchObject({ actual_reps: 5, actual_weight: 135 });
+  expect(result.sets.slice(1).every(set => set.actual_reps === null && set.actual_weight === null)).toBe(true);
+});
+
 test("active supersets auto-collapse after saving and reopen without undo across Today and Calendar", async ({ page }, info) => {
   test.setTimeout(90_000);
   await page.setViewportSize({ width: 375, height: 629 });

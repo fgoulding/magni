@@ -114,7 +114,7 @@ describe("custom workout set logging and draft recovery", () => {
     edit("Row set 1 reps", "7");
     expect(screen.getByRole("button", { name: "Save set 1" })).toHaveAttribute("aria-pressed", "false");
     expect(screen.getByText("Unsaved")).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Finish Workout" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Finish Workout" })).toBeEnabled();
     first.unmount();
     render(<WorkoutCard {...props} />);
     expect(await screen.findByRole("spinbutton", { name: "Row set 1 reps" })).toHaveValue(7);

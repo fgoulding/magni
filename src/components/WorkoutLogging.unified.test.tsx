@@ -114,9 +114,12 @@ for (const format of ["quick", "planned", "focus"] as const) describe(`${format}
     const { mount, fetchMock } = setup(() => new Promise(done => { resolve = done; })); mount();
     fireEvent.click(await screen.findByRole("button", { name: "Undo set 1" }));
     fireEvent.change(screen.getByRole("spinbutton", { name: label }), { target: { value: "8" } });
+    expect(screen.getByRole("button", { name: finish })).toBeDisabled();
     await act(async () => resolve(response({ actual_reps: null, actual_weight: null })));
     expect(screen.getByRole("spinbutton", { name: label })).toHaveValue(8);
-    expect(screen.getByRole("button", { name: finish })).toBeDisabled();
+    expect(screen.getByText("Unsaved")).toBeVisible();
+    expect(screen.queryByText("Undo unconfirmed")).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: finish })).toBeEnabled();
     fireEvent.click(screen.getByRole("button", { name: "Save set 1" }));
     const calls = (fetchMock.mock.calls as unknown as [string, RequestInit][]).filter(([url]) => url.endsWith("/sets"));
     expect(JSON.parse(calls[1][1].body as string)).toMatchObject({ actualReps: 8, expectedActual: { reps: null, weight: null } });

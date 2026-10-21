@@ -129,7 +129,7 @@ describe("WorkoutCard", () => {
     const reps = squat.getByRole("spinbutton", { name: "Squat set 1 reps" });
     await user.clear(reps); await user.type(reps, "7");
     expect(progress).toHaveAttribute("aria-valuenow", "0");
-    expect(screen.getByRole("button", { name: "Finish Workout" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Finish Workout" })).toBeEnabled();
     await user.click(squat.getByRole("button", { name: "Save 3-set log" }));
     expect(progress).toHaveAttribute("aria-valuenow", "3");
     await user.click(squat.getByRole("button", { name: "Undo 3-set log" }));

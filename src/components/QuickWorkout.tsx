@@ -6,6 +6,7 @@ import { LineChart, Zap } from "lucide-react";
 import { useMemo, useState, useSyncExternalStore } from "react";
 import { ExerciseLogCard, SetLogRow } from "./ExerciseLogCard";
 import { WorkoutSaveStatus } from "./WorkoutSaveStatus";
+import { FinishWorkoutConfirmation } from "./FinishWorkoutConfirmation";
 import { HoldToDeleteWorkout } from "./HoldToDeleteWorkout";
 import { QuickExercisePicker } from "./QuickExercisePicker";
 import { QuickWorkoutEditor } from "./QuickWorkoutEditor";
@@ -44,8 +45,11 @@ export function QuickWorkout({ initialSession, initialDate, todayOnly = false, t
   const [error, setError] = useState("");
   const [starting, setStarting] = useState(false);
   const [finishing, setFinishing] = useState(false);
+  const [confirmingFinish, setConfirmingFinish] = useState(false);
   const [recap, setRecap] = useState<Recap | null>(null);
   const [discarding, setDiscarding] = useState(false);
+  const finishNeedsRecovery = failedIds.size > 0 || Object.keys(conflicts).length > 0 || session?.sets.some(set => drafts[set.id]?.intent === "undo");
+  const finishBlocked = !hydrated || finishing || discarding || !!structureDraft || !!newExerciseDraft || !!appendDraft || savingIds.size > 0 || !!finishNeedsRecovery;
   const startLocked = !hydrated || starting || !!startDraft.requestKey;
 
   function editStart(change: Partial<Pick<typeof startDraft, "name" | "date" | "unit">>) {
@@ -105,7 +109,7 @@ export function QuickWorkout({ initialSession, initialDate, todayOnly = false, t
     if (!writeDrafts(session.id, { ...current, [set.id]: next })) {
       setError("Device storage is unavailable. Keep this page open and save your changes before leaving.");
     }
-    setFailedIds((previous) => withoutId(previous, set.id));
+    // Editing cannot confirm whether a previous failed save reached the server.
   }
 
   async function logSet(set: WorkoutSet, undo = false) {
@@ -170,8 +174,17 @@ export function QuickWorkout({ initialSession, initialDate, todayOnly = false, t
     }
   }
 
-  async function finish() {
-    if (!hydrated || !session || structureDraft || newExerciseDraft || appendDraft || savingIds.size > 0 || session.sets.some((set) => isPending(drafts[set.id]))) return;
+  function requestFinish(trigger: HTMLButtonElement) {
+    if (finishBlocked) return;
+    if (session?.sets.some(set => isPending(drafts[set.id]))) {
+      trigger.focus({ preventScroll: true });
+      setError("");
+      setConfirmingFinish(true);
+    } else void finish();
+  }
+
+  async function finish(useSavedSets = false): Promise<boolean> {
+    if (!session || finishBlocked || !useSavedSets && session.sets.some(set => isPending(drafts[set.id]))) return false;
     setFinishing(true);
     setError("");
     try {
@@ -183,8 +196,11 @@ export function QuickWorkout({ initialSession, initialDate, todayOnly = false, t
       }
       writeDrafts(session.id, {});
       setRecap({ volume: body.volume, loggedCount: body.loggedCount, skippedCount: body.skippedCount });
+      setConfirmingFinish(false);
+      return true;
     } catch (err) {
       setError(err instanceof Error ? err.message : "Could not finish workout");
+      return false;
     } finally {
       setFinishing(false);
     }
@@ -325,19 +341,20 @@ export function QuickWorkout({ initialSession, initialDate, todayOnly = false, t
       {error ? <p role="alert" className="px-4 pb-1 text-sm text-danger-ink">{error}</p> : null}
       {newExerciseDraft || appendDraft ? <p className="px-4 pb-1 text-sm text-muted">Finish adding the pending exercise or set before completing this workout.</p> : null}
       {structureDraft ? <p className="px-4 pb-1 text-sm text-muted">Save workout details before finishing or adding exercises.</p> : null}
-      {hasPendingChanges ? <p className="px-4 pb-1 text-sm text-muted">Save your changed sets before finishing.</p> : null}
+      {finishNeedsRecovery ? <p className="px-4 pb-1 text-sm text-muted">Resolve the set save or Undo before finishing.</p> : null}
 
       <div className="flex flex-wrap gap-2 px-4 pb-4 pt-2">
         <button
           type="button"
-          onClick={finish}
-          disabled={!hydrated || finishing || discarding || groups.length === 0 || hasPendingChanges || !!structureDraft || !!newExerciseDraft || !!appendDraft || savingIds.size > 0}
+          onClick={event => requestFinish(event.currentTarget)}
+          disabled={finishBlocked || groups.length === 0}
           className="touch-target flex-[1_1_12rem] whitespace-normal break-words rounded-xl bg-foreground px-4 py-2.5 text-sm font-semibold text-background transition-opacity active:opacity-90 disabled:opacity-50"
         >
           {finishing ? "Finishing…" : "Finish workout"}
         </button>
         <HoldToDeleteWorkout disabled={!hydrated || discarding || finishing || savingIds.size > 0} onDelete={discard} />
       </div>
+      {confirmingFinish && <FinishWorkoutConfirmation disabled={finishBlocked} error={error} onConfirm={() => finish(true)} onClose={() => setConfirmingFinish(false)} />}
     </section>
   );
 }

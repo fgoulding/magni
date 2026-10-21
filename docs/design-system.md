@@ -165,6 +165,15 @@ other useful actions.
 Completed workout summaries show performed lifts and personal records without a
 Progression explanation panel. Finishing still applies the configured rules.
 
+Finish remains available when a lifter leaves sets unperformed. Ordinary unsaved
+set inputs open a compact **Finish with saved sets?** dialog; explain that saved
+sets are kept, unsaved edits discarded and unlogged sets left unperformed. Focus
+**Keep training** initially; cancel/Escape preserve inputs and return focus to
+Finish. Keep the confirmation open with a retryable error if completion fails.
+Do not save prescriptions as actuals or clear drafts before the server confirms
+completion and its saved results. In-flight requests, failed saves, conflicts,
+unconfirmed Undo and unfinished Quick structure edits keep their recovery guards.
+
 **Active workout exercises:** Quick Workout, planned Today, Calendar details and
 planned resume share the same exercise disclosure and set-row presentation.
 Use a full-width header button with the exercise name, saved count and
