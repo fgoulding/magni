@@ -16,6 +16,9 @@
 # testing
 /coverage
 
+# generated deployment tooling bytecode
+/scripts/deployment/__pycache__/
+
 # local sqlite data
 /data/
 
