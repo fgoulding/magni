@@ -1,6 +1,14 @@
 import { randomUUID } from "node:crypto";
 import { readFileSync, readdirSync } from "node:fs";
 import path from "node:path";
+import { warmupProfile } from "./release-check.profile.mjs";
+
+export function selectWarmupFiles(files, env = process.env) {
+  const profile = warmupProfile(env);
+  if (!profile.routes) return files;
+  for (const file of profile.routes) if (!files.includes(file)) throw new Error(`Unknown focused warmup route: ${file}`);
+  return profile.routes;
+}
 
 export function routeWarmupRequests(files) {
   const seen = new Set();
@@ -56,6 +64,9 @@ export async function warmE2ERoutes({ baseURL, requests, cookie, fetchRoute = fe
 
 export default async function prepareE2E(config) {
   const started = performance.now();
+  const profile = warmupProfile();
+  const app = path.resolve("src/app");
+  const files = selectWarmupFiles(readdirSync(app, { recursive: true }).filter(file => /(^|\/)(page\.tsx|route\.ts)$/.test(file)).sort());
   const baseURL = config.projects[0].use.baseURL;
   localOrigin(baseURL);
   // Use ordinary registration, since the proxy rejects protected routes before
@@ -71,11 +82,9 @@ export default async function prepareE2E(config) {
   if (!cookie.includes("auth_token=")) throw new Error("E2E preparation registration did not create a session");
   const authenticated = await fetch(baseURL + "/api/auth/me", { headers: { cookie }, redirect: "manual", signal: AbortSignal.timeout(30_000) });
   if (!authenticated.ok || (await authenticated.json()).id !== account.id) throw new Error("E2E preparation session did not authenticate its account");
-  const app = path.resolve("src/app");
-  const files = readdirSync(app, { recursive: true }).filter(file => /(^|\/)(page\.tsx|route\.ts)$/.test(file)).sort();
   for (const file of files.filter(file => file.endsWith("route.ts"))) {
     assertAutomaticOptions(readFileSync(path.join(app, file), "utf8"), file);
   }
   await warmE2ERoutes({ baseURL, requests: routeWarmupRequests(files), cookie });
-  console.log(`Prepared ${files.length} compiled routes in ${((performance.now() - started) / 1000).toFixed(1)}s before browser test deadlines`);
+  console.log(`Prepared ${files.length} compiled routes (${profile.name}) in ${((performance.now() - started) / 1000).toFixed(1)}s before browser test deadlines`);
 }

@@ -1,8 +1,8 @@
 "use client";
 
-import { useId, useLayoutEffect, useRef, useState } from "react";
+import { useId, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { ArrowDown, ArrowUp, ChevronDown, ChevronUp, Copy, Plus, Trash2 } from "lucide-react";
-import { createDay, createSet, createWeek, validateDocument, type ProgramDocumentV1, type ProgramExerciseV1, type ProgramSetV1 } from "@/features/program-editor/document";
+import { createDay, createSet, createWeek, type DocumentIssue, type ProgramDocumentV1, type ProgramExerciseV1, type ProgramSetV1 } from "@/features/program-editor/document";
 import { applySharedConfiguration, cloneDay, cloneExercise, cloneWeek } from "@/features/program-editor/operations";
 import { validateProgressionRule } from "@/features/program-editor/progression";
 import { prescriptionColumns, SetPrescriptionEditor } from "./SetPrescriptionEditor";
@@ -50,6 +50,7 @@ function advancedSummary(exercise: ProgramExerciseV1) {
 
 export type ProgramBuilderProps = {
   document: ProgramDocumentV1;
+  issues: DocumentIssue[];
   onChange: (update: (value: ProgramDocumentV1) => void) => void;
   onActivate: () => void;
   activating: boolean;
@@ -58,7 +59,7 @@ export type ProgramBuilderProps = {
   onExport: () => void;
   activeReview?: React.ReactNode;
 };
-export function ProgramBuilder({ document, onChange, onActivate, activating, activeId, onAdvanced, onExport, activeReview }: ProgramBuilderProps) {
+export function ProgramBuilder({ document, issues, onChange, onActivate, activating, activeId, onAdvanced, onExport, activeReview }: ProgramBuilderProps) {
   const container = useRef<HTMLDivElement>(null);
   const disclosurePrefix = useId();
   const [closedGroups, setClosedGroups] = useState<Set<string>>(() => new Set());
@@ -85,8 +86,7 @@ export function ProgramBuilder({ document, onChange, onActivate, activating, act
   const week = document.weeks[wi];
   const di = Math.min(selectedDay, Math.max(0, (week?.days.length ?? 0) - 1));
   const day = week?.days[di];
-  const issues = validateDocument(document);
-  const schedule = previewBuilderSchedule(document);
+  const schedule = useMemo(() => reviewing && !activeId ? previewBuilderSchedule(document) : [], [document, reviewing, activeId]);
   const groups = day ? builderGroups(day) : [];
   const editExercise = (id: string, update: (exercise: ProgramExerciseV1) => void, shared = false) => onChange(value => {
     const exercise = value.weeks[wi].days[di].exercises.find(exercise => exercise.id === id)!;

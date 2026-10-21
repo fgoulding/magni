@@ -2,7 +2,7 @@ import { db } from "@/lib/db";
 import { calculateWeight } from "@/lib/calculator";
 import { getSettingNumber } from "@/lib/auth";
 import type { ExerciseCategory } from "@/features/training-templates/types";
-import { resolveEditorPrescription } from "@/features/program-editor/execution";
+import { createEditorPrescriptionResolver } from "@/features/program-editor/execution";
 import type { EditorPrescriptionSet, EditorSetMetadata } from "@/features/program-editor/repository";
 
 export type Occurrence = {
@@ -62,24 +62,47 @@ export function snapshotPrescription(run: Run, day: Day, week: number): Prescrip
     ORDER BY pde.sort_order, pde.id, pdws.set_number`).all(week, run.id, day.legacy_day_id, day.id) as PrescriptionSet[];
 }
 
-/** Materialize each logical slot once. Reads never move or regenerate existing slots. */
-export const ensureScheduledOccurrences = db.transaction((userId: number) => {
+type ScheduleRepair = { run: Run; days: Day[]; weekdays: number[]; existingSlots: Set<number> };
+
+/** Check completeness without a writer lock. Repair rechecks this under its lock. */
+function scheduledOccurrenceRepairs(userId: number): ScheduleRepair[] {
   const runs = db.prepare(`SELECT p.id AS program_id, pr.id, pr.program_definition_id, pr.name,
     pd.num_weeks, COALESCE(pr.start_date, substr(pr.created_at,1,10)) AS start_date, pr.schedule_weekdays
     FROM programs p JOIN program_runs pr ON pr.id = p.program_run_id
     JOIN program_definitions pd ON pd.id = pr.program_definition_id
     WHERE p.user_id = ? AND pr.status IN ('active','paused') AND pr.archived_at IS NULL
     AND pr.schedule_mode = 'scheduled' AND pr.editor_version_id IS NULL`).all(userId) as Run[];
-  const insert = db.prepare(`INSERT OR IGNORE INTO workout_occurrences
-    (user_id, program_id, program_run_id, definition_day_id, legacy_day_id, slot_index, week_number,
-     day_number, program_name, day_name, scheduled_date, original_date, prescription_json)
-     VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)`);
+  const repairs: ScheduleRepair[] = [];
   for (const run of runs) {
     const days = db.prepare(`SELECT pdd.id, d.id AS legacy_day_id, pdd.name, pdd.day_number
       FROM program_definition_days pdd LEFT JOIN days d ON d.program_id = ? AND d.shared_day_key = pdd.stable_key AND d.archived_at IS NULL
       WHERE pdd.program_definition_id = ? AND pdd.archived_at IS NULL ORDER BY pdd.day_number`).all(run.program_id, run.program_definition_id) as Day[];
     const weekdays = JSON.parse(run.schedule_weekdays) as number[];
     if (!days.length || !weekdays.length || !validDateKey(run.start_date)) continue;
+    const slotCount = days.length * run.num_weeks;
+    const slots = db.prepare(`SELECT slot_index FROM workout_occurrences WHERE program_run_id = ?
+      AND slot_index >= 0 AND slot_index < ? AND slot_index = CAST(slot_index AS INTEGER)`).all(run.id, slotCount) as { slot_index: number }[];
+    const existingSlots = new Set(slots.map(row => row.slot_index));
+    const missingSlots = existingSlots.size < slotCount;
+    const unlinked = !missingSlots && db.prepare(`SELECT s.id FROM sessions s
+      WHERE s.program_id = ? AND s.user_id = ? AND s.occurrence_id IS NULL
+        AND EXISTS (SELECT 1 FROM workout_occurrences o WHERE o.program_run_id = ? AND o.week_number = s.week_number
+          AND (o.definition_day_id = s.program_definition_day_id OR o.legacy_day_id = s.day_id)
+          AND NOT EXISTS (SELECT 1 FROM sessions linked WHERE linked.occurrence_id = o.id)) LIMIT 1`).get(run.program_id, userId, run.id);
+    if (missingSlots || unlinked) repairs.push({ run, days, weekdays, existingSlots });
+  }
+  return repairs;
+}
+
+/** Materialize each logical slot once. Reads never move or regenerate existing slots. */
+export const ensureScheduledOccurrences = db.transaction((userId: number) => {
+  const repairs = scheduledOccurrenceRepairs(userId);
+  if (!repairs.length) return;
+  const insert = db.prepare(`INSERT OR IGNORE INTO workout_occurrences
+    (user_id, program_id, program_run_id, definition_day_id, legacy_day_id, slot_index, week_number,
+     day_number, program_name, day_name, scheduled_date, original_date, prescription_json)
+     VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)`);
+  for (const { run, days, weekdays, existingSlots } of repairs) {
     const holds = db.prepare("SELECT start_date, end_date FROM program_run_holds WHERE program_run_id = ? AND canceled_at IS NULL").all(run.id) as { start_date: string; end_date: string }[];
     let date = run.start_date;
     for (let slot = 0; slot < days.length * run.num_weeks; slot++) {
@@ -90,8 +113,7 @@ export const ensureScheduledOccurrences = db.transaction((userId: number) => {
       }
       const day = days[slot % days.length];
       const week = Math.floor(slot / days.length) + 1;
-      const existing = db.prepare("SELECT id FROM workout_occurrences WHERE program_run_id = ? AND slot_index = ?").get(run.id, slot);
-      if (!existing) insert.run(userId, run.program_id, run.id, day.id, day.legacy_day_id, slot, week, day.day_number, run.name, day.name, date, date, JSON.stringify(snapshotPrescription(run, day, week)));
+      if (!existingSlots.has(slot)) insert.run(userId, run.program_id, run.id, day.id, day.legacy_day_id, slot, week, day.day_number, run.name, day.name, date, date, JSON.stringify(snapshotPrescription(run, day, week)));
       date = dateKeyPlus(date, 1);
     }
     // Link existing history by logical position, not the weekday projection that
@@ -111,7 +133,7 @@ export const ensureScheduledOccurrences = db.transaction((userId: number) => {
 });
 
 export function getOccurrences(userId: number, start = "0001-01-01", end = "9999-12-31"): Occurrence[] {
-  ensureScheduledOccurrences.immediate(userId);
+  if (scheduledOccurrenceRepairs(userId).length) ensureScheduledOccurrences.immediate(userId);
   return db.prepare(`SELECT o.*, s.id AS session_id, s.date AS performed_date, s.revision AS session_revision FROM workout_occurrences o
     LEFT JOIN sessions s ON s.occurrence_id = o.id
     JOIN program_runs pr ON pr.id = o.program_run_id
@@ -135,10 +157,14 @@ export function occurrencePrescription(occurrence: Occurrence): PrescriptionSet[
   }
   const rounding = getSettingNumber(occurrence.user_id, "rounding", 2.5);
   const sets = JSON.parse(occurrence.prescription_json) as Array<PrescriptionSet & { editor?: EditorSetMetadata }>;
+  const keys = [...new Set(sets.filter(set => !set.editor).map(set => set.stable_key))];
+  const maxima = keys.length ? db.prepare(`SELECT shared_exercise_key,expected_max FROM program_run_expected_maxes
+    WHERE program_run_id = ? AND shared_exercise_key IN (${keys.map(() => "?").join(",")})`).all(occurrence.program_run_id,...keys) as { shared_exercise_key: string; expected_max: number }[] : [];
+  const maxByKey = new Map(maxima.map(row => [row.shared_exercise_key,row.expected_max]));
+  const resolveEditor = createEditorPrescriptionResolver(occurrence.program_run_id);
   return sets.map(set => {
-    if (set.editor) return resolveEditorPrescription(set as EditorPrescriptionSet, occurrence.program_run_id);
-    const current = db.prepare("SELECT expected_max FROM program_run_expected_maxes WHERE program_run_id = ? AND shared_exercise_key = ?").get(occurrence.program_run_id, set.stable_key) as { expected_max: number } | undefined;
-    const trainingMax = current?.expected_max ?? set.training_max;
+    if (set.editor) return resolveEditor(set as EditorPrescriptionSet);
+    const trainingMax = maxByKey.get(set.stable_key) ?? set.training_max;
     return { ...set, training_max: trainingMax, calculated_weight: set.weight ?? calculateWeight(trainingMax, set.intensity_pct, rounding) };
   });
 }

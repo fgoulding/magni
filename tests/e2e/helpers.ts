@@ -1,4 +1,4 @@
-import { expect, type Locator, type Page, type Response } from "@playwright/test";
+import { expect, type APIResponse, type Locator, type Page, type Response } from "@playwright/test";
 
 const WEEKDAY_LABELS = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"] as const;
 
@@ -7,23 +7,15 @@ export function uniqueEmail(label: string): string {
   return `e2e-${label}-${suffix}@example.com`;
 }
 
-async function clickAndWaitForResponse(
+export async function clickAndWaitForResponse(
   locator: Locator,
   predicate: (response: Response) => boolean,
 ): Promise<Response> {
-  let lastError: unknown;
-
-  for (let attempt = 0; attempt < 2; attempt += 1) {
-    const responsePromise = locator.page().waitForResponse(predicate, { timeout: 10_000 });
-    await locator.click();
-    try {
-      return await responsePromise;
-    } catch (error) {
-      lastError = error;
-    }
-  }
-
-  throw lastError instanceof Error ? lastError : new Error("Timed out waiting for response");
+  const [response] = await Promise.all([
+    locator.page().waitForResponse(predicate, { timeout: 10_000 }),
+    locator.click(),
+  ]);
+  return response;
 }
 
 export async function register(page: Page, label: string): Promise<{ email: string; password: string }> {
@@ -31,6 +23,9 @@ export async function register(page: Page, label: string): Promise<{ email: stri
   const password = "password123";
 
   await page.goto("/register");
+  // AuthForm keeps its fields disabled until hydration has installed submit.
+  await expect(page.getByLabel("Email")).toBeEditable();
+  await expect(page.getByLabel("Password")).toBeEditable();
   await page.getByLabel("Email").fill(email);
   await page.getByLabel("Password").fill(password);
   const submit = page.getByRole("button", { name: "Create account" });
@@ -47,15 +42,29 @@ export async function register(page: Page, label: string): Promise<{ email: stri
 export async function registerViaApi(page: Page, label: string): Promise<{ email: string; password: string }> {
   const email = uniqueEmail(label);
   const password = "password123";
-  const response = await page.request.post("/api/auth/register", {
-    data: { email, password },
-  });
+  const started = performance.now();
+  let response: APIResponse;
+  try {
+    response = await page.request.post("/api/auth/register", {
+      data: { email, password }, maxRetries: 0,
+    });
+  } catch (error) {
+    // A fixture transport failure must remain a failed attempt. Never include
+    // request bodies, headers, account identifiers or an arbitrary error message.
+    const message = error instanceof Error ? error.message : "";
+    const code = message.match(/\b(ECONNRESET|ECONNREFUSED|ETIMEDOUT|EPIPE|ENOTFOUND|EAI_AGAIN)\b/)?.[1]
+      ?? (error instanceof Error && error.name === "TimeoutError" ? "TIMEOUT" : "TRANSPORT_ERROR");
+    console.error(JSON.stringify({ event: "fixture-transport-failure", method: "POST", pathname: "/api/auth/register", code, elapsedMs: Math.round(performance.now() - started) }));
+    throw new Error(`Fixture POST /api/auth/register failed (${code}); no retry was attempted`);
+  }
   expect(response.ok()).toBe(true);
   return { email, password };
 }
 
 export async function login(page: Page, email: string, password: string): Promise<void> {
   await page.goto("/login");
+  await expect(page.getByLabel("Email")).toBeEditable();
+  await expect(page.getByLabel("Password")).toBeEditable();
   await page.getByLabel("Email").fill(email);
   await page.getByLabel("Password").fill(password);
   const submit = page.getByRole("button", { name: "Log in" });

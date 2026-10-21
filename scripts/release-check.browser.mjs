@@ -3,7 +3,9 @@ import { mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { runCheck, sourceIdentity } from "./release-check.mjs";
 import { compactBrowserReport, parseBrowserShard } from "./release-check.evidence.mjs";
+import { assertFullReleaseEnvironment } from "./release-check.profile.mjs";
 
+assertFullReleaseEnvironment();
 const cwd = process.cwd();
 const selection = parseBrowserShard(process.argv.slice(2));
 const outputDirectory = path.join(cwd, ".playwright/release-browser");

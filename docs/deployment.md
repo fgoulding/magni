@@ -82,6 +82,145 @@ See [`deploy/README.md`](../deploy/README.md) for the full walkthrough. In short
 
 ## 4. Making changes & redeploying
 
+### Local browser iteration and release evidence
+
+The normal Playwright and release commands compile every discovered application
+route before tests begin. CI retains the complete test discovery, both browser
+engines, and the strict no-flaky-pass release gate. All Node script regressions,
+including the template publishing CLI, run in the fixed `gate-policy` check.
+
+For a focused local check, explicitly list the routes used by the workflow. Paths
+are relative to `src/app`; dynamic paths use their source names. For example:
+
+```bash
+node scripts/release-check.focused.mjs \
+  --route=today/page.tsx \
+  --route=api/sessions/route.ts \
+  -- tests/e2e/workout-save-toggle.spec.ts --project=mobile-safari
+```
+
+This uses the same disposable database/server and unchanged browser assertions.
+Unlisted routes still compile on first use. Diagnostics go to a unique
+`.playwright/local-focused-*` directory, and the warmup timing identifies the
+profile. Focused mode is rejected in CI and by release entry points. Its browser
+metadata cannot be accepted by release evidence aggregation; a local focused pass
+never replaces the full release gates. Coordinate the local browser server with
+other work before running it.
+
+Authentication helpers wait for the existing hydrated form controls and submit
+once. API fixture transport failures report only method, route, an allowlisted
+error category and elapsed time; they fail immediately without a hidden retry.
+Original browser traces remain separate diagnostics and may contain disposable
+test account data.
+
+### Tracked, guarded release tools
+
+`scripts/deployment/` contains the reusable coordinator previously kept in private
+per-release folders. Its Python modules and browser adapter do no work when
+imported. All host operations require an explicit private configuration and an
+explicit command. The offline guard tests run in `gate-policy` through
+`scripts/release-check.deployment.test.mjs` and
+`scripts/release-check.deployment-wrappers.test.mjs`.
+
+This coordinator supports **same-schema releases only**: startup, restart, backup,
+restore onto the old image, and return to the candidate must preserve every table,
+row fingerprint, schema entry, exercise identity mapping and deletion marker.
+Changing the schema requires a separately reviewed migration preservation and
+old-image refusal policy; changing the configured number does not provide one.
+
+Keep the configuration, database backups, receipts, logs and screenshots private.
+An output directory inside the checkout must be below `.playwright/`; an absolute
+directory outside the checkout is also accepted. The tools create private output
+with mode `0700` and atomic receipts with mode `0600`. Do not commit these files.
+
+Create a configuration using the real baseline identities and committed candidate
+SHA. This is a sanitized example; replace the example paths, identities and spec
+selection with the release's reviewed values:
+
+```json
+{
+  "schemaVersion": 1,
+  "repositoryRoot": "/path/to/magni",
+  "outputDirectory": "/path/to/magni/.playwright/my-release",
+  "sshHost": "operator@example.test",
+  "deployDirectory": "/srv/magni",
+  "appContainer": "magni-app-1",
+  "updaterContainer": "magni-watchtower-1",
+  "composeService": "app",
+  "imageRepository": "ghcr.io/example/magni",
+  "baselineRevision": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+  "baselineImage": "ghcr.io/example/magni@sha256:1111111111111111111111111111111111111111111111111111111111111111",
+  "baselineImageId": "sha256:2222222222222222222222222222222222222222222222222222222222222222",
+  "candidateRevision": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+  "githubRepository": "example/magni",
+  "githubRunId": null,
+  "schemaRevision": 7,
+  "expectedTableCount": 44,
+  "resourcePrefix": "magni-my-release",
+  "localPort": 4123,
+  "remotePort": 4123,
+  "browserFiles": ["workout-save-toggle.spec.ts"],
+  "browserHelpers": ["helpers.ts"]
+}
+```
+
+`browserFiles` and `browserHelpers` are exact basenames from `tests/e2e`. Include
+the workflow dependencies in the helper list. Both Chromium and iPhone WebKit run
+every selected workflow with zero retries. Source bytes must match the candidate
+commit before and after execution. The production rehearsal creates temporary
+accounts only in its labelled disposable database; it retains normal application
+authentication and ownership checks. Registration itself remains covered by the
+full development-server CI suite. This is simulated iPhone WebKit evidence,
+not a physical-device check.
+
+The commit is known before pushing; GitHub's run ID is not. Leave `githubRunId`
+as `null` for the initial updater pause, then pin it to the actual run ID as a
+string. This is the only field excluded from `configHash`. Publication, staging
+and promotion require a pinned run and verify its exact attempt and candidate.
+Changing any deployment identity, schema, source, resource prefix or browser
+selection requires a new output directory. An output ownership marker and each
+receipt's hash prevent mixing configurations.
+
+Run from the configured checkout with Node 22, Python 3, GitHub CLI, Docker CLI
+and non-interactive SSH access available:
+
+```bash
+MAGNI_RELEASE_CONFIG=/private/path/release.json
+python3 scripts/deployment/config.py --config "$MAGNI_RELEASE_CONFIG"
+
+# After committing the candidate, before pushing a branch that publishes latest:
+python3 scripts/deployment/release.py --config "$MAGNI_RELEASE_CONFIG" pause
+
+# Push through the normal workflow, wait for CI, and set githubRunId in the file.
+python3 scripts/deployment/publication.py --config "$MAGNI_RELEASE_CONFIG"
+python3 scripts/deployment/stage.py --config "$MAGNI_RELEASE_CONFIG"
+
+# After reviewing the CI, preservation and browser receipts/screenshots:
+python3 scripts/deployment/release.py --config "$MAGNI_RELEASE_CONFIG" promote \
+  --candidate ghcr.io/example/magni@sha256:REPLACE_WITH_VERIFIED_DIGEST \
+  --browser-result /private/path/to/output/browser-RUN/result.json
+```
+
+`publication.py` requires the CI run to have finished successfully; it does not
+wait or silently retry failed checks. `stage.py` pulls that immutable image and
+runs populated preservation followed by disposable production browser workflows.
+Each phase records its outcome. To repeat only a reviewed staging phase, use
+`release.py ... rehearse --candidate IMAGE` or
+`node scripts/deployment/browser-staging.mjs --config CONFIG --candidate IMAGE`.
+Retain failed attempt folders and inspect their errors; a failed attempt does not
+become passing evidence through a retry threshold.
+
+Promotion checks the same clean commit, exact image ID/digest, eight CI gates,
+complete CI discovery, configured staging cases, schema and successful cleanup.
+It takes a fresh verified online backup, validates the existing data mount and
+Compose target, verifies `latest` still resolves to the staged image, then replaces
+only the app service. It verifies application health and a second backup before
+restoring the same updater container. It never restores the live database.
+If a check fails after the pause, the updater remains paused and the receipt
+identifies the failed phase; inspect it before any recovery action. Staging
+cleanup only removes resources bearing that run's ownership label, and restores
+its database only after stopping its writer and checking for other writers.
+
 ```
 edit code → PR → merge to main (public repo)
         → CI builds + pushes ghcr.io/OWNER/REPO:latest

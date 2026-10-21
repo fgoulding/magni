@@ -5,12 +5,12 @@ import { CalendarAgenda, type AgendaEvent } from "./CalendarAgenda";
 vi.mock("next/navigation",()=>({useRouter:()=>({refresh:vi.fn()})}));
 vi.mock("next/link",()=>({default:({children,href}:{children:React.ReactNode;href:string})=><a href={href}>{children}</a>}));
 const source:AgendaEvent={key:"occurrence-1",occurrenceId:1,revision:1,date:"2090-06-05",title:"Lower",dayName:"Lower",href:"/calendar?workout=occurrence-1",status:"scheduled"};
-beforeEach(()=>{HTMLDialogElement.prototype.showModal=function(){this.setAttribute("open","");};HTMLDialogElement.prototype.close=function(){this.removeAttribute("open");};vi.stubGlobal("fetch",vi.fn());});
+beforeEach(()=>{localStorage.clear();HTMLDialogElement.prototype.showModal=function(){this.setAttribute("open","");};HTMLDialogElement.prototype.close=function(){this.removeAttribute("open");};vi.stubGlobal("fetch",vi.fn());});
 afterEach(()=>{cleanup();vi.unstubAllGlobals();});
 describe("Calendar scheduled-workout correction",()=>{
   it("keeps drag and Move available when a scheduled occurrence is already in progress",async()=>{
     vi.mocked(fetch).mockResolvedValue(new Response(JSON.stringify({id:9,status:"in_progress",date:source.date,revision:2})));
-    render(<CalendarAgenda compact weekStart="2090-06-05" today="2090-06-05" events={[{...source,status:"in_progress",sessionId:9,sessionRevision:1}]}/>);
+    render(<CalendarAgenda userId={71} compact weekStart="2090-06-05" today="2090-06-05" events={[{...source,status:"in_progress",sessionId:9,sessionRevision:1}]}/>);
     expect(screen.getByRole("button",{name:"Drag Lower to another day"})).toBeTruthy();
     fireEvent.click(screen.getByRole("button",{name:"More options for Lower"}));
     fireEvent.click(screen.getByRole("button",{name:"Move"}));
@@ -18,7 +18,7 @@ describe("Calendar scheduled-workout correction",()=>{
     expect(screen.queryByRole("button",{name:"Skip this workout"})).toBeNull();
   });
   it.each(["completed","skipped"])("does not expose moving for %s history",status=>{
-    render(<CalendarAgenda compact weekStart="2090-06-05" today="2090-06-05" events={[{...source,status}]}/>);
+    render(<CalendarAgenda userId={71} compact weekStart="2090-06-05" today="2090-06-05" events={[{...source,status}]}/>);
     expect(screen.queryByRole("button",{name:"Drag Lower to another day"})).toBeNull();
     fireEvent.click(screen.getByRole("button",{name:"More options for Lower"}));
     expect(screen.queryByRole("button",{name:"Move"})).toBeNull();
@@ -28,7 +28,7 @@ describe("Calendar occupied-date choices",()=>{
   it.each(["button", "escape"])("keeps a pending action and later failure visible after %s dismissal", async method=>{
     let resolve!: (value: Response) => void;
     vi.mocked(fetch).mockReturnValue(new Promise<Response>(done=>{resolve=done;}));
-    render(<CalendarAgenda compact weekStart="2090-06-05" today="2090-06-05" events={[source]}/>);
+    render(<CalendarAgenda userId={71} compact weekStart="2090-06-05" today="2090-06-05" events={[source]}/>);
     fireEvent.click(screen.getByRole("button",{name:"More options for Lower"}));
     fireEvent.click(screen.getByRole("button",{name:"Skip this workout"}));
     const dialog=screen.getByRole("dialog");
@@ -37,10 +37,10 @@ describe("Calendar occupied-date choices",()=>{
     expect(dialog.hasAttribute("open")).toBe(true);
     await act(async()=>resolve(new Response(JSON.stringify({error:"Temporary save failure"}),{status:503})));
     expect(within(screen.getByRole("dialog")).getByRole("alert").textContent).toBe("Temporary save failure");
-    expect((screen.getByRole("button",{name:"Skip this workout"}) as HTMLButtonElement).disabled).toBe(false);
+    expect((screen.getByRole("button",{name:"Retry calendar change"}) as HTMLButtonElement).disabled).toBe(false);
   });
   it("collapses workout descriptions while retaining names and rearrangement actions",()=>{
-    render(<CalendarAgenda compact weekStart="2090-06-05" today="2090-06-05" events={[{...source,programName:"Build program",summary:"Squat 3 by 5 at 200 lb"}]}/>);
+    render(<CalendarAgenda userId={71} compact weekStart="2090-06-05" today="2090-06-05" events={[{...source,programName:"Build program",summary:"Squat 3 by 5 at 200 lb"}]}/>);
     expect(screen.getByText("Lower")).toBeTruthy();
     expect(screen.queryByText("Build program")).toBeNull();
     expect(screen.queryByText("Squat 3 by 5 at 200 lb")).toBeNull();
@@ -50,7 +50,7 @@ describe("Calendar occupied-date choices",()=>{
     expect(screen.getByRole("button",{name:"Drag Lower to another day"})).toBeTruthy();
   });
   it.each(["completed","skipped","in_progress"])("discloses %s unplanned history before writing and offers no unavailable swap",status=>{
-    render(<CalendarAgenda weekStart="2090-06-05" today="2090-06-05" events={[source,{key:"history-2",date:"2090-06-06",title:"Independent",dayName:"Independent",status,href:"/calendar?workout=history-2"}]}/>);
+    render(<CalendarAgenda userId={71} weekStart="2090-06-05" today="2090-06-05" events={[source,{key:"history-2",date:"2090-06-06",title:"Independent",dayName:"Independent",status,href:"/calendar?workout=history-2"}]}/>);
     fireEvent.click(screen.getByRole("button",{name:"Move"}));
     fireEvent.click(within(screen.getByRole("dialog")).getByRole("button",{name:"Tue, Jun 6"}));
     expect(within(screen.getByRole("dialog")).getByText(/already has Independent/)).toBeTruthy();
@@ -59,7 +59,7 @@ describe("Calendar occupied-date choices",()=>{
     expect(screen.getByRole("button",{name:"Move here · keep both"})).toBeTruthy();
   });
   it("offers swap only for an unstarted scheduled occurrence among all workouts on the date",()=>{
-    render(<CalendarAgenda weekStart="2090-06-05" today="2090-06-05" events={[source,...["scheduled","in_progress","completed","skipped"].map((status,index)=>({...source,key:`occurrence-${index+2}`,occurrenceId:index+2,date:"2090-06-06",dayName:status,status}))]}/>);
+    render(<CalendarAgenda userId={71} weekStart="2090-06-05" today="2090-06-05" events={[source,...["scheduled","in_progress","completed","skipped"].map((status,index)=>({...source,key:`occurrence-${index+2}`,occurrenceId:index+2,date:"2090-06-06",dayName:status,status}))]}/>);
     fireEvent.click(screen.getAllByRole("button",{name:"Move"})[0]);
     fireEvent.click(within(screen.getByRole("dialog")).getByRole("button",{name:"Tue, Jun 6"}));
     expect(screen.getAllByRole("button",{name:/Swap with/}).map(button=>button.textContent)).toEqual(["Swap with scheduled"]);

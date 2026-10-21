@@ -61,8 +61,26 @@ function readMetadata(json: string): EditorSetMetadata {
 
 /** Resolve only pending prescriptions. Started sessions use their persisted values. */
 export function resolveEditorPrescription(set: EditorPrescriptionSet, runId: number): EditorPrescriptionSet {
+  return resolvePrescription(set,runId,readState);
+}
+
+/** One preview gets one state snapshot per lift; no cache survives the caller. */
+export function createEditorPrescriptionResolver(runId: number): (set: EditorPrescriptionSet) => EditorPrescriptionSet {
+  const states = new Map<string, StoredState>();
+  return set => resolvePrescription(set,runId,(id,metadata) => {
+    const key = JSON.stringify([metadata.versionId,metadata.progressionKey]);
+    let state = states.get(key);
+    if (!state) {
+      state = readState(id,metadata);
+      states.set(key,state);
+    }
+    return state;
+  });
+}
+
+function resolvePrescription(set: EditorPrescriptionSet, runId: number, stateFor: typeof readState): EditorPrescriptionSet {
   const metadata = readMetadata(JSON.stringify(set.editor));
-  const { state } = readState(runId, metadata);
+  const { state } = stateFor(runId, metadata);
   let resolved: ReturnType<typeof resolveEditorSetPrescription>;
   try { resolved = resolveEditorSetPrescription({ ...metadata, state }); }
   catch (error) { executionError(error instanceof Error ? error.message : "The frozen prescription could not be resolved."); }

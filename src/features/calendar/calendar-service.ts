@@ -52,6 +52,10 @@ function requestFingerprint(body: Body): string {
   return JSON.stringify(Object.fromEntries(Object.entries(body).filter(([key]) => key !== "requestKey").sort(([a],[b]) => a.localeCompare(b))));
 }
 function conflictsAt(userId: number, dates: string[], excluded: number[]) {
+  const targets=[...new Set(dates)];
+  if(!targets.length)return [];
+  const placeholders=targets.map(()=>"?").join(",");
+  const exclusion=excluded.length?` AND o.id NOT IN (${excluded.map(()=>"?").join(",")})`:"";
   const rows=db.prepare(`SELECT 'occurrence-' || o.id AS key,o.id,
     CASE WHEN o.status IN ('in_progress','completed') THEN COALESCE(s.date,o.scheduled_date) ELSE o.scheduled_date END AS date,
     o.day_name AS name,o.revision,
@@ -60,12 +64,13 @@ function conflictsAt(userId: number, dates: string[], excluded: number[]) {
     LEFT JOIN sessions s ON s.occurrence_id=o.id
     WHERE o.user_id=? AND (o.status IN ('in_progress','completed','skipped')
       OR (pr.status='active' AND pr.archived_at IS NULL AND pr.schedule_mode='scheduled'))
+      AND CASE WHEN o.status IN ('in_progress','completed') THEN COALESCE(s.date,o.scheduled_date) ELSE o.scheduled_date END IN (${placeholders})${exclusion}
     UNION ALL SELECT 'session-' || s.id AS key,NULL AS id,s.date,
       COALESCE(NULLIF(s.day_name,''),'Quick workout') AS name,s.revision,0 AS canSwap
     FROM sessions s WHERE s.user_id=? AND s.occurrence_id IS NULL
-      AND s.status IN ('in_progress','completed','skipped')`).all(userId,userId) as (Omit<CalendarConflict,"canSwap">&{canSwap:number})[];
-  return rows.filter(row=>dates.includes(row.date) && (row.id===null || !excluded.includes(row.id)))
-    .map(row=>({...row,canSwap:!!row.canSwap}));
+      AND s.status IN ('in_progress','completed','skipped') AND s.date IN (${placeholders})`)
+    .all(userId,...targets,...excluded,userId,...targets) as (Omit<CalendarConflict,"canSwap">&{canSwap:number})[];
+  return rows.map(row=>({...row,canSwap:!!row.canSwap}));
 }
 function runState(row:Row):RunState {
   return db.prepare("SELECT pr.id,p.id AS programId,pr.status,p.is_active,pr.archived_at FROM program_runs pr JOIN programs p ON p.program_run_id=pr.id WHERE pr.id=? AND p.id=?").get(row.program_run_id,row.program_id) as RunState;

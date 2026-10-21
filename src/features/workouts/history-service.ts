@@ -10,12 +10,12 @@ import { attachSessionExerciseSources, requireOwnedExercise, resolveSetExerciseI
 export class WorkoutError extends Error {
   constructor(public status: number, message: string) { super(message); this.name = "WorkoutError"; }
 }
-const itemSelect = `SELECT s.*,
+const itemProjection = `SELECT s.*,
   CASE WHEN s.program_name='' OR (s.program_id IS NULL AND s.program_run_id IS NULL AND s.program_name='Quick Workout') THEN COALESCE(NULLIF(s.day_name,''),'Quick Workout') ELSE s.program_name || ' · ' || s.day_name END AS name,
   COALESCE(SUM(CASE WHEN ss.actual_reps IS NOT NULL THEN ss.actual_reps * COALESCE(ss.actual_weight,0) * MAX(ss.sets,1) ELSE 0 END),0) AS volume,
   COALESCE(SUM(CASE WHEN ss.actual_reps IS NOT NULL THEN MAX(ss.sets,1) ELSE 0 END),0) AS loggedSets,
-  COALESCE(SUM(CASE WHEN ss.id IS NOT NULL THEN MAX(ss.sets,1) ELSE 0 END),0) AS totalSets
-  FROM sessions s LEFT JOIN session_sets ss ON ss.session_id=s.id`;
+  COALESCE(SUM(CASE WHEN ss.id IS NOT NULL THEN MAX(ss.sets,1) ELSE 0 END),0) AS totalSets`;
+const itemSelect = `${itemProjection} FROM sessions s LEFT JOIN session_sets ss ON ss.session_id=s.id`;
 
 function validDate(value: unknown): string {
   if (typeof value !== "string" || !/^\d{4}-\d{2}-\d{2}$/.test(value)) throw new WorkoutError(400, "Enter a valid workout date.");
@@ -66,7 +66,10 @@ export function listWorkouts(userId: number, before?: string): WorkoutHistoryIte
   const [date, id] = before?.split(":") ?? [];
   if (date) validDate(date);
   if (id !== undefined && (!/^\d+$/.test(id) || !Number.isSafeInteger(Number(id)))) throw new WorkoutError(400, "Use a valid history cursor.");
-  return db.prepare(`${itemSelect} WHERE s.user_id=? AND (? IS NULL OR s.date<? OR (s.date=? AND s.id<?)) GROUP BY s.id ORDER BY s.date DESC,s.id DESC LIMIT 100`).all(userId, date ?? null, date ?? null, id ? date : null, id ? Number(id) : 0) as WorkoutHistoryItem[];
+  return db.prepare(`WITH page AS (SELECT * FROM sessions s
+    WHERE s.user_id=? AND (? IS NULL OR s.date<? OR (s.date=? AND s.id<?)) ORDER BY s.date DESC,s.id DESC LIMIT 100)
+    ${itemProjection} FROM page s LEFT JOIN session_sets ss ON ss.session_id=s.id
+    GROUP BY s.id ORDER BY s.date DESC,s.id DESC`).all(userId, date ?? null, date ?? null, id ? date : null, id ? Number(id) : 0) as WorkoutHistoryItem[];
 }
 
 type SavedExercise = { name: string; catalogExerciseId?: string; sets: { reps: number; weight: number }[] };

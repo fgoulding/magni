@@ -3,7 +3,7 @@ import "@testing-library/jest-dom/vitest";
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { QuickWorkout } from "./QuickWorkout";
+import { QuickWorkout, type QuickSession } from "./QuickWorkout";
 vi.mock("next/navigation", () => ({ useRouter: () => ({ replace: vi.fn(), refresh: vi.fn() }) }));
 
 const initialSession = {
@@ -360,4 +360,218 @@ it("keeps distinct same-name exercises separate when their saved exercise identi
   const session = { ...initialSession, sets: [{ ...initialSession.sets[0], exercise_key: "first" }, { ...initialSession.sets[0], id: 8, exercise_key: "second" }] };
   render(<QuickWorkout initialSession={session} />);
   expect(screen.getAllByText("Dumbbell Row")).toHaveLength(2);
+});
+
+it("keeps newer session metadata when two set acknowledgements arrive in reverse revision order", async () => {
+  const session = { ...initialSession, name: "Initial", date: "2026-10-21", revision: 1, sets: [...initialSession.sets, { ...initialSession.sets[0], id: 8, set_number: 2 }] };
+  const resolvers: ((value: Response) => void)[] = [];
+  const fetchMock = vi.fn((url: string) => url.endsWith("/sets") ? new Promise<Response>(resolve => { resolvers.push(resolve); }) : Promise.resolve(response({ ...session, revision: 4 })));
+  vi.stubGlobal("fetch", fetchMock);
+  render(<QuickWorkout initialSession={session} />);
+  editReps("7");
+  fireEvent.change(screen.getByRole("spinbutton", { name: "Reps for set 2" }), { target: { value: "8" } });
+  fireEvent.click(screen.getByRole("button", { name: "Save set 1" }));
+  fireEvent.click(screen.getByRole("button", { name: "Save set 2" }));
+  await act(async () => resolvers[1](response({ actual_reps: 8, actual_weight: 40, sessionRevision: 3, sessionMetadata: { name: "Latest", date: "2026-10-22", unit: "lb", revision: 3 } })));
+  await act(async () => resolvers[0](response({ actual_reps: 7, actual_weight: 40, sessionRevision: 2, sessionMetadata: { name: "Older", date: "2026-10-21", unit: "lb", revision: 2 } })));
+  expect(screen.getByRole("heading", { name: "Latest" })).toBeVisible();
+  expect(screen.getByRole("button", { name: "Undo set 1" })).toBeEnabled();
+  expect(screen.getByRole("button", { name: "Undo set 2" })).toBeEnabled();
+  fireEvent.click(screen.getByRole("button", { name: "Edit workout" }));
+  expect(screen.getByLabelText("Workout date")).toHaveValue("2026-10-22");
+  fireEvent.change(screen.getByLabelText("Workout name"), { target: { value: "After both saves" } });
+  fireEvent.click(screen.getByRole("button", { name: "Save workout changes" }));
+  await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(3));
+  expect(JSON.parse((fetchMock.mock.calls[2] as unknown as [string, RequestInit])[1].body as string)).toMatchObject({ expectedRevision: 3 });
+});
+
+it("replays the original append after a lost response, changed source actuals and remount, then allows Finish", async () => {
+  const session = { ...initialSession, id: 642, revision: 1 };
+  const added = { ...session.sets[0], id: 8, set_number: 2, actual_reps: null, actual_weight: null };
+  let current: QuickSession = { ...session, sets: [...session.sets] };
+  const commands: string[] = [];
+  const fetchMock = vi.fn(async (url: string, init?: RequestInit) => {
+    if (init?.method === "POST") {
+      commands.push(String(init.body));
+      if (commands.length === 1) { current = { ...current, revision: 2, sets: [...current.sets, added] }; throw new Error("Append response lost"); }
+      if (commands.at(-1) !== commands[0]) return response({ error: "Retry key changed payload" }, 409);
+      if (commands.length === 2) throw new Error("Retry response lost");
+      return response(current);
+    }
+    if (url.endsWith("/sets") && init?.method === "PUT") {
+      current = { ...current, revision: 3, sets: current.sets.map(set => set.id === 7 ? { ...set, actual_reps: 7, actual_weight: 45 } : set) };
+      return response({ actual_reps: 7, actual_weight: 45, sessionRevision: 3 });
+    }
+    if (init?.method === "PATCH") return response({ loggedCount: 1, skippedCount: 1, volume: 315 });
+    return response(current);
+  });
+  vi.stubGlobal("fetch", fetchMock);
+  const first = render(<QuickWorkout initialSession={session} />);
+  fireEvent.click(screen.getByRole("button", { name: "Edit workout" }));
+  fireEvent.click(screen.getByRole("button", { name: "Add similar set" }));
+  await screen.findByText("Append response lost");
+  fireEvent.click(screen.getByRole("button", { name: "Hide workout editor" }));
+  editReps("7");
+  fireEvent.change(screen.getByRole("spinbutton", { name: "Weight for set 1" }), { target: { value: "45" } });
+  fireEvent.click(screen.getByRole("button", { name: "Save set 1" }));
+  await waitFor(() => expect(screen.getByRole("button", { name: "Undo set 1" })).toBeEnabled());
+  fireEvent.click(screen.getByRole("button", { name: "Edit workout" }));
+  fireEvent.click(screen.getByRole("button", { name: "Retry add set" }));
+  await screen.findByText("Retry response lost");
+  first.unmount(); render(<QuickWorkout initialSession={current} />);
+  expect(screen.getByRole("button", { name: "Finish workout" })).toBeDisabled();
+  fireEvent.click(screen.getByRole("button", { name: "Edit workout" }));
+  fireEvent.click(screen.getByRole("button", { name: "Retry add set" }));
+  await waitFor(() => expect(screen.getByRole("button", { name: "Finish workout" })).toBeEnabled());
+  expect(commands).toHaveLength(3); expect(commands[1]).toBe(commands[0]); expect(commands[2]).toBe(commands[0]);
+  expect(current.sets).toHaveLength(2);
+  expect(screen.getByRole("spinbutton", { name: "Reps for set 1" })).toHaveValue(7);
+  fireEvent.click(screen.getByRole("button", { name: "Finish workout" }));
+  await screen.findByText("Quick workout complete");
+});
+
+it("reviews legacy pending append state without guessing its old payload or erasing row drafts", async () => {
+  const session = { ...initialSession, id: 643, revision: 3 };
+  localStorage.setItem("magni.quick.643.append", JSON.stringify({ setId: 7, requestKey: "legacy-append-key" }));
+  localStorage.setItem("magni.quick-workout.643.draft.v1", JSON.stringify({ 7: { reps: "8", weight: "42.5", base: { reps: 10, weight: 40 } } }));
+  const rowDraft = localStorage.getItem("magni.quick-workout.643.draft.v1");
+  const fetchMock = vi.fn().mockResolvedValue(response(session));
+  vi.stubGlobal("fetch", fetchMock);
+  const { QuickWorkoutEditor } = await import("./QuickWorkoutEditor");
+  render(<QuickWorkoutEditor session={session} disabled={false} onChanged={vi.fn()} onError={vi.fn()} />);
+  fireEvent.click(screen.getByRole("button", { name: "Edit workout" }));
+  fireEvent.click(screen.getByRole("button", { name: "Review saved sets" }));
+  fireEvent.click(await screen.findByRole("button", { name: "Keep saved sets" }));
+  expect(fetchMock).toHaveBeenCalledTimes(1);
+  expect(fetchMock).toHaveBeenCalledWith("/api/sessions/643", expect.objectContaining({ method: "GET" }));
+  expect(localStorage.getItem("magni.quick.643.append")).toBeNull();
+  expect(localStorage.getItem("magni.quick-workout.643.draft.v1")).toBe(rowDraft);
+});
+
+it("retries a persisted append even when its original row is missing after reload", async () => {
+  const pending = { setId: 7, requestKey: "append-with-missing-row", body: { name: "Dumbbell Row", prescription: [{ reps: 10, weight: 40 }], appendToSetId: 7, requestKey: "append-with-missing-row" } };
+  const session = { ...initialSession, id: 644, revision: 4, sets: [{ ...initialSession.sets[0], id: 8 }] };
+  localStorage.setItem("magni.quick.644.append", JSON.stringify(pending));
+  const fetchMock = vi.fn(async () => response(session)); vi.stubGlobal("fetch", fetchMock);
+  render(<QuickWorkout initialSession={session} />);
+  fireEvent.click(screen.getByRole("button", { name: "Edit workout" }));
+  fireEvent.click(screen.getByRole("button", { name: "Retry add set" }));
+  await waitFor(() => expect(screen.getByRole("button", { name: "Finish workout" })).toBeEnabled());
+  expect(fetchMock).toHaveBeenNthCalledWith(1, "/api/sessions/644/sets", expect.objectContaining({ body: JSON.stringify(pending.body) }));
+  expect(fetchMock).toHaveBeenNthCalledWith(2, "/api/sessions/644", expect.objectContaining({ method: "GET" }));
+});
+
+it("shows actual saved values for a legacy append review and requires refreshing a stale review", async () => {
+  const { QuickWorkoutEditor } = await import("./QuickWorkoutEditor");
+  const session = { ...initialSession, id: 645, revision: 3, unit: "lb" as const };
+  localStorage.setItem("magni.quick.645.append", JSON.stringify({ setId: 7, requestKey: "legacy-review-key" }));
+  const fetchMock = vi.fn(async () => response(session)); vi.stubGlobal("fetch", fetchMock);
+  const changed = vi.fn();
+  const view = render(<QuickWorkoutEditor session={session} disabled={false} onChanged={changed} onError={vi.fn()} />);
+  fireEvent.click(screen.getByRole("button", { name: "Edit workout" }));
+  fireEvent.click(screen.getByRole("button", { name: "Review saved sets" }));
+  expect(await screen.findByText("Dumbbell Row · Set 1: 10 reps · 40 lb saved")).toBeVisible();
+  view.rerender(<QuickWorkoutEditor session={{ ...session, revision: 4 }} disabled={false} onChanged={changed} onError={vi.fn()} />);
+  expect(screen.getByRole("button", { name: "Keep saved sets" })).toBeDisabled();
+  fireEvent.click(screen.getByRole("button", { name: "Keep saved sets" }));
+  expect(changed).not.toHaveBeenCalled();
+  expect(localStorage.getItem("magni.quick.645.append")).not.toBeNull();
+});
+
+it("prevents append writes without durable storage and never offers to accept a failed legacy review", async () => {
+  const { QuickWorkoutEditor } = await import("./QuickWorkoutEditor");
+  const fetchMock = vi.fn(); vi.stubGlobal("fetch", fetchMock);
+  const error = vi.fn();
+  const first = render(<QuickWorkoutEditor session={{ ...initialSession, id: 646 }} disabled={false} onChanged={vi.fn()} onError={error} />);
+  fireEvent.click(screen.getByRole("button", { name: "Edit workout" }));
+  const storage = vi.spyOn(localStorage, "setItem").mockImplementation(() => { throw new Error("Full"); });
+  fireEvent.click(screen.getByRole("button", { name: "Add similar set" }));
+  expect(fetchMock).not.toHaveBeenCalled(); expect(error).toHaveBeenCalledWith(expect.stringContaining("Device storage is unavailable"));
+  storage.mockRestore(); first.unmount();
+  localStorage.setItem("magni.quick.647.append", JSON.stringify({ setId: 7, requestKey: "legacy-review-failed" }));
+  fetchMock.mockRejectedValue(new Error("Review unavailable"));
+  render(<QuickWorkoutEditor session={{ ...initialSession, id: 647 }} disabled={false} onChanged={vi.fn()} onError={error} />);
+  fireEvent.click(screen.getByRole("button", { name: "Edit workout" }));
+  fireEvent.click(screen.getByRole("button", { name: "Review saved sets" }));
+  expect(screen.queryByRole("button", { name: "Keep saved sets" })).not.toBeInTheDocument();
+  await waitFor(() => expect(error).toHaveBeenCalledWith("Review unavailable"));
+  expect(screen.queryByRole("button", { name: "Keep saved sets" })).not.toBeInTheDocument();
+  expect(localStorage.getItem("magni.quick.647.append")).not.toBeNull();
+});
+
+it("keeps revision3 when an earlier exercise-add revision2 acknowledgement arrives last",async()=>{
+ const session = { ...initialSession, id: 648, name: "Initial", date: "2026-10-21", revision: 1 };
+ let added!:(value:Response)=>void;let logged!:(value:Response)=>void;
+ const writes:RequestInit[]=[];
+ vi.stubGlobal("fetch",vi.fn(async(url:string,init?:RequestInit)=>{
+  if(url.endsWith("/sets")&&init?.method==="POST")return new Promise<Response>(resolve=>{added=resolve;});
+  if(url.endsWith("/sets")&&init?.method==="PUT")return new Promise<Response>(resolve=>{logged=resolve;});
+  if(init?.method==="PUT"){writes.push(init);return response({...session,revision:4});}
+  return response([]);
+ }));
+ render(<QuickWorkout initialSession={session}/>);
+ fireEvent.click(screen.getByRole("button",{name:"Add exercise"}));
+ fireEvent.change(screen.getByLabelText("New exercise name"),{target:{value:"Curl"}});
+ fireEvent.click(screen.getByRole("button",{name:"Add to workout"}));
+ fireEvent.change(screen.getByRole("spinbutton",{name:"Reps for set 1"}),{target:{value:"7"}});
+ fireEvent.click(screen.getByRole("button",{name:"Save set 1"}));
+ await act(async()=>logged(response({actual_reps:7,actual_weight:40,sessionRevision:3})));
+ await act(async()=>added(response({sets:[{...session.sets[0],id:8,exercise_name:"Curl",exercise_key:"curl",actual_reps:null,actual_weight:null}],sessionRevision:2})));
+ fireEvent.click(screen.getByRole("button",{name:"Edit workout"}));
+ fireEvent.change(screen.getByLabelText("Workout name"),{target:{value:"After concurrent writes"}});
+ fireEvent.click(screen.getByRole("button",{name:"Save workout changes"}));
+ await waitFor(()=>expect(writes).toHaveLength(1));
+ expect(JSON.parse(String(writes[0].body)).expectedRevision).toBe(3);
+});
+
+it("prevents a row write during an append's canonical read, preserving the new row and later edits", async () => {
+  const session = { ...initialSession, id: 649, name: "Initial", revision: 1 };
+  const appended = { ...session.sets[0], id: 8, set_number: 2, actual_reps: null, actual_weight: null };
+  let read!: (response: Response) => void;
+  const fetchMock = vi.fn(async (url: string, init?: RequestInit) => {
+    if (init?.method === "POST") return response({ sets: [appended], sessionRevision: 2 });
+    if (init?.method === "GET") return new Promise<Response>(resolve => { read = resolve; });
+    if (url.endsWith("/sets")) return response({ actual_reps: 7, actual_weight: 40, sessionRevision: 3 });
+    return response({ ...session, sets: [session.sets[0], appended], revision: 4 });
+  });
+  vi.stubGlobal("fetch", fetchMock);
+  render(<QuickWorkout initialSession={session} />);
+  fireEvent.click(screen.getByRole("button", { name: "Edit workout" }));
+  fireEvent.click(screen.getByRole("button", { name: "Add similar set" }));
+  await waitFor(() => expect(read).toBeDefined());
+  expect(screen.getByRole("spinbutton", { name: "Reps for set 1" })).toBeDisabled();
+  expect(screen.getByRole("button", { name: "Undo set 1" })).toBeDisabled();
+  fireEvent.click(screen.getByRole("button", { name: "Undo set 1" }));
+  expect(fetchMock.mock.calls.filter(([, init]) => init?.method === "PUT")).toHaveLength(0);
+  expect(screen.getByRole("button", { name: "Add exercise" })).toBeDisabled();
+  expect(screen.getByRole("button", { name: "Delete workout" })).toBeDisabled();
+  expect(screen.getByRole("button", { name: "Finish workout" })).toBeDisabled();
+  await act(async () => read(response({ ...session, sets: [session.sets[0], appended], revision: 2 })));
+  expect(screen.getByRole("spinbutton", { name: "Reps for set 1" })).toBeEnabled();
+  expect(screen.getByRole("spinbutton", { name: "Reps for set 2" })).toHaveValue(10);
+  editReps("7"); fireEvent.click(screen.getByRole("button", { name: "Save set 1" }));
+  await waitFor(() => expect(screen.getByRole("button", { name: "Undo set 1" })).toBeEnabled());
+  expect(screen.getByRole("spinbutton", { name: "Reps for set 1" })).toHaveValue(7);
+  fireEvent.change(screen.getByLabelText("Workout name"), { target: { value: "After concurrent writes" } });
+  fireEvent.click(screen.getByRole("button", { name: "Save workout changes" }));
+  await waitFor(() => expect(fetchMock.mock.calls.filter(([url, init]) => !url.endsWith("/sets") && init?.method === "PUT")).toHaveLength(1));
+  const [, write] = fetchMock.mock.calls.find(([url, init]) => !url.endsWith("/sets") && init?.method === "PUT")!;
+  expect(JSON.parse(String(write?.body)).expectedRevision).toBe(3);
+});
+
+it("offers canonical review after a confirmed missing-source append rejection without dropping its pending intent early", async () => {
+  const pending = { setId: 7, requestKey: "removed-source-key", body: { name: "Dumbbell Row", prescription: [{ reps: 10, weight: 40 }], appendToSetId: 7, requestKey: "removed-source-key" } };
+  const session = { ...initialSession, id: 650, revision: 4, sets: [{ ...initialSession.sets[0], id: 8 }] };
+  localStorage.setItem("magni.quick.650.append", JSON.stringify(pending));
+  const fetchMock = vi.fn(async (_url: string, init?: RequestInit) => init?.method === "POST" ? response({ error: "Exercise not found in this workout." }, 404) : response(session));
+  vi.stubGlobal("fetch", fetchMock);
+  render(<QuickWorkout initialSession={session} />);
+  fireEvent.click(screen.getByRole("button", { name: "Edit workout" }));
+  fireEvent.click(screen.getByRole("button", { name: "Retry add set" }));
+  await screen.findByText("Exercise not found in this workout.");
+  expect(screen.getByRole("button", { name: "Finish workout" })).toBeDisabled();
+  fireEvent.click(screen.getByRole("button", { name: "Review saved sets" }));
+  fireEvent.click(await screen.findByRole("button", { name: "Keep saved sets" }));
+  expect(screen.getByRole("button", { name: "Finish workout" })).toBeEnabled();
+  expect(fetchMock.mock.calls.filter(([, init]) => init?.method === "POST")).toHaveLength(1);
 });

@@ -152,6 +152,50 @@ it("retains ambiguity outside a program filter or catalog-name search",()=>{
  expect(queries.listProgressExercises(owner,{search:"Unique search title"}).items).toMatchObject([{kind:"unlinked",key:groupKey("row"),historyCount:2}]);
  expect(queries.resolveUnlinkedExerciseId(owner,groupKey("row"))).toBeNull();
 });
+it.each([0,4])("loads a finder page with a fixed query budget with %i pins",(pinCount)=>{
+ const pins=catalogIds.slice(0,pinCount);
+ database.db.prepare("INSERT INTO user_settings(user_id,key,value) VALUES (?,'progress_pins_v1',?) ON CONFLICT(user_id,key) DO UPDATE SET value=excluded.value").run(userId,JSON.stringify(pins));
+ const prepare=vi.spyOn(database.db,"prepare");
+ let page:ReturnType<typeof queries.listProgressExercises>;
+ try {
+  page=queries.listProgressExercises(userId,{sort:"name",period:"all"});
+  expect(prepare.mock.calls.length).toBeLessThanOrEqual(14);
+ } finally {prepare.mockRestore();}
+ expect(page.items).toHaveLength(20);
+ expect(page.items.map(row=>({name:row.name,sets:row.exercise?.recordedSets,sessions:row.exercise?.sessionCount,pinned:row.exercise?.pinned})))
+  .toEqual(Array.from({length:20},(_,i)=>({name:`Lift ${String(i).padStart(4,"0")}`,sets:1,sessions:1,pinned:i<pinCount})));
+ expect(page.items.every(row=>row.latest?.reps===10&&row.latest.weight===40)).toBe(true);
+});
+
+it("uses the catalog identity index when summarizing a selected exercise",()=>{
+ const prepare=vi.spyOn(database.db,"prepare");
+ let sql:string|undefined;
+ try {
+  queries.getExerciseDetail(userId,catalogIds[0]);
+  sql=prepare.mock.calls.find(([query])=>query.includes("AS sessionCount"))?.[0];
+ } finally {prepare.mockRestore();}
+ expect(sql).toBeDefined();
+ const plan=database.db.prepare(`EXPLAIN QUERY PLAN ${sql}`).all(userId,catalogIds[0]) as {detail:string}[];
+ // Assert the relevant lookup, not SQLite's entire planner-dependent join order.
+ expect(plan.some(row=>row.detail.includes("idx_exercise_set_sources_catalog")&&row.detail.includes("exercise_id=?"))).toBe(true);
+});
+
+it("loads latest-set details only from the latest qualifying session of each exercise",()=>{
+ const owner=Number(database.db.prepare("INSERT INTO users(email,password_hash) VALUES ('latest-bounded@example.test','hash')").run().lastInsertRowid);
+ const known=quickRecord(owner,"Latest bounded");
+ let latest=known;
+ for(let i=0;i<39;i++)latest=quickRecord(owner,"Latest bounded","2026-10-06",known.exerciseId);
+ let reads=0;
+ database.db.function("audit_progress_weight",value=>{reads++;return value;});
+ const prepare=database.db.prepare.bind(database.db);
+ const spy=vi.spyOn(database.db,"prepare").mockImplementation(sql=>prepare(sql.replaceAll("ss.actual_weight","audit_progress_weight(ss.actual_weight)")));
+ try {
+  const page=queries.listProgressExercises(owner);
+  expect(page.items).toMatchObject([{exercise:{sessionCount:40,recordedSets:40},latest:{sessionId:latest.sessionId,reps:10,weight:40}}]);
+  expect(reads).toBeLessThanOrEqual(4);
+ } finally {spy.mockRestore();}
+});
+
 it("bounds home, search and alphabetical pages with 1000 exercise names",()=>{
  catalogIds.slice(0,4).forEach(exerciseId=>identity.updateExercisePin(userId,{exerciseId,pinned:true}));
  const home=queries.getProgressHome(userId,{period:"all"},new Date("2026-10-06T12:00:00Z"));

@@ -1,4 +1,5 @@
 "use client";
+import { createSetDraftStore } from "./set-draft-store";
 
 import Link from "next/link";
 import { useRouter } from "next/navigation";
@@ -34,6 +35,7 @@ export function QuickWorkout({ initialSession, initialDate, todayOnly = false, t
   const hydrated = useSyncExternalStore(subscribeHydration, () => true, () => false);
   const [startDraft, storeStart] = useWorkoutDraft<{ name: string; date: string; unit: "lb" | "kg"; requestKey?: string }>(`magni.quick.start.${initialDate ?? "today"}`, { name: "Quick Workout", date: initialDate ?? "", unit: "lb" });
   const [session, setSession] = useState<QuickSession | null>(initialSession);
+  const [editorBusy, setEditorBusy] = useState(false);
   const draftSnapshot = useSyncExternalStore(subscribeDrafts, () => readDraftSnapshot(session?.id), () => null);
   const drafts = useMemo(() => parseDrafts(draftSnapshot), [draftSnapshot]);
   const [savingIds, setSavingIds] = useState<Set<number>>(new Set());
@@ -49,7 +51,7 @@ export function QuickWorkout({ initialSession, initialDate, todayOnly = false, t
   const [recap, setRecap] = useState<Recap | null>(null);
   const [discarding, setDiscarding] = useState(false);
   const finishNeedsRecovery = failedIds.size > 0 || Object.keys(conflicts).length > 0 || session?.sets.some(set => drafts[set.id]?.intent === "undo");
-  const finishBlocked = !hydrated || finishing || discarding || !!structureDraft || !!newExerciseDraft || !!appendDraft || savingIds.size > 0 || !!finishNeedsRecovery;
+  const finishBlocked = !hydrated || editorBusy || finishing || discarding || !!structureDraft || !!newExerciseDraft || !!appendDraft || savingIds.size > 0 || !!finishNeedsRecovery;
   const startLocked = !hydrated || starting || !!startDraft.requestKey;
 
   function editStart(change: Partial<Pick<typeof startDraft, "name" | "date" | "unit">>) {
@@ -91,7 +93,7 @@ export function QuickWorkout({ initialSession, initialDate, todayOnly = false, t
 
   function onAdded(newSets: WorkoutSet[], revision?: number) {
     setError("");
-    setSession((prev) => (prev ? { ...prev, revision: revision ?? prev.revision, sets: [...prev.sets, ...newSets.filter((set) => !prev.sets.some((existing) => existing.id === set.id))] } : prev));
+    setSession((prev) => (prev ? { ...prev, revision: revision === undefined ? prev.revision : Math.max(revision, prev.revision ?? 0), sets: [...prev.sets, ...newSets.filter((set) => !prev.sets.some((existing) => existing.id === set.id))] } : prev));
   }
 
   function inputValues(set: WorkoutSet): SetDraft {
@@ -113,7 +115,7 @@ export function QuickWorkout({ initialSession, initialDate, todayOnly = false, t
   }
 
   async function logSet(set: WorkoutSet, undo = false) {
-    if (!hydrated || !session || structureDraft || savingIds.has(set.id)) return;
+    if (!hydrated || !session || editorBusy || structureDraft || savingIds.has(set.id)) return;
     const entered = inputValues(set);
     const submitted: SetDraft = { ...entered, base: entered.base ?? { reps: set.actual_reps, weight: set.actual_weight }, intent: undo ? "undo" : undefined };
     const actualReps = undo ? null : Number(submitted.reps);
@@ -151,12 +153,17 @@ export function QuickWorkout({ initialSession, initialDate, todayOnly = false, t
         }
         throw new Error(acknowledged?.error ?? (undo ? "Could not confirm Undo. Retry undo before finishing." : "Could not confirm the saved set. Retry saving."));
       }
-      setSession((previous) => previous?.id === session.id ? {
-        ...previous,
-        ...acknowledged.sessionMetadata,
-        revision: acknowledged.sessionRevision ?? previous.revision,
-        sets: previous.sets.map((row) => row.id === set.id ? { ...row, actual_reps: actualReps, actual_weight: actualWeight } : row),
-      } : previous);
+      setSession(previous => {
+        if (previous?.id !== session.id) return previous;
+        // Different rows can save concurrently. Each row is acknowledged, but
+        // an older response must not roll back the session's metadata baseline.
+        const revision = acknowledged.sessionRevision ?? acknowledged.sessionMetadata?.revision;
+        const metadata = revision !== undefined && revision >= (previous.revision ?? 0)
+          ? { ...acknowledged.sessionMetadata, revision } : {};
+        return { ...previous, ...metadata,
+          sets: previous.sets.map(row => row.id === set.id ? { ...row, actual_reps: actualReps, actual_weight: actualWeight } : row),
+        };
+      });
       const pending = parseDrafts(readDraftSnapshot(session.id));
       // A response acknowledges only the submitted values, never edits made while it was in flight.
       if (pending[set.id]?.reps === submitted.reps && pending[set.id]?.weight === submitted.weight) {
@@ -207,7 +214,7 @@ export function QuickWorkout({ initialSession, initialDate, todayOnly = false, t
   }
 
   async function discard() {
-    if (!hydrated || !session || discarding || finishing || savingIds.size > 0) return;
+    if (!hydrated || !session || editorBusy || discarding || finishing || savingIds.size > 0) return;
     setDiscarding(true);
     setError("");
     try {
@@ -296,7 +303,7 @@ export function QuickWorkout({ initialSession, initialDate, todayOnly = false, t
 
   return (
     <section className="card overflow-hidden">
-      <QuickWorkoutEditor session={session} disabled={!hydrated || hasPendingChanges || savingIds.size > 0 || finishing || discarding} onChanged={setSession} onError={setError} heading={
+      <QuickWorkoutEditor session={session} onBusyChange={setEditorBusy} disabled={!hydrated || hasPendingChanges || savingIds.size > 0 || finishing || discarding || !!newExerciseDraft} onChanged={setSession} onError={setError} heading={
         <div className="min-w-0 flex-[1_1_10rem]"><h2 className="display break-words text-2xl leading-tight">{session.name || "Quick Workout"}</h2>{session.date && !(todayOnly && session.date === todayDate) && <p className="mt-1 text-xs text-muted">{session.date} · {session.unit ?? "lb"}</p>}</div>
       } />
       {session.sets.length > 0 && <WorkoutSaveStatus sets={session.sets} isSaved={isSetSaved} />}
@@ -319,7 +326,7 @@ export function QuickWorkout({ initialSession, initialDate, todayOnly = false, t
                 const saved = isSetSaved(set);
                 return <SetLogRow key={set.id} number={i + 1} count={set.sets} reps={values.reps} weight={values.weight} unit={session.unit ?? "lb"}
                   repsLabel={`Reps for set ${i + 1}`} weightLabel={`Weight for set ${i + 1}`} saved={saved} logged={logged} pending={pending} saving={saving}
-                  failed={failedIds.has(set.id)} missingWeight={set.actual_reps != null && set.actual_weight == null} undoPending={draft?.intent === "undo"} disabled={!hydrated || finishing || discarding || !!structureDraft}
+                  failed={failedIds.has(set.id)} missingWeight={set.actual_reps != null && set.actual_weight == null} undoPending={draft?.intent === "undo"} disabled={!hydrated || editorBusy || finishing || discarding || !!structureDraft}
                   saveDisabled={!!conflicts[set.id]} saveLabel={saving ? `Saving set ${i + 1}` : saved ? `Set ${i + 1} saved` : pending ? `Save set ${i + 1}` : `Log set ${i + 1}`}
                   onChange={(field, value) => editSet(set, field, value)} onSave={() => { void logSet(set); }} onUndo={() => { void logSet(set, true); }}>
                   {conflicts[set.id] && <div className="mt-2 rounded-xl border border-warn-line bg-warn-soft p-3"><p className="text-sm text-warn-ink">Saved elsewhere: {conflicts[set.id].actual_reps ?? "unlogged"} reps at {conflicts[set.id].actual_weight ?? 0} {session.unit ?? "lb"}. Your values are still above.</p><div className="mt-2 flex flex-wrap gap-2">{[false, true].map(keep => <button type="button" key={String(keep)} className="touch-target rounded-xl border border-line bg-surface px-3 text-sm font-semibold" onClick={() => {
@@ -336,7 +343,7 @@ export function QuickWorkout({ initialSession, initialDate, todayOnly = false, t
         </div>
       )}
 
-      <QuickExercisePicker sessionId={session.id} unit={session.unit ?? "lb"} onAdded={onAdded} onError={setError} disabled={!hydrated || finishing || discarding || !!structureDraft} />
+      <QuickExercisePicker sessionId={session.id} unit={session.unit ?? "lb"} onAdded={onAdded} onError={setError} disabled={!hydrated || editorBusy || finishing || discarding || !!structureDraft} />
 
       {error ? <p role="alert" className="px-4 pb-1 text-sm text-danger-ink">{error}</p> : null}
       {newExerciseDraft || appendDraft ? <p className="px-4 pb-1 text-sm text-muted">Finish adding the pending exercise or set before completing this workout.</p> : null}
@@ -352,7 +359,7 @@ export function QuickWorkout({ initialSession, initialDate, todayOnly = false, t
         >
           {finishing ? "Finishing…" : "Finish workout"}
         </button>
-        <HoldToDeleteWorkout disabled={!hydrated || discarding || finishing || savingIds.size > 0} onDelete={discard} />
+        <HoldToDeleteWorkout disabled={!hydrated || editorBusy || discarding || finishing || savingIds.size > 0} onDelete={discard} />
       </div>
       {confirmingFinish && <FinishWorkoutConfirmation disabled={finishBlocked} error={error} onConfirm={() => finish(true)} onClose={() => setConfirmingFinish(false)} />}
     </section>
@@ -361,9 +368,8 @@ export function QuickWorkout({ initialSession, initialDate, todayOnly = false, t
 
 type SetDraft = { reps: string; weight: string; base?: { reps: number | null; weight: number | null }; intent?: "undo" | "retained" };
 function isPending(draft?: SetDraft): boolean { return !!draft && draft.intent !== "retained"; }
-type SetDrafts = Record<number, SetDraft>;
-const draftEvent = "magni-quick-draft-changed";
-const volatileDrafts = new Map<number, string>();
+const { readDraftSnapshot, parseDrafts, writeDrafts, subscribeDrafts } =
+  createSetDraftStore<SetDraft>("magni.quick-workout", "magni-quick-draft-changed");
 
 function withoutId(ids: Set<number>, id: number): Set<number> {
   const next = new Set(ids);
@@ -376,48 +382,5 @@ function valuesForSet(set: WorkoutSet): SetDraft {
     base: { reps: set.actual_reps, weight: set.actual_weight },
     reps: String(set.actual_reps ?? set.reps),
     weight: set.actual_reps != null ? (set.actual_weight == null ? "" : String(set.actual_weight)) : String(set.calculated_weight ?? 0),
-  };
-}
-
-function readDraftSnapshot(sessionId?: number): string | null {
-  if (!sessionId || typeof window === "undefined") return null;
-  if (volatileDrafts.has(sessionId)) return volatileDrafts.get(sessionId)!;
-  try { return localStorage.getItem(`magni.quick-workout.${sessionId}.draft.v1`); } catch { return null; }
-}
-
-function parseDrafts(snapshot: string | null): SetDrafts {
-  if (!snapshot) return {};
-  try {
-    const parsed = JSON.parse(snapshot);
-    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return {};
-    return Object.fromEntries(Object.entries(parsed).filter(([id, value]) =>
-      /^\d+$/.test(id) && value && typeof value === "object" && "reps" in value && "weight" in value &&
-      typeof value.reps === "string" && typeof value.weight === "string",
-    )) as SetDrafts;
-  } catch { return {}; }
-}
-
-function writeDrafts(sessionId: number, drafts: SetDrafts): boolean {
-  const snapshot = JSON.stringify(drafts);
-  let persisted = true;
-  try {
-    const key = `magni.quick-workout.${sessionId}.draft.v1`;
-    if (Object.keys(drafts).length > 0) localStorage.setItem(key, snapshot);
-    else localStorage.removeItem(key);
-    volatileDrafts.delete(sessionId);
-  } catch {
-    volatileDrafts.set(sessionId, snapshot);
-    persisted = false;
-  }
-  window.dispatchEvent(new Event(draftEvent));
-  return persisted;
-}
-
-function subscribeDrafts(listener: () => void): () => void {
-  window.addEventListener("storage", listener);
-  window.addEventListener(draftEvent, listener);
-  return () => {
-    window.removeEventListener("storage", listener);
-    window.removeEventListener(draftEvent, listener);
   };
 }

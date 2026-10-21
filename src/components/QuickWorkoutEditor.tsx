@@ -4,13 +4,16 @@ import type { WorkoutSession } from "@/features/workouts/types";
 import type { QuickSession } from "./QuickWorkout";
 import { useWorkoutDraft, workoutButton, workoutPrimaryButton, workoutInput, workoutRequest, WorkoutRequestError } from "./quick-workout-utils";
 
+type AppendBody = { name: string; prescription: { reps: number; weight: number }[]; appendToSetId: number; requestKey: string };
+type AppendAttempt = { setId: number; requestKey: string; body?: AppendBody; needsReview?: boolean };
 type EditValues = { name: string; date: string; names: Record<number, string>; order: number[]; removed: number[] };
 type EditBody = { name: string; date?: string; expectedRevision?: number; order: number[]; removeSetIds: number[]; exerciseNames: Record<number, string>; requestKey: string };
 type EditDraft = EditValues & { revision?: number; requestKey?: string; baseName?: string; baseDate?: string; pending?: { body: EditBody; values: EditValues } };
 const editValues = ({ name, date, names, order, removed }: EditValues): EditValues => ({ name, date, names, order, removed });
-export function QuickWorkoutEditor({ session, disabled, onChanged, onError, heading }: { heading?: ReactNode; session: QuickSession; disabled: boolean; onChanged: (session: WorkoutSession) => void; onError: (message: string) => void }) {
+export function QuickWorkoutEditor({ session, disabled, onChanged, onError, heading, onBusyChange }: { heading?: ReactNode; onBusyChange?: (busy: boolean) => void; session: QuickSession; disabled: boolean; onChanged: (session: WorkoutSession) => void; onError: (message: string) => void }) {
   const [open, setOpen] = useState(false);
   const [busy, setBusy] = useState(false);
+  function changeBusy(value: boolean) { setBusy(value); onBusyChange?.(value); }
   const [draft, store] = useWorkoutDraft<EditDraft>(`magni.quick.${session.id}.structure`, { name: session.name ?? "Quick Workout", date: session.date ?? "", names: {}, order: session.sets.map((set) => set.id), removed: [], revision: session.revision });
   const [confirmRemove, setConfirmRemove] = useState<{ ids: number[]; exercise: boolean } | null>(null);
   const [needsReview, setNeedsReview] = useState(false);
@@ -25,7 +28,8 @@ export function QuickWorkoutEditor({ session, disabled, onChanged, onError, head
     else if (wasOpen.current) toggleButton.current?.focus();
     wasOpen.current = open;
   }, [open, conflict]);
-  const [appendPending, setAppendPending] = useWorkoutDraft<{ setId: number; requestKey: string } | null>(`magni.quick.${session.id}.append`, null);
+  const [appendPending, setAppendPending] = useWorkoutDraft<AppendAttempt | null>(`magni.quick.${session.id}.append`, null);
+  const [appendReview, setAppendReview] = useState<WorkoutSession | null>(null);
   const changed = draft.name !== (session.name ?? "Quick Workout") || draft.date !== (session.date ?? "") || Object.keys(draft.names).length > 0 || draft.removed.length > 0 || draft.order.join() !== session.sets.map((set) => set.id).join();
   const visible = draft.order.map((id) => session.sets.find((set) => set.id === id)).filter((set): set is QuickSession["sets"][number] => !!set && !draft.removed.includes(set.id));
   const groups: QuickSession["sets"][] = [];
@@ -57,7 +61,7 @@ export function QuickWorkoutEditor({ session, disabled, onChanged, onError, head
   }
   async function save() {
     if (busy || disabled || needsReview) return;
-    setBusy(true); onError("");
+    changeBusy(true); onError("");
     const pending = draft.pending ?? { body: { name: draft.name, date: draft.date || undefined, expectedRevision: draft.revision, order: visible.map((set) => set.id), removeSetIds: draft.removed, exerciseNames: draft.names, requestKey: draft.requestKey ?? crypto.randomUUID() }, values: editValues(draft) };
     change({ ...draft, pending });
     try {
@@ -71,26 +75,56 @@ export function QuickWorkoutEditor({ session, disabled, onChanged, onError, head
       if (error instanceof WorkoutRequestError && error.status === 409 && error.confirmedClientError) setNeedsReview(true);
       onError(error instanceof Error ? error.message : "Could not save workout edits.");
     }
-    finally { setBusy(false); }
+    finally { changeBusy(false); }
   }
   async function reviewSaved() {
-    setBusy(true);
+    changeBusy(true);
     try {
       const result = await workoutRequest<WorkoutSession>(`/api/sessions/${session.id}`, "GET");
       if (result.id !== session.id || !Array.isArray(result.sets) || !Number.isInteger(result.revision)) throw new Error("Could not confirm the current workout. Your draft is still available.");
       setConflict(result);
     }
     catch (error) { onError(error instanceof Error ? error.message : "Could not load saved workout."); }
-    finally { setBusy(false); }
+    finally { changeBusy(false); }
+  }
+  async function reviewAppend() {
+    if (busy) return;
+    changeBusy(true); onError(""); setAppendReview(null);
+    try {
+      const result = await workoutRequest<WorkoutSession>(`/api/sessions/${session.id}`, "GET");
+      if (result.id !== session.id || !Array.isArray(result.sets) || !Number.isInteger(result.revision)) throw new Error("Could not confirm the saved sets. Retry reviewing them.");
+      setAppendReview(result);
+    } catch (error) { onError(error instanceof Error ? error.message : "Could not load saved sets."); }
+    finally { changeBusy(false); }
   }
   async function append(setId: number) {
-    const set = session.sets.find((set) => set.id === setId)!;
-    const payload = appendPending ?? { setId, requestKey: crypto.randomUUID() }; setAppendPending(payload); setBusy(true);
+    if (busy || disabled) return;
+    if (appendPending && (!appendPending.body || appendPending.needsReview)) { await reviewAppend(); return; }
+    let pending = appendPending;
+    if (!pending) {
+      const set = session.sets.find(set => set.id === setId);
+      if (!set) return;
+      const requestKey = crypto.randomUUID();
+      pending = { setId, requestKey, body: {
+        name: set.exercise_name, prescription: [{ reps: Math.max(1, set.actual_reps ?? set.reps), weight: set.actual_weight ?? set.calculated_weight ?? 0 }], appendToSetId: setId, requestKey,
+      } };
+    }
+    // Persist the complete immutable command before sending it. Source actuals
+    // and the last row in this group may change before a retry or remount.
+    if (!setAppendPending(pending)) { onError("Device storage is unavailable. Enable it before adding a set so a retry stays safe."); return; }
+    changeBusy(true); onError("");
     try {
-      await workoutRequest(`/api/sessions/${session.id}/sets`, "POST", { name: set.exercise_name, prescription: [{ reps: Math.max(1, set.actual_reps ?? set.reps), weight: set.actual_weight ?? set.calculated_weight ?? 0 }], appendToSetId: payload.setId, requestKey: payload.requestKey });
-      onChanged(await workoutRequest<WorkoutSession>(`/api/sessions/${session.id}`, "GET")); store(null); setAppendPending(null);
-    } catch (error) { onError(error instanceof Error ? error.message : "Could not add set."); }
-    finally { setBusy(false); }
+      await workoutRequest(`/api/sessions/${session.id}/sets`, "POST", pending.body);
+      const saved = await workoutRequest<WorkoutSession>(`/api/sessions/${session.id}`, "GET");
+      if (saved.id !== session.id || !Array.isArray(saved.sets) || !Number.isInteger(saved.revision)) throw new Error("Could not confirm the saved sets. Retry adding to recover them.");
+      onChanged(saved); store(null); setAppendPending(null);
+    } catch (error) {
+      // A structured rejection from append or its subsequent read needs a
+      // canonical review. Keep the intent until the user accepts the saved sets.
+      if (error instanceof WorkoutRequestError && error.confirmedClientError && [400, 404, 409].includes(error.status)) setAppendPending({ ...pending, needsReview: true });
+      onError(error instanceof Error ? error.message : "Could not add set.");
+    }
+    finally { changeBusy(false); }
   }
   return <div className="border-b border-line px-4 py-2">
     <div className="flex flex-wrap items-center justify-between gap-x-3 gap-y-1">{heading}<button ref={toggleButton} type="button" aria-label={open ? "Hide workout editor" : "Edit workout"} aria-expanded={open} className={`${workoutButton} shrink-0 border-transparent text-muted`} disabled={disabled || busy} onClick={() => setOpen(!open)}>{open ? "Close editor" : "Edit"}</button></div>
@@ -98,11 +132,24 @@ export function QuickWorkoutEditor({ session, disabled, onChanged, onError, head
       <p className="text-sm text-muted">Changes stay on this device until you save. Save workout edits before adding more sets.</p>
       <label className="text-xs text-muted">Workout name<input ref={nameInput} aria-label="Workout name" disabled={busy} className={`${workoutInput} mt-1 w-full`} value={draft.name} onChange={(e) => change({ ...draft, name: e.target.value })} /></label>
       <label className="text-xs text-muted">Workout date<input type="date" aria-label="Workout date" disabled={busy} className={`${workoutInput} mt-1 w-full`} value={draft.date} onChange={(e) => change({ ...draft, date: e.target.value })} /></label>
+      {appendPending && (!appendPending.body || appendPending.needsReview) && <div className="rounded-xl border border-warn-line bg-warn-soft p-3 text-sm text-warn-ink">
+        <p>An earlier add-set request needs review. Check the saved sets before adding another.</p>
+        <button type="button" className={`${workoutButton} mt-2`} disabled={busy} onClick={() => void reviewAppend()}>Review saved sets</button>
+        {appendReview && <div className="mt-2">
+          <ul className="space-y-1">{appendReview.sets.map(set => <li key={set.id}>{set.exercise_name} · Set {set.set_number}: {set.actual_reps == null ? `Not logged (${set.reps} reps · ${set.calculated_weight ?? 0} ${appendReview.unit ?? "lb"} planned)` : `${set.actual_reps} reps · ${set.actual_weight == null ? "weight not recorded" : `${set.actual_weight} ${appendReview.unit ?? "lb"}`} saved`}</li>)}</ul>
+          <p className="mt-2">Keep these saved sets to resolve the earlier request.</p>
+          {appendReview.revision < (session.revision ?? 0) && <p className="mt-2">The workout changed after this review. Review saved sets again.</p>}
+          <button type="button" className={`${workoutButton} mt-2`} disabled={busy || disabled || appendReview.revision < (session.revision ?? 0)} onClick={() => {
+            onChanged(appendReview); setAppendPending(null); setAppendReview(null); onError("");
+          }}>Keep saved sets</button>
+        </div>}
+      </div>}
+      {appendPending?.body && !appendPending.needsReview && !session.sets.some(set => set.id === appendPending.setId) && <div className="rounded-xl border border-warn-line bg-warn-soft p-3 text-sm text-warn-ink"><p>Confirm the earlier add-set request before adding another.</p><button type="button" className={`${workoutButton} mt-2`} disabled={busy || disabled || changed} onClick={() => void append(appendPending.setId)}>Retry add set</button></div>}
       {groups.map((group, groupIndex) => <div key={group[0].id} className="rounded-xl border border-line p-3">
         <label className="text-xs text-muted">Exercise {groupIndex + 1}<input aria-label={`Exercise name ${groupIndex + 1}`} disabled={busy} value={draft.names[group[0].id] ?? group[0].exercise_name} className={`${workoutInput} mt-1 w-full`} onChange={(e) => change({ ...draft, names: { ...draft.names, ...Object.fromEntries(group.map((set) => [set.id, e.target.value])) } })} /></label>
         <div className="mt-2 flex flex-wrap gap-2"><button className={workoutButton} disabled={busy || groupIndex === 0} aria-label={`Move exercise ${groupIndex + 1} up`} onClick={() => move(group.map((set) => set.id), -1)}>↑ Exercise</button><button className={workoutButton} disabled={busy || groupIndex === groups.length - 1} aria-label={`Move exercise ${groupIndex + 1} down`} onClick={() => move(group.map((set) => set.id), 1)}>↓ Exercise</button><button className={`${workoutButton} text-danger-ink`} disabled={busy} onClick={() => setConfirmRemove({ ids: group.map((set) => set.id), exercise: true })}>Remove exercise</button></div>
         <ol className="mt-2 divide-y divide-line">{group.map((set, index) => <li key={set.id} className="py-2"><p className="text-xs text-muted">Set {index + 1}: {set.actual_reps ?? set.reps} reps at {set.actual_weight ?? set.calculated_weight ?? 0} {session.unit ?? "lb"}</p><div className="mt-1 flex flex-wrap gap-2"><button className={workoutButton} disabled={busy || index === 0} aria-label={`Move set ${index + 1} up`} onClick={() => moveSet(set.id, -1)}>↑ Set</button><button className={workoutButton} disabled={busy || index === group.length - 1} aria-label={`Move set ${index + 1} down`} onClick={() => moveSet(set.id, 1)}>↓ Set</button><button className={`${workoutButton} text-danger-ink`} disabled={busy} onClick={() => setConfirmRemove({ ids: [set.id], exercise: false })}>Remove set {index + 1}</button></div></li>)}</ol>
-        <button className={`${workoutButton} mt-2 w-full`} disabled={busy || disabled || changed || !!appendPending && !group.some((set) => set.id === appendPending.setId)} onClick={() => append(group.at(-1)!.id)}>{appendPending && group.some((set) => set.id === appendPending.setId) ? "Retry add set" : "Add similar set"}</button>
+        <button className={`${workoutButton} mt-2 w-full`} disabled={busy || disabled || changed || !!appendPending && (!appendPending.body || appendPending.needsReview) || !!appendPending && !group.some((set) => set.id === appendPending.setId)} onClick={() => append(group.at(-1)!.id)}>{appendPending && group.some((set) => set.id === appendPending.setId) ? "Retry add set" : "Add similar set"}</button>
       </div>)}
       {confirmRemove && <div className="rounded-xl bg-danger-soft p-3"><p className="text-sm">Remove {confirmRemove.exercise ? "this exercise and all its sets" : "this set"}, including recorded values, when you save?</p><button className={`${workoutButton} mt-2 text-danger-ink`} disabled={busy} onClick={() => { change({ ...draft, removed: [...draft.removed, ...confirmRemove.ids] }); setConfirmRemove(null); }}>Confirm remove {confirmRemove.exercise ? "exercise" : "set"}</button></div>}
       {draft.pending && <p role="status" className="text-sm text-muted">Confirm the previous save first. Newer edits stay on this device for a separate save.</p>}

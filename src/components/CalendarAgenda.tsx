@@ -31,11 +31,11 @@ function DragHandle({event}:{event:AgendaEvent}) {
   return <button ref={setNodeRef} {...attributes} {...listeners} aria-label={`Drag ${event.dayName} to another day`} className={`${quietButton} w-[44px] touch-none ${isDragging?"bg-brand-soft opacity-50":""}`}><GripVertical aria-hidden="true" size={18}/></button>;
 }
 
-export function CalendarAgenda({events,weekStart,today,returnTo,compact=false}:{events:AgendaEvent[];weekStart:string;today:string;returnTo?:string;compact?:boolean}) {
+export function CalendarAgenda({userId,events,weekStart,today,returnTo,compact=false}:{userId:number;events:AgendaEvent[];weekStart:string;today:string;returnTo?:string;compact?:boolean}) {
   const viewSuffix=compact?"":"&compact=0";
   const addLink=(date:string)=><Link prefetch={false} className={`${quietButton} w-[44px]`} href={withCalendarReturn(`/workouts/new?date=${date}`,returnTo??null)} aria-label={`Add workout on ${date}`}><Plus aria-hidden="true" size={18}/></Link>;
-  const controller=useCalendarActions(events,weekStart);
-  const {action,menu,busy,error,message,openMove,setMenu,setError,days}=controller;
+  const controller=useCalendarActions(userId,events,weekStart);
+  const {action,menu,blocked:busy,error,message,openMove,setMenu,setError,days}=controller;
   const [dragging,setDragging]=useState<AgendaEvent|null>(null);
   const sensors=useSensors(useSensor(MouseSensor,{activationConstraint:{distance:8}}),useSensor(TouchSensor,{activationConstraint:{delay:180,tolerance:6}}));
   return <div className={`flex flex-col ${compact ? "gap-1" : "gap-3"}`} aria-label="Weekly workout agenda">

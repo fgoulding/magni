@@ -72,6 +72,23 @@ function start(activation: EditorActivation, occurrence: OccurrenceRow, actuals:
 }
 
 describe("resolving editor prescriptions", () => {
+  it("reads one progression state per pending lift while keeping later previews fresh and started sets frozen", async () => {
+    const schedule = await import("@/features/programs/occurrences");
+    const { activation, exercise, occurrences } = fixture();
+    const occurrence = schedule.getOccurrence(userId, occurrences[0].id)!;
+    const expected = schedule.occurrenceLiftPreview(occurrence);
+    const prepare = vi.spyOn(db,"prepare");
+    try {
+      expect(schedule.occurrenceLiftPreview(occurrence)).toEqual(expected);
+      expect(prepare.mock.calls.length).toBeLessThanOrEqual(2);
+    } finally { prepare.mockRestore(); }
+    setState(activation,exercise.progressionKey,{load:60});
+    expect(schedule.occurrenceLiftPreview(occurrence)[0].weight).toBe(60);
+    start(activation,occurrences[0],[null,null,null]);
+    const active = schedule.getOccurrence(userId,occurrence.id)!;
+    setState(activation,exercise.progressionKey,{load:100});
+    expect(schedule.occurrenceLiftPreview(active)[0].weight).toBe(60);
+  });
   it("uses current working load and preserves the immutable source snapshot", () => {
     const { activation, exercise, occurrences } = fixture();
     const source = prescription(occurrences[0])[0];

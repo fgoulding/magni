@@ -13,7 +13,7 @@ const cases = projects.flatMap(project => [1, 2].map(index => ({ id: `${project}
 
 function report(items = cases, shard = null, discovery = false) {
   return {
-    config: { forbidOnly: true, fullyParallel: false, workers: 1, shard, projects: projects.map(name => ({ name, repeatEach: 1 })) },
+    config: { metadata: { warmupProfile: "full-release" }, forbidOnly: true, fullyParallel: false, workers: 1, shard, projects: projects.map(name => ({ name, repeatEach: 1 })) },
     suites: [{ title: "example.spec.ts", specs: items.map(item => ({
       id: item.id, file: item.file, title: item.title, line: Number(item.id.at(-1)), column: 1, ok: true,
       tests: [{ projectName: item.project, expectedStatus: "passed", status: discovery ? "skipped" : "expected", results: discovery ? [] : [{ status: "passed", retry: 0, errors: [] }] }],
@@ -94,6 +94,14 @@ test("browser compaction accepts only actual first-attempt passes and excludes b
   for (const edit of failures) { const invalid = report(cases.slice(0, 1), { current: 1, total: 2 }); edit(invalid); assert.throws(() => compactBrowserReport(invalid)); }
 });
 
+test("local focused preparation cannot become release discovery or execution evidence", () => {
+  for (const discovery of [true, false]) {
+    const value = report(cases, null, discovery);
+    value.config.metadata = { warmupProfile: "local-focused" };
+    assert.throws(() => discovery ? discoveryManifest(value) : compactBrowserReport(value), /full-release/);
+  }
+});
+
 test("case identity preserves describe paths and source locations without collapsing equal titles", () => {
   const original = report([cases[0], cases[2]], null, true);
   original.suites[0] = { title: "example.spec.ts", specs: [], suites: [
@@ -152,7 +160,7 @@ test("real Playwright discovery and four isolated shard reports cover each case 
   const root = path.resolve(import.meta.dirname, "..");
   try {
     const config = path.join(directory, "playwright.config.mjs");
-    writeFileSync(config, `export default ${JSON.stringify({ testDir: directory, forbidOnly: true, fullyParallel: false, workers: 1, projects: projects.map(name => ({ name })), outputDir: path.join(directory, "results") })};`);
+    writeFileSync(config, `export default ${JSON.stringify({ metadata: { warmupProfile: "full-release" }, testDir: directory, forbidOnly: true, fullyParallel: false, workers: 1, projects: projects.map(name => ({ name })), outputDir: path.join(directory, "results") })};`);
     for (const file of ["first", "second"]) writeFileSync(path.join(directory, `${file}.spec.mjs`), `import { test } from ${JSON.stringify(path.join(root, "node_modules/@playwright/test/index.mjs"))};\ntest('one', () => {});\ntest('two', () => {});\n`);
     const json = path.join(directory, "report.json");
     const run = args => {

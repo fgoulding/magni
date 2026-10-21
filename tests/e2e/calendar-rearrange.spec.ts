@@ -122,7 +122,8 @@ test("Calendar retry keeps the same command ID after a lost save response",async
   await page.getByRole("dialog").getByRole("button",{name:"Move",exact:true}).click();
   await page.getByRole("dialog").getByRole("button",{name:"Fri, Jun 9",exact:true}).click();
   await expect(page.getByRole("dialog").getByRole("alert")).toBeVisible();
-  await page.getByRole("dialog").getByRole("button",{name:"Fri, Jun 9",exact:true}).click();
+  await expect(page.getByRole("dialog").getByRole("button",{name:"Fri, Jun 9",exact:true})).toBeDisabled();
+  await page.getByRole("dialog").getByRole("button",{name:"Retry calendar change",exact:true}).click();
   await expect(page.locator('[data-calendar-date="2090-06-09"]').getByRole("heading",{name:"Lower",exact:true})).toBeVisible();
   expect(requests).toHaveLength(2);expect(requests[0]).toBe(requests[1]);
 });

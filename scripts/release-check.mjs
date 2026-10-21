@@ -4,10 +4,22 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { finished } from "node:stream/promises";
 import { isDeepStrictEqual } from "node:util";
+import { assertFullReleaseEnvironment } from "./release-check.profile.mjs";
 
 const npm = process.platform === "win32" ? "npm.cmd" : "npm";
+export const NODE_POLICY_TESTS = [
+  ".github/tests/release-policy.test.cjs",
+  "scripts/release-check.test.mjs",
+  "scripts/release-check.evidence.test.mjs",
+  "scripts/release-check.auth.test.mjs",
+  "scripts/release-check.profile.test.mjs",
+  "scripts/release-check.deployment.test.mjs",
+  "scripts/release-check.deployment-wrappers.test.mjs",
+  "scripts/database-maintenance.test.mjs",
+  "scripts/program-template.test.mjs",
+];
 export const RELEASE_CHECKS = [
-  { name: "gate-policy", command: process.execPath, args: ["--test", ".github/tests/release-policy.test.cjs", "scripts/release-check.test.mjs", "scripts/release-check.evidence.test.mjs", "scripts/database-maintenance.test.mjs"] },
+  { name: "gate-policy", command: process.execPath, args: ["--test", ...NODE_POLICY_TESTS] },
   { name: "dependency-audit", command: npm, args: ["audit", "--omit=dev"] },
   { name: "route-types", command: process.execPath, args: ["node_modules/next/dist/bin/next", "typegen"] },
   { name: "typecheck", command: npm, args: ["run", "typecheck"] },
@@ -59,6 +71,7 @@ export async function runCheck(check, { cwd, env, logPath, quiet }) {
 
 /** Fail closed: no later stage starts after a failed check. No CLI skip flags. */
 export async function runReleaseChecks({ cwd = process.cwd(), outputDirectory = path.join(cwd, ".playwright/release-checks"), checks = RELEASE_CHECKS, env = process.env, quiet = false } = {}) {
+  assertFullReleaseEnvironment(env);
   mkdirSync(outputDirectory, { recursive: true });
   const databaseDirectory = mkdtempSync(path.join(outputDirectory, "build-data-"));
   const checkEnv = { ...env, DB_PATH: path.join(databaseDirectory, "build.sqlite"), NEXT_TELEMETRY_DISABLED: "1" };

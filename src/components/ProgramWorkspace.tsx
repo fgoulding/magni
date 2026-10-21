@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { useEffect, useRef, useState, useSyncExternalStore } from "react";
+import { useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
 import { ArrowDown, ArrowLeft, ArrowUp, Copy, Plus, Trash2, Undo2 } from "lucide-react";
 import { createDay, createExercise, createSet, createWeek, validateDocument, validateDraftStructure, type ProgramDocumentV1, type ProgramExerciseV1 } from "@/features/program-editor/document";
 import { cloneExercise as copyExercise, cloneDay as copyDay, cloneWeek as copyWeek, applySharedConfiguration, copyBlock, getBlockRange, prescriptionMatches, makePreset, PRESETS, type PresetId } from "@/features/program-editor/operations";
@@ -92,7 +92,7 @@ function HydratedWorkspace({ userId, draftId, initialDocument, initialRevision, 
   const wi = Math.max(0, document.weeks.indexOf(week));
   const di = Math.max(0, week?.days.indexOf(day) ?? 0);
   const ei = Math.max(0, day?.exercises.indexOf(exercise) ?? 0);
-  const issues = validateDocument(document);
+  const issues = useMemo(() => validateDocument(document), [document]);
   const block = getBlockRange(document.weeks, wi);
   const firstAppearance = exercise ? document.weeks.flatMap(week => week.days.flatMap(day => day.exercises))
     .find(item => item.progressionKey === exercise.progressionKey) : undefined;
@@ -259,7 +259,7 @@ function HydratedWorkspace({ userId, draftId, initialDocument, initialRevision, 
     {leaveAfterFailure ? <div role="alert" className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-warn-line bg-warn-soft p-3"><p className="text-sm text-warn-ink">The latest changes could not be saved. Leave the editor or stay to fix them.</p><div className="flex flex-wrap gap-2"><button className={button} onClick={() => { router.push("/programs"); router.refresh(); }}>Leave editor</button><button className={button} onClick={() => setLeaveAfterFailure(false)}>Stay here</button></div></div> : null}
     {error ? <div role="alert" className="rounded-xl border border-danger-line bg-danger-soft p-3 text-sm text-danger-ink">{error}{saveState === "conflict" ? <button className={`${button} mt-2`} onClick={() => { localStorage.removeItem(storageKey); window.location.reload(); }}>Load server version and discard local edits</button> : null}</div> : null}
     {activeId ? <section className="rounded-xl border border-success-line bg-success-soft p-3"><p className="font-semibold text-success-ink">Program activated</p><p className="mt-1 text-sm text-muted">Edits save to this draft. Open Review & apply to choose which unstarted workouts change, or publish a reusable definition. Started workouts keep their saved prescriptions.</p><Link href="/today" className={`${button} mt-3`}>Train this program</Link></section> : null}
-    {!advanced ? <fieldset disabled={deleting} className="min-w-0"><ProgramBuilder document={document} onChange={change} onActivate={() => { void activate(); }} activating={activating} activeId={activeId} onAdvanced={() => { void switchEditorMode(true); }} onExport={exportFile} activeReview={activeId ? <ActiveProgramChanges programId={activeId} draftId={draftId} saveDraft={async () => await save() ? revision.current : null} /> : null} /></fieldset> : <div className="grid min-w-0 items-start gap-6 lg:grid-cols-[220px_minmax(0,1fr)] xl:grid-cols-[260px_minmax(0,1fr)]">
+    {!advanced ? <fieldset disabled={deleting} className="min-w-0"><ProgramBuilder document={document} issues={issues} onChange={change} onActivate={() => { void activate(); }} activating={activating} activeId={activeId} onAdvanced={() => { void switchEditorMode(true); }} onExport={exportFile} activeReview={activeId ? <ActiveProgramChanges programId={activeId} draftId={draftId} saveDraft={async () => await save() ? revision.current : null} /> : null} /></fieldset> : <div className="grid min-w-0 items-start gap-6 lg:grid-cols-[220px_minmax(0,1fr)] xl:grid-cols-[260px_minmax(0,1fr)]">
       <aside aria-label="Program outline" className="card hidden min-w-0 flex-col gap-4 p-4 lg:flex">
         <div><h2 className="display break-words text-2xl">{document.name || "Untitled program"}</h2><p className="mt-1 text-xs text-muted">{document.weeks.length} weeks · {document.cycles} cycles · {document.unit}</p></div>
         {document.weeks.map((item, w) => <div key={item.id} className="min-w-0">

@@ -19,7 +19,7 @@ import { withCalendarReturn } from "@/features/calendar/navigation";
 import { CalendarAgenda } from "@/components/CalendarAgenda";
 import { CalendarStatus } from "@/components/CalendarStatus";
 import { CalendarDayButton } from "@/components/CalendarDayButton";
-import { CalendarMoveButton } from "@/components/CalendarWorkoutActions";
+import { CalendarMoveButton, CalendarPendingRecovery } from "@/components/CalendarWorkoutActions";
 
 type CalendarPageProps = {
   searchParams?: Promise<{ month?: string | string[]; date?: string | string[]; train?: string | string[]; workout?: string | string[]; view?: string | string[]; compact?: string | string[] }>;
@@ -308,8 +308,9 @@ export default async function CalendarPage({ searchParams }: CalendarPageProps) 
           </div>
         </nav>
       ) : null}
+      {view === "month" && !selectedEvent ? <CalendarPendingRecovery userId={user.id} events={events} weekStart={toLocalDateKey(weekStart)} /> : null}
       <section aria-label="Week calendar" hidden={view !== "week"}>
-        <CalendarAgenda compact returnTo={returnTo} key={toLocalDateKey(weekStart)} events={weekEvents} weekStart={toLocalDateKey(weekStart)} today={todayKey} />
+        <CalendarAgenda userId={user.id} compact returnTo={returnTo} key={toLocalDateKey(weekStart)} events={weekEvents} weekStart={toLocalDateKey(weekStart)} today={todayKey} />
       </section>
 
       <section aria-label="Month calendar" hidden={view !== "month"} className="overflow-hidden rounded-xl border border-line bg-surface shadow-sm">
@@ -392,9 +393,9 @@ export default async function CalendarPage({ searchParams }: CalendarPageProps) 
                 Close
               </Link>
             </div>
-            {selectedEvent.occurrenceId && (selectedEvent.kind === "scheduled" || selectedEvent.kind === "in_progress") ? <div className="px-4 py-3">
-              <CalendarMoveButton event={selectedEvent} events={events} weekStart={toLocalDateKey(weekStart)} returnTo={returnTo} />
-            </div> : null}
+            {<div className="px-4 py-3">
+              <CalendarMoveButton userId={user.id} event={selectedEvent} events={events} weekStart={toLocalDateKey(weekStart)} returnTo={returnTo} />
+            </div>}
             {sessionRecap ? (
               <div className="px-4 pt-3">
                 <SessionRecapView recap={sessionRecap} />

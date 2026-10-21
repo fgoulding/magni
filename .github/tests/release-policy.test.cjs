@@ -7,6 +7,18 @@ const yaml = require('js-yaml');
 const root = path.resolve(__dirname, '../..');
 const workflow = yaml.load(fs.readFileSync(path.join(root, '.github/workflows/docker-publish.yml'), 'utf8'));
 
+test('the fixed release gate includes the template operator CLI regression', async () => {
+  const { RELEASE_CHECKS, NODE_POLICY_TESTS } = await import('../../scripts/release-check.mjs');
+  const policy = RELEASE_CHECKS.find(check => check.name === 'gate-policy');
+  assert.equal(policy.command, process.execPath);
+  assert.equal(policy.args[0], '--test');
+  assert.ok(policy.args.includes('scripts/program-template.test.mjs'));
+  const scriptTests = fs.readdirSync(path.join(root, 'scripts'), { recursive: true })
+    .filter(file => /\.test\.(mjs|cjs)$/.test(file)).map(file => `scripts/${file}`);
+  assert.deepEqual([...NODE_POLICY_TESTS].sort(), ['.github/tests/release-policy.test.cjs', ...scriptTests].sort(), 'Every script regression must run in the fixed gate');
+  assert.deepEqual(policy.args, ['--test', ...NODE_POLICY_TESTS]);
+});
+
 test('publication requires successful release verification on the same checkout', () => {
   assert.equal(workflow.jobs['build-and-push'].needs, 'verify');
   assert.ok(workflow.jobs.verify);

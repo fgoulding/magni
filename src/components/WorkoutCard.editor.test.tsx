@@ -176,7 +176,8 @@ describe("custom workout set logging and draft recovery", () => {
     render(<WorkoutCard {...props} />);
     await screen.findByRole("spinbutton", { name: "Row set 1 reps" });
     edit("Row set 1 reps", "9");
-    fireEvent.click(screen.getByRole("button", { name: "Discard set 1 changes" }));
+    // The resumed session's external-store subscription can settle after its inputs mount.
+    fireEvent.click(await screen.findByRole("button", { name: "Discard set 1 changes" }));
     expect(screen.getByRole("spinbutton", { name: "Row set 1 reps" })).toHaveValue(12);
     expect(screen.getByRole("button", { name: "Save set 1" })).toHaveAttribute("aria-pressed", "false");
     expect(screen.getByRole("button", { name: "Finish Workout" })).toBeEnabled();

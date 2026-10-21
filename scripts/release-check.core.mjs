@@ -3,10 +3,12 @@ import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { CORE_RELEASE_CHECKS, runCheck, runReleaseChecks, sourceIdentity } from "./release-check.mjs";
 import { discoveryManifest } from "./release-check.evidence.mjs";
+import { assertFullReleaseEnvironment } from "./release-check.profile.mjs";
 
 // This fixed CI stage cannot publish by itself. The aggregate additionally
 // requires every browser shard and exact full-suite coverage for the same SHA.
 assert.equal(process.argv.length, 2, "The core release stage accepts no skip/filter arguments");
+assertFullReleaseEnvironment();
 const cwd = process.cwd();
 const outputDirectory = path.join(cwd, ".playwright/release-core");
 mkdirSync(outputDirectory, { recursive: true });

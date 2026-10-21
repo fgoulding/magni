@@ -16,6 +16,7 @@ export function parseBrowserShard(args) {
 }
 
 function assertReportConfig(report) {
+  assert.equal(report.config.metadata?.warmupProfile, "full-release", "Browser evidence requires full-release preparation");
   assert.deepEqual(report.errors, [], "Browser collection/teardown must have no errors");
   assert.equal(report.config.forbidOnly, true, "Focused tests must be forbidden");
   assert.equal(report.config.workers, 1, "Each runner must retain one isolated worker");

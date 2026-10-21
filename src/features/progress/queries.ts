@@ -2,7 +2,7 @@ import { createHash } from "node:crypto";
 import { db } from "@/lib/db";
 import { exerciseNameKey, resolveCatalogRedirect } from "./aliases";
 import { userDateKey } from "@/lib/user-date";
-import { CANDIDATE_CTE, decorateCandidate, getPinnedExerciseIds, ProgressError, PROGRESS_SET_JOINS } from "./identity";
+import { CANDIDATE_CTE, decorateCandidate, getPinnedExerciseIds, ProgressError } from "./identity";
 import type { CandidateObservation, ExerciseChartPoint, ExerciseDetail, ExerciseFinderItem, ExerciseMetricEvidence, ExerciseMetricSummary, ExerciseObservation, ExerciseSummary, ExerciseTraining, ProgressFilters, ProgressHome, ProgressPrimaryExercise, ProgressPage, ProgressPerformance, ProgressProgram, ProgressRoutine, ProgressWorkout } from "./types";
 
 type Value=string|number|null;
@@ -53,18 +53,43 @@ function base(userId:number,filters:ProgressFilters,now?:Date) {
     MAX(ss.sets,1) AS multiplicity,ss.sort_order AS sortOrder,ss.set_number AS setNumber,
     CASE WHEN json_valid(ss.editor_json) THEN json_extract(ss.editor_json,'$.set.role') END AS role,
     CASE WHEN json_valid(ss.editor_json) THEN json_extract(ss.editor_json,'$.set.loadMode') END AS loadMode
-    FROM sessions s JOIN session_sets ss ON ss.session_id=s.id ${PROGRESS_SET_JOINS}
+    FROM sessions s JOIN session_sets ss ON ss.session_id=s.id
+    JOIN exercise_set_sources pes ON pes.session_set_id=ss.id AND pes.user_id=s.user_id
+    JOIN exercise_catalog pc ON pc.id=pes.exercise_id AND pc.user_id=s.user_id
     WHERE ${c.where} AND s.status='completed' AND ss.actual_reps IS NOT NULL AND pc.id IS NOT NULL`};
 }
 type BaseRow={setId:number;sessionId:number;date:string;unit:"lb"|"kg";workoutName:string;programName:string;programId:number|null;recordedName:string;exerciseId:string;catalogName:string;origin:ExerciseSummary["origin"];observationKey:string;reps:number;weight:number|null;weightLb:number|null;multiplicity:number;sortOrder:number;setNumber:number;role:string|null;loadMode:string|null};
 function performance(row:BaseRow|undefined):ProgressPerformance|null {return row?{sessionId:row.sessionId,date:row.date,setId:row.setId,reps:row.reps,weight:row.weight,unit:row.unit}:null;}
 function summary(userId:number,id:string,filters:ProgressFilters={}):ExerciseSummary|null {
   id=resolveCatalogRedirect(db,userId,id);
-  const catalog=db.prepare("SELECT id,name,origin FROM exercise_catalog WHERE id=? AND user_id=?").get(id,userId) as Pick<ExerciseSummary,"id"|"name"|"origin">|undefined;if(!catalog)return null;
+  return summaries(userId,[id],filters,getPinnedExerciseIds(userId)).get(id)??null;
+}
+
+/** IDs from catalog-backed queries are already canonical; pins are read once per request. */
+function summaries(userId:number,ids:readonly string[],filters:ProgressFilters,pinned:readonly string[]):Map<string,ExerciseSummary> {
+  if(!ids.length)return new Map();
+  const placeholders=ids.map(()=>"?").join(",");
+  const catalog=db.prepare(`SELECT id,name,origin FROM exercise_catalog WHERE user_id=? AND id IN (${placeholders})`)
+    .all(userId,...ids) as Pick<ExerciseSummary,"id"|"name"|"origin">[];
   const b=base(userId,filters);
-  const totals=db.prepare(`WITH b AS (${b.sql}) SELECT COUNT(DISTINCT sessionId) AS sessionCount,COALESCE(SUM(multiplicity),0) AS recordedSets,COALESCE(MAX(date),'') AS lastDate FROM b WHERE exerciseId=?`).get(...b.args,id) as Pick<ExerciseSummary,"sessionCount"|"recordedSets"|"lastDate">;
-  const latest=db.prepare(`WITH b AS (${b.sql}) SELECT * FROM b WHERE exerciseId=? ORDER BY date DESC,sessionId DESC,sortOrder,setNumber,setId LIMIT 1`).get(...b.args,id) as BaseRow|undefined;
-  return {...catalog,...totals,latest:performance(latest),pinned:getPinnedExerciseIds(userId).includes(id)};
+  const totals=db.prepare(`WITH b AS (${b.sql}) SELECT exerciseId,COUNT(DISTINCT sessionId) AS sessionCount,
+    SUM(multiplicity) AS recordedSets,MAX(date) AS lastDate,MAX(date||':'||printf('%020d',sessionId)) AS lastOrder
+    FROM b WHERE exerciseId IN (${placeholders}) GROUP BY exerciseId`)
+    .all(...b.args,...ids) as (Pick<ExerciseSummary,"sessionCount"|"recordedSets"|"lastDate">&{exerciseId:string;lastOrder:string})[];
+  // Totals already identify each latest session. Rank only those sessions' sets,
+  // instead of materializing every historical set just to keep the first one.
+  const latestSessions=[...new Set(totals.map(row=>Number(row.lastOrder.slice(11))))];
+  const latest=latestSessions.length?db.prepare(`WITH b AS (${b.sql}), ranked AS (SELECT *,ROW_NUMBER() OVER
+    (PARTITION BY exerciseId ORDER BY date DESC,sessionId DESC,sortOrder,setNumber,setId) AS position
+    FROM b WHERE exerciseId IN (${placeholders}) AND sessionId IN (${latestSessions.map(()=>"?").join(",")}))
+    SELECT * FROM ranked WHERE position=1`).all(...b.args,...ids,...latestSessions) as BaseRow[]:[];
+  const totalsById=new Map(totals.map(row=>[row.exerciseId,row]));
+  const latestById=new Map(latest.map(row=>[row.exerciseId,row]));
+  return new Map(catalog.map(row=>{
+    const total=totalsById.get(row.id);
+    return [row.id,{...row,sessionCount:total?.sessionCount??0,recordedSets:total?.recordedSets??0,lastDate:total?.lastDate??"",
+      latest:performance(latestById.get(row.id)),pinned:pinned.includes(row.id)}];
+  }));
 }
 function decodeGroup(key:string):string {
   if(typeof key!=="string"||!key.startsWith("u:")||key.length>800)invalid("Choose a valid recorded-name group.");
@@ -83,6 +108,9 @@ export function resolveUnlinkedExerciseId(userId:number,groupKey:string):string|
   return existing.length===1?existing[0].exerciseId:null;
 }
 export function listProgressExercises(userId:number,filters:ProgressFilters={}):ProgressPage<ExerciseFinderItem> {
+  return progressExercisePage(userId,filters,getPinnedExerciseIds(userId));
+}
+function progressExercisePage(userId:number,filters:ProgressFilters,pinned:readonly string[]):ProgressPage<ExerciseFinderItem> {
   const b=base(userId,filters);const all=base(userId,{});const p=pagination(userId,"exercises",filters);
   const q=(filters.search??"").trim().toLowerCase();const initial=(filters.initial??"").toLowerCase();
   // Identity ambiguity belongs to the whole recorded history, not the current date/search page.
@@ -100,10 +128,18 @@ export function listProgressExercises(userId:number,filters:ProgressFilters={}):
   const args=[...all.args,...b.args,q,q,q,q,q,q,q,initial,initial];
   const order=filters.sort==="name"?"rank DESC,lower(name),finderKey":"rank DESC,lastOrder DESC,finderKey";
   const rows=db.prepare(`${grouped} SELECT * FROM grouped WHERE (?='' OR lower(substr(name,1,1))=?) ORDER BY ${order} LIMIT ? OFFSET ?`).all(...args,p.limit+1,p.offset) as {finderKey:string;name:string;historyCount:number;lastDate:string}[];
-  const items=rows.slice(0,p.limit).map(row=>{
+  const page=rows.slice(0,p.limit);
+  const exercises=summaries(userId,page.filter(row=>row.finderKey.startsWith("e:")).map(row=>row.finderKey.slice(2)),filters,pinned);
+  const unlinkedNames=page.filter(row=>row.finderKey.startsWith("u:")).map(row=>row.finderKey.slice(2));
+  const unlinkedLatest=unlinkedNames.length?db.prepare(`WITH b AS (${b.sql}), ranked AS (SELECT *,lower(trim(recordedName)) AS nameKey,
+    ROW_NUMBER() OVER (PARTITION BY lower(trim(recordedName)) ORDER BY date DESC,sessionId DESC,sortOrder,setNumber,setId) AS position
+    FROM b WHERE origin='unlinked' AND lower(trim(recordedName)) IN (${unlinkedNames.map(()=>"?").join(",")}))
+    SELECT * FROM ranked WHERE position=1`).all(...b.args,...unlinkedNames) as (BaseRow&{nameKey:string})[]:[];
+  const latestByName=new Map(unlinkedLatest.map(row=>[row.nameKey,row]));
+  const items=page.map(row=>{
     const unlinked=row.finderKey.startsWith("u:");const id=row.finderKey.slice(2);
-    if(!unlinked){const exercise=summary(userId,id,filters)!;return {key:row.finderKey,kind:"exercise" as const,name:row.name,exercise,historyCount:row.historyCount,lastDate:row.lastDate,latest:exercise.latest,context:"Tracked exercise"};}
-    const latest=db.prepare(`WITH b AS (${b.sql}) SELECT * FROM b WHERE origin='unlinked' AND lower(trim(recordedName))=? ORDER BY date DESC,sessionId DESC,sortOrder,setNumber,setId LIMIT 1`).get(...b.args,id) as BaseRow|undefined;
+    if(!unlinked){const exercise=exercises.get(id)!;return {key:row.finderKey,kind:"exercise" as const,name:row.name,exercise,historyCount:row.historyCount,lastDate:row.lastDate,latest:exercise.latest,context:"Tracked exercise"};}
+    const latest=latestByName.get(id);
     return {key:`u:${Buffer.from(id).toString("base64url")}`,kind:"unlinked" as const,name:row.name,exercise:null,historyCount:row.historyCount,lastDate:row.lastDate,latest:performance(latest),context:latest?.workoutName||"Recorded workouts"};
   });
   return {items,nextCursor:p.next(rows.length>p.limit),previousCursor:p.previous};
@@ -115,16 +151,19 @@ export function getProgressHome(userId:number,filters:ProgressFilters={},now=new
     COALESCE(MAX(unit='kg'),0) AS usesKilograms FROM b`).get(...b.args) as Omit<ProgressHome["activity"],"from"|"to"|"emptySessions"|"usesKilograms">&{usesKilograms:number};
   const c=constraints(userId,activityFilters,now);
   const empty=db.prepare(`SELECT COUNT(*) AS count FROM sessions s WHERE ${c.where} AND s.status='completed' AND NOT EXISTS(SELECT 1 FROM session_sets ss WHERE ss.session_id=s.id AND ss.actual_reps IS NOT NULL)`).get(...c.args) as {count:number};
-  const ids=getPinnedExerciseIds(userId);const pinned=ids.map(id=>summary(userId,id)).filter((row):row is ExerciseSummary=>row!==null);
+  const ids=getPinnedExerciseIds(userId);
   // Recent is always a separate 12-week performed-date window, independent of the activity period.
-  const candidates=listProgressExercises(userId,{from:shift(today,-83),to:today,sort:"recent",limit:7}).items;
+  const candidates=progressExercisePage(userId,{from:shift(today,-83),to:today,sort:"recent",limit:7},ids).items;
   const recent=candidates.filter(row=>!row.exercise||!ids.includes(row.exercise.id)).slice(0,3);
   const all=base(userId,{});
   const names=db.prepare(`WITH b AS (${all.sql}) SELECT DISTINCT recordedName,exerciseId FROM b`).all(...all.args) as {recordedName:string;exerciseId:string}[];
-  const primary:ProgressPrimaryExercise[]=([['squat','Squat'],['bench','Bench'],['deadlift','Deadlift']] as const).map(([key,name])=>{
+  const primaryMatches=([['squat','Squat'],['bench','Bench'],['deadlift','Deadlift']] as const).map(([key,name])=>{
     const matches=[...new Set(names.filter(row=>exerciseNameKey(row.recordedName)===key).map(row=>row.exerciseId))];
-    return {key:`p:${key}`,name,hasHistory:matches.length>0,exercise:matches.length===1?summary(userId,matches[0]):null};
+    return {key:`p:${key}` as const,name,matches};
   });
+  const allSummaries=summaries(userId,[...new Set([...ids,...primaryMatches.flatMap(row=>row.matches.length===1?row.matches:[])])],{},ids);
+  const pinned=ids.map(id=>allSummaries.get(id)).filter((row):row is ExerciseSummary=>row!==undefined);
+  const primary:ProgressPrimaryExercise[]=primaryMatches.map(({key,name,matches})=>({key,name,hasHistory:matches.length>0,exercise:matches.length===1?allSummaries.get(matches[0])??null:null}));
   return {primary,pinned,recent,pinLimit:4,recentLimit:3,activity:{...activity,usesKilograms:!!activity.usesKilograms,emptySessions:empty.count,from:b.from,to:b.to??today}};
 }
 export function listProgressPrograms(userId:number,filters:ProgressFilters={}):ProgressPage<ProgressProgram> {
@@ -217,13 +256,15 @@ export function getProgressHistory(userId:number,filters:ProgressFilters&{status
   const c=constraints(userId,filters);const p=pagination(userId,`history:${filters.status??"all"}`,filters);const clauses=[c.where];const args=[...c.args];
   if(filters.status&&filters.status!=="all"){if(!["in_progress","completed","skipped"].includes(filters.status))invalid("Choose a valid status.");clauses.push("s.status=?");args.push(filters.status);}
   const q=(filters.search??"").trim().toLowerCase();if(q){clauses.push("(instr(lower(s.day_name),?)>0 OR instr(lower(s.program_name),?)>0 OR EXISTS(SELECT 1 FROM session_sets searched WHERE searched.session_id=s.id AND instr(lower(searched.exercise_name),?)>0))");args.push(q,q,q);}
-  const rows=db.prepare(`SELECT s.id AS sessionId,CASE WHEN s.program_name='' OR (s.program_id IS NULL AND s.program_run_id IS NULL AND s.program_name='Quick Workout') THEN COALESCE(NULLIF(s.day_name,''),'Quick Workout') ELSE s.program_name||' · '||s.day_name END AS name,
+  const rows=db.prepare(`WITH page AS (SELECT s.* FROM sessions s WHERE ${clauses.join(" AND ")}
+    ORDER BY s.date DESC,s.id DESC LIMIT ? OFFSET ?)
+    SELECT s.id AS sessionId,CASE WHEN s.program_name='' OR (s.program_id IS NULL AND s.program_run_id IS NULL AND s.program_name='Quick Workout') THEN COALESCE(NULLIF(s.day_name,''),'Quick Workout') ELSE s.program_name||' · '||s.day_name END AS name,
     s.date,s.unit,s.status,s.program_id AS programId,s.program_name AS programName,
     COALESCE(SUM(CASE WHEN ss.actual_reps IS NOT NULL THEN MAX(ss.sets,1) ELSE 0 END),0) AS loggedSets,
     COALESCE(SUM(CASE WHEN ss.id IS NOT NULL THEN MAX(ss.sets,1) ELSE 0 END),0) AS totalSets,
     COALESCE(SUM(ss.actual_reps*ss.actual_weight*MAX(ss.sets,1)),0) AS volume,
     COALESCE(SUM(CASE WHEN ss.actual_reps IS NOT NULL AND ss.actual_weight IS NULL THEN MAX(ss.sets,1) ELSE 0 END),0) AS missingWeightSets
-    FROM sessions s LEFT JOIN session_sets ss ON ss.session_id=s.id WHERE ${clauses.join(" AND ")} GROUP BY s.id ORDER BY s.date DESC,s.id DESC LIMIT ? OFFSET ?`).all(...args,p.limit+1,p.offset) as ProgressWorkout[];
+    FROM page s LEFT JOIN session_sets ss ON ss.session_id=s.id GROUP BY s.id ORDER BY s.date DESC,s.id DESC`).all(...args,p.limit+1,p.offset) as ProgressWorkout[];
   return {items:rows.slice(0,p.limit),nextCursor:p.next(rows.length>p.limit),previousCursor:p.previous};
 }
 export function listProgressRoutines(userId:number,filters:ProgressFilters={}):ProgressPage<ProgressRoutine> {

@@ -3,13 +3,13 @@ import "@testing-library/jest-dom/vitest";
 import { useState } from "react";
 import { cleanup, fireEvent, render, screen, within } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { createBlankDocument, createDay, createExercise, createSet, type ProgramDocumentV1 } from "@/features/program-editor/document";
+import { createBlankDocument, createDay, createExercise, createSet, validateDocument, type ProgramDocumentV1 } from "@/features/program-editor/document";
 import { makePreset } from "@/features/program-editor/operations";
 import { ProgramBuilder } from "./ProgramBuilder";
 afterEach(cleanup);
 function Harness({ initial = createBlankDocument(), onDocumentChange }: { initial?: ProgramDocumentV1; onDocumentChange?: (document: ProgramDocumentV1) => void }) {
   const [document, setDocument] = useState(initial);
-  return <ProgramBuilder document={document} onChange={update => setDocument(current => { const next = structuredClone(current); update(next); onDocumentChange?.(next); return next; })} onActivate={vi.fn()} activating={false} activeId={null} onAdvanced={vi.fn()} onExport={vi.fn()} />;
+  return <ProgramBuilder document={document} issues={validateDocument(document)} onChange={update => setDocument(current => { const next = structuredClone(current); update(next); onDocumentChange?.(next); return next; })} onActivate={vi.fn()} activating={false} activeId={null} onAdvanced={vi.fn()} onExport={vi.fn()} />;
 }
 describe("day-based program builder", () => {
   it("collapses without edits and preserves that group's state through reordering and day navigation", () => {

@@ -43,6 +43,30 @@ async function activeFixture() {
   return { ...fixtureState, session: await response.json(), start };
 }
 describe("Calendar occurrence transactions", () => {
+  it("returns only target-date collision candidates rather than unrelated workout history", () => {
+    const { user, rows: [first] } = fixture();
+    db.transaction(() => {
+      for (let i=0;i<250;i++) db.prepare("INSERT INTO sessions(user_id,week_number,date,status,day_name) VALUES (?,1,'2080-01-01','completed','Old workout')").run(user);
+    })();
+    const original = db.prepare.bind(db);
+    let collisionRows = 0;
+    const prepare = vi.spyOn(db,"prepare").mockImplementation(sql => {
+      const statement = original(sql);
+      if (sql.includes("'occurrence-' || o.id")) {
+        const all = statement.all.bind(statement);
+        vi.spyOn(statement,"all").mockImplementation((...args) => {
+          const rows = all(...args); collisionRows += rows.length; return rows;
+        });
+      }
+      return statement;
+    });
+    try {
+      const result = calendar.applyCalendarAction(user,{type:"shift",selections:[{id:first.id,revision:first.revision}],days:365,preview:true,requestKey:key()});
+      expect(result.conflicts).toEqual([]);
+      expect(collisionRows).toBe(0);
+    } finally { prepare.mockRestore(); }
+  });
+
   it("moves an active workout's actual date while preserving its schedule, recorded sets and retry identity", async () => {
     const { user, run, rows: [first], session, start } = await activeFixture();
     const history = await import("@/features/workouts/history-service");
