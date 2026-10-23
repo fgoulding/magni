@@ -49,9 +49,44 @@ test('verification requires core checks and all four isolated browser shards', (
   ]);
   const commands = workflow.jobs.browser.steps.map(step => step.run ?? '').join('\n');
   assert.match(commands, /npm ci/);
-  assert.match(commands, /playwright install --with-deps \$\{\{ matrix.engine \}\}/);
-  assert.match(commands, /node scripts\/release-check\.browser\.mjs --project=\$\{\{ matrix.project \}\} --shard=\$\{\{ matrix.shard \}\}\/2/);
+  assert.doesNotMatch(commands, /playwright install|apt-get|apt update/);
+  assert.equal(workflow.jobs.browser.steps.find(step => step.name === 'Run the assigned browser shard').run, 'node scripts/release-check.browser.mjs --project=${{ matrix.project }} --shard=${{ matrix.shard }}/2');
   assert.match(workflow.jobs.verify.steps.map(step => step.run ?? '').join('\n'), /node scripts\/release-check\.aggregate\.mjs/);
+});
+
+test('browser dependencies are preinstalled in the matching immutable Playwright image', () => {
+  const browser = workflow.jobs.browser;
+  const lock = JSON.parse(fs.readFileSync(path.join(root, 'package-lock.json'), 'utf8'));
+  const playwrightVersion = lock.packages['node_modules/@playwright/test'].version;
+  assert.equal(playwrightVersion, '1.60.0');
+  assert.equal(lock.packages['node_modules/playwright'].version, playwrightVersion);
+  assert.equal(lock.packages['node_modules/playwright-core'].version, playwrightVersion);
+  assert.equal(browser.container?.image, `mcr.microsoft.com/playwright:v${playwrightVersion}-noble@sha256:9bd26ad900bb5e0f4dee75839e957a89ae89c2b7ab1e76050e559790e946b948`);
+  assert.equal(browser.container.options, '--init --ipc=host');
+  assert.equal(browser.env.PLAYWRIGHT_BROWSERS_PATH, '/ms-playwright');
+  assert.equal(browser.defaults.run.shell, 'bash');
+  assert.equal(browser['timeout-minutes'], 35);
+  for (const [name, job] of Object.entries(workflow.jobs)) {
+    if (name !== 'browser') assert.equal(job.container, undefined, 'Only browser dependency setup moves into the image');
+  }
+  const nodeIndex = browser.steps.findIndex(step => step.uses?.startsWith('actions/setup-node@'));
+  const installIndex = browser.steps.findIndex(step => step.run === 'npm ci');
+  const runtimeIndex = browser.steps.findIndex(step => step.name === 'Verify preinstalled browser runtime');
+  const shardIndex = browser.steps.findIndex(step => step.name === 'Run the assigned browser shard');
+  assert.equal(browser.steps[nodeIndex].with['node-version'], '22');
+  assert.ok(nodeIndex < installIndex && installIndex < runtimeIndex && runtimeIndex < shardIndex);
+  const runtime = browser.steps[runtimeIndex];
+  assert.equal(runtime.env.PLAYWRIGHT_ENGINE, '${{ matrix.engine }}');
+  assert.match(runtime.run, /assert.equal\(process.versions.node.split\('\.'\)\[0\], '22'\)/);
+  assert.match(runtime.run, /assert.equal\(require\('@playwright\/test\/package.json'\).version, '1.60.0'\)/);
+  assert.match(runtime.run, /accessSync\(browser.executablePath\(\), constants.X_OK\)/);
+  assert.match(runtime.run, /require\('better-sqlite3'\)/);
+  assert.match(runtime.run, /SELECT 1 AS ready/);
+  const configuration = fs.readFileSync(path.join(root, 'playwright.config.ts'), 'utf8');
+  assert.match(configuration, /workers: 1,/);
+  const shardRunner = fs.readFileSync(path.join(root, 'scripts/release-check.browser.mjs'), 'utf8');
+  assert.match(shardRunner, /--fail-on-flaky-tests/);
+  assert.match(shardRunner, /sourceIdentity\(cwd, process.env\), result.source/);
 });
 
 test('release receipts remain small and compatible while diagnostics stay separately downloadable', () => {

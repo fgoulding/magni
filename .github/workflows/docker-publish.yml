@@ -70,6 +70,14 @@ jobs:
   browser:
     name: Browser ${{ matrix.project }} (${{ matrix.shard }}/2)
     runs-on: ubuntu-latest
+    # Keep browser binaries and OS dependencies aligned with package-lock.json.
+    # The immutable image avoids repeated apt downloads on every shard.
+    container:
+      image: mcr.microsoft.com/playwright:v1.60.0-noble@sha256:9bd26ad900bb5e0f4dee75839e957a89ae89c2b7ab1e76050e559790e946b948
+      options: --init --ipc=host
+    defaults:
+      run:
+        shell: bash
     # Each job owns an app, disposable SQLite DB and one worker. Parallelism is
     # between runners, preserving file order and avoiding shared-server races.
     timeout-minutes: 35
@@ -85,6 +93,7 @@ jobs:
       CI: "true"
       E2E_NAV_DIAGNOSTICS: "1"
       NEXT_TELEMETRY_DISABLED: "1"
+      PLAYWRIGHT_BROWSERS_PATH: /ms-playwright
     steps:
       - uses: actions/checkout@v4
 
@@ -96,8 +105,21 @@ jobs:
       - name: Install locked dependencies
         run: npm ci
 
-      - name: Install the assigned browser and operating-system dependencies
-        run: npx playwright install --with-deps ${{ matrix.engine }}
+      - name: Verify preinstalled browser runtime
+        env:
+          PLAYWRIGHT_ENGINE: ${{ matrix.engine }}
+        run: |
+          node <<'NODE'
+          const assert = require('node:assert/strict');
+          const { accessSync, constants } = require('node:fs');
+          assert.equal(process.versions.node.split('.')[0], '22');
+          assert.equal(require('@playwright/test/package.json').version, '1.60.0');
+          const browser = require('playwright')[process.env.PLAYWRIGHT_ENGINE];
+          accessSync(browser.executablePath(), constants.X_OK);
+          const database = new (require('better-sqlite3'))(':memory:');
+          assert.deepEqual(database.prepare('SELECT 1 AS ready').get(), { ready: 1 });
+          database.close();
+          NODE
 
       - name: Run the assigned browser shard
         run: node scripts/release-check.browser.mjs --project=${{ matrix.project }} --shard=${{ matrix.shard }}/2
