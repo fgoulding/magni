@@ -114,7 +114,6 @@ export function WorkoutCard({
   const [storageWarning, setStorageWarning] = useState(false);
   const draftSnapshot = useSyncExternalStore(subscribeDrafts, () => readDraftSnapshot(session?.id), () => null);
   const drafts = useMemo(() => parseDrafts(draftSnapshot), [draftSnapshot]);
-  const hasPending = session?.sets.some((set) => isPending(drafts[set.id])) ?? false;
   const [skipping, setSkipping] = useState(false);
   const [completing, setCompleting] = useState(false);
   const [confirmingFinish, setConfirmingFinish] = useState<boolean | null>(null);
@@ -282,8 +281,8 @@ export function WorkoutCard({
     );
   }
 
-  function inputValues(set: WorkoutSet): SetDraft {
-    const draft = drafts[set.id];
+  function inputValues(set: WorkoutSet, currentDrafts = drafts): SetDraft {
+    const draft = currentDrafts[set.id];
     return draft && !(draft.intent === "retained" && set.actual_reps != null) ? draft : {
       expectedActual: { reps: set.actual_reps, weight: set.actual_weight },
       reps: String(values[set.id] ?? set.actual_reps ?? set.rep_out_target),
@@ -293,8 +292,12 @@ export function WorkoutCard({
 
   function editSet(set: WorkoutSet, field: keyof SetDraft, value: string) {
     if (!session) return;
-    const next = { ...inputValues(set), expectedActual: inputValues(set).expectedActual ?? { reps: set.actual_reps, weight: set.actual_weight }, [field]: value, intent: drafts[set.id]?.intent === "undo" ? "undo" as const : undefined };
-    if (!writeDrafts(session.id, { ...parseDrafts(readDraftSnapshot(session.id)), [set.id]: next })) setStorageWarning(true);
+    // A storage notification may precede React's next snapshot commit. Commands
+    // must compose with persisted edits, never overwrite them from an older render.
+    const current = parseDrafts(readDraftSnapshot(session.id));
+    const entered = inputValues(set, current);
+    const next = { ...entered, expectedActual: entered.expectedActual ?? { reps: set.actual_reps, weight: set.actual_weight }, [field]: value, intent: current[set.id]?.intent === "undo" ? "undo" as const : undefined };
+    if (!writeDrafts(session.id, { ...current, [set.id]: next })) setStorageWarning(true);
     // A later edit does not resolve a failed or unconfirmed save.
   }
 
@@ -312,11 +315,19 @@ export function WorkoutCard({
     setFailedIds((prev) => new Set([...prev].filter((id) => id !== set.id)));
   }
 
+  function keepSetChanges(set: WorkoutSet) {
+    if (!session || !conflicts[set.id]) return;
+    const current = parseDrafts(readDraftSnapshot(session.id));
+    void saveSets([set], { [set.id]: { ...inputValues(set, current), expectedActual: conflicts[set.id] } }, current[set.id]?.intent === "undo");
+  }
+
   async function saveSets(sets: WorkoutSet[], overrides: Record<number, SetDraft> = {}, undo = false) {
     if (!session || savingIds.size || saving) return;
+    const pending = parseDrafts(readDraftSnapshot(session.id));
+    if (!undo && sets.some(set => pending[set.id]?.intent === "undo")) return;
     setError("");
     const submissions = sets.map(set => {
-      const entered = overrides[set.id] ?? inputValues(set);
+      const entered = overrides[set.id] ?? inputValues(set, pending);
       return { set, draft: { ...entered, expectedActual: entered.expectedActual ?? { reps: set.actual_reps, weight: set.actual_weight }, intent: undo ? "undo" as const : undefined } };
     });
     for (const { draft } of submissions) {
@@ -327,7 +338,6 @@ export function WorkoutCard({
         setError("Enter a weight of 0 or more."); return;
       }
     }
-    const pending = parseDrafts(readDraftSnapshot(session.id));
     for (const { set, draft } of submissions) pending[set.id] = draft;
     if (!writeDrafts(session.id, pending)) setStorageWarning(true);
     setSaving(true);
@@ -394,8 +404,9 @@ export function WorkoutCard({
   }
 
   function requestComplete(trigger: HTMLButtonElement, holdUnavailable = false) {
-    if (finishBlocked) return;
-    if (hasPending) {
+    const current = parseDrafts(readDraftSnapshot(session?.id));
+    if (finishBlocked || session?.sets.some(set => current[set.id]?.intent === "undo")) return;
+    if (session?.sets.some(set => isPending(current[set.id]))) {
       trigger.focus({ preventScroll: true });
       setError("");
       setConfirmingFinish(holdUnavailable);
@@ -403,7 +414,9 @@ export function WorkoutCard({
   }
 
   async function complete(holdUnavailable = false, useSavedSets = false): Promise<boolean> {
-    if (!session || finishBlocked || hasPending && !useSavedSets) return false;
+    const current = parseDrafts(readDraftSnapshot(session?.id));
+    if (!session || finishBlocked || session.sets.some(set => current[set.id]?.intent === "undo")
+      || !useSavedSets && session.sets.some(set => isPending(current[set.id]))) return false;
     setError("");
     setCompleting(true);
     try {
@@ -739,7 +752,7 @@ export function WorkoutCard({
                   {conflicts[set.id] ? <div className="mt-3 rounded-xl border border-warn-line bg-warn-soft p-3 text-sm text-warn-ink">
                     <p>Saved elsewhere: {conflicts[set.id].reps == null ? "unperformed" : `${conflicts[set.id].reps} reps at ${conflicts[set.id].weight ?? 0} ${rowUnit}`}.</p>
                     <button type="button" disabled={saving} onClick={() => discardSetChanges(set)} className="touch-target mt-2 w-full rounded-xl border border-line bg-surface px-2 text-sm font-semibold text-muted">Use saved values</button>
-                    <button type="button" aria-label={`Keep my set ${number} edits`} disabled={saving} onClick={() => saveSets([set], { [set.id]: { ...inputValues(set), expectedActual: conflicts[set.id] } }, draft?.intent === "undo")} className="touch-target mt-2 w-full rounded-xl border border-line bg-surface px-2 text-sm font-semibold text-muted">Keep my edits</button>
+                    <button type="button" aria-label={`Keep my set ${number} edits`} disabled={saving} onClick={() => keepSetChanges(set)} className="touch-target mt-2 w-full rounded-xl border border-line bg-surface px-2 text-sm font-semibold text-muted">Keep my edits</button>
                   </div> : null}
                   {pending && !rowSaving && draft?.intent !== "undo" ? <button type="button" aria-label={`Discard set ${number} changes`} onClick={() => discardSetChanges(set)} className="touch-target mt-1 w-full rounded-xl px-3 py-2 text-sm font-semibold text-muted">Discard changes</button> : null}
                 </SetLogRow>;

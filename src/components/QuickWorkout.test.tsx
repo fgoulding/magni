@@ -31,6 +31,73 @@ beforeEach(() => {
 afterEach(() => { cleanup(); vi.useRealTimers(); vi.restoreAllMocks(); vi.unstubAllGlobals(); });
 
 describe("QuickWorkout save recovery", () => {
+  it.each(["save", "finish"] as const)("uses the latest draft for %s while its change notification is pending", async (command) => {
+    const session = { ...initialSession, sets: initialSession.sets.map(set => ({ ...set, actual_reps: null, actual_weight: null })) };
+    const fetchMock = vi.fn(async (_url: string, init?: RequestInit) => {
+      if (init?.method === "PUT") {
+        const body = JSON.parse(init.body as string);
+        return response({ actual_reps: body.actualReps, actual_weight: body.actualWeight });
+      }
+      return response({ volume: 0, loggedCount: 0, skippedCount: 1 });
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    render(<QuickWorkout initialSession={session} />);
+    // Persist both real input changes while holding their render notification.
+    // Commands must use the stored values, not a previously rendered snapshot.
+    const dispatch = window.dispatchEvent.bind(window);
+    const notifications: Event[] = [];
+    const delayed = vi.spyOn(window, "dispatchEvent").mockImplementation(event => {
+      if (event.type === "magni-quick-draft-changed") { notifications.push(event); return true; }
+      return dispatch(event);
+    });
+    editReps("7");
+    fireEvent.change(screen.getByRole("spinbutton", { name: "Weight for set 1" }), { target: { value: "42.5" } });
+    fireEvent.click(screen.getByRole("button", { name: command === "save" ? "Log set 1" : "Finish workout" }));
+    delayed.mockRestore();
+    act(() => { notifications.forEach(event => dispatch(event)); });
+    if (command === "save") {
+      await waitFor(() => expect(screen.getByRole("button", { name: "Undo set 1" })).toBeEnabled());
+      expect(fetchMock).toHaveBeenCalledTimes(1);
+      expect(JSON.parse(fetchMock.mock.calls[0][1]!.body as string)).toEqual({ setId: 7, actualReps: 7, actualWeight: 42.5, expectedActual: { reps: null, weight: null } });
+    } else {
+      expect(await screen.findByRole("dialog", { name: "Finish with saved sets?" })).toBeVisible();
+      expect(fetchMock).not.toHaveBeenCalled();
+      expect(JSON.parse(localStorage.getItem("magni.quick-workout.42.draft.v1")!)[7]).toMatchObject({ reps: "7", weight: "42.5" });
+    }
+  });
+
+  it.each(["removed", "retained", "changed"] as const)("uses the current %s draft and its original save baseline", async (state) => {
+    const key = "magni.quick-workout.42.draft.v1";
+    localStorage.setItem(key, JSON.stringify({ 7: { reps: "8", weight: "40", base: { reps: 9, weight: 40 } } }));
+    const fetchMock = vi.fn(async (_url: string, init?: RequestInit) => {
+      const body = JSON.parse(init!.body as string);
+      return response({ actual_reps: body.actualReps, actual_weight: body.actualWeight });
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    render(<QuickWorkout initialSession={initialSession} />);
+    if (state === "removed") localStorage.removeItem(key);
+    else localStorage.setItem(key, JSON.stringify({ 7: state === "retained"
+      ? { reps: "2", weight: "20", intent: "retained", base: { reps: null, weight: null } }
+      : { reps: "6", weight: "42.5", base: { reps: 8, weight: 40 } } }));
+    fireEvent.click(screen.getByRole("button", { name: "Save set 1" }));
+    await waitFor(() => expect(screen.getByRole("button", { name: "Undo set 1" })).toBeEnabled());
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(JSON.parse(fetchMock.mock.calls[0][1]!.body as string)).toEqual(state === "changed"
+      ? { setId: 7, actualReps: 6, actualWeight: 42.5, expectedActual: { reps: 8, weight: 40 } }
+      : { setId: 7, actualReps: 10, actualWeight: 40, expectedActual: { reps: 10, weight: 40 } });
+  });
+
+  it.each(["save", "finish"] as const)("blocks %s when an Undo draft arrives before its notification", (command) => {
+    const fetchMock = vi.fn(); vi.stubGlobal("fetch", fetchMock);
+    localStorage.setItem("magni.quick-workout.42.draft.v1", JSON.stringify({ 7: { reps: "8", weight: "40", base: { reps: 10, weight: 40 } } }));
+    render(<QuickWorkout initialSession={initialSession} />);
+    localStorage.setItem("magni.quick-workout.42.draft.v1", JSON.stringify({ 7: { reps: "10", weight: "40", intent: "undo", base: { reps: 10, weight: 40 } } }));
+    fireEvent.click(screen.getByRole("button", { name: command === "save" ? "Save set 1" : "Finish workout" }));
+    expect(fetchMock).not.toHaveBeenCalled();
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+    expect(JSON.parse(localStorage.getItem("magni.quick-workout.42.draft.v1")!)[7].intent).toBe("undo");
+  });
+
   it("shows the acknowledged date after an edit moves a Today workout to another day", async () => {
     const session = { ...initialSession, name: "Today rows", date: "2026-10-10", unit: "lb" as const, revision: 1 };
     const fetchMock = vi.fn().mockResolvedValue(response({ ...session, date: "2026-10-09", revision: 2 }));

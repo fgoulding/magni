@@ -10,6 +10,7 @@ vi.mock("next/navigation", () => ({ useRouter: () => router }));
 vi.mock("./WorkoutTmEditor", () => ({ WorkoutTmEditor: () => <p>Legacy max editor</p> }));
 const props = { occurrenceId: 19, programId: 4, dayId: 5, programName: "Custom strength", dayName: "Upper", currentWeek: 1, currentDay: 1 };
 const response = (body: unknown, status = 200) => new Response(JSON.stringify(body), { status, headers: { "Content-Type": "application/json" } });
+const dialogMethods = ["showModal", "close"].map(name => [name, Object.getOwnPropertyDescriptor(HTMLDialogElement.prototype, name)] as const);
 
 function session(logged = false, unit = "lb"): SessionResponse {
   return { id: 32, sets: [1, 2, 3].map((number) => ({
@@ -35,13 +36,95 @@ function mockServer(initial = session(), save: (url: string, init?: RequestInit)
   vi.stubGlobal("fetch", fetchMock);
   return fetchMock;
 }
+// Ordinary fixtures wait for the resumed session and its passive store snapshot.
+// The commit-boundary regressions below deliberately bypass this readiness helper.
+async function renderResumedWorkout() {
+  let mounted!: ReturnType<typeof render>;
+  await act(async () => { mounted = render(<WorkoutCard {...props} />); });
+  return mounted;
+}
+// Dispatch at the async session's DOM commit, before its passive store snapshot
+// update. A command must use persisted input even when the UI has not caught up.
+function atResumedInputCommit(action: () => void) {
+  return new Promise<void>((resolve, reject) => {
+    const observer = new MutationObserver(() => {
+      if (!screen.queryByRole("spinbutton", { name: "Row set 1 reps" })) return;
+      observer.disconnect();
+      try { action(); resolve(); } catch (error) { reject(error); }
+    });
+    observer.observe(document.body, { childList: true, subtree: true });
+    render(<WorkoutCard {...props} />);
+  });
+}
 beforeEach(() => {
   const storage = new Map<string, string>();
   vi.stubGlobal("localStorage", { getItem: (key: string) => storage.get(key) ?? null, setItem: (key: string, value: string) => storage.set(key, value), removeItem: (key: string) => storage.delete(key) });
 });
-afterEach(() => { cleanup(); vi.restoreAllMocks(); vi.unstubAllGlobals(); router.refresh.mockClear(); });
+afterEach(() => {
+  cleanup(); vi.restoreAllMocks(); vi.unstubAllGlobals(); router.refresh.mockClear();
+  for (const [name, descriptor] of dialogMethods) {
+    if (descriptor) Object.defineProperty(HTMLDialogElement.prototype, name, descriptor);
+    else Reflect.deleteProperty(HTMLDialogElement.prototype, name);
+  }
+});
 
 describe("custom workout set logging and draft recovery", () => {
+  it.each([false, true])("saves the latest draft before the resumed subscription settles (edit weight: %s)", async (editWeight) => {
+    const save = vi.fn<(url: string, init?: RequestInit) => Promise<Response>>().mockImplementation(async () => response({ success: true }));
+    mockServer(session(), save);
+    await atResumedInputCommit(() => {
+      edit("Row set 1 reps", "10");
+      if (editWeight) edit("Row set 1 weight (lb)", "42.5");
+      fireEvent.click(screen.getByRole("button", { name: "Save set 1" }));
+    });
+    await expectSetSaved(1);
+    expect(save).toHaveBeenCalledTimes(1);
+    expect(JSON.parse(save.mock.calls[0][1]!.body as string)).toEqual({ setId: 1, actualReps: 10, actualWeight: editWeight ? 42.5 : 40, expectedActual: { reps: null, weight: null } });
+  });
+
+  it("asks before finishing with an edit made before the resumed subscription settles", async () => {
+    HTMLDialogElement.prototype.showModal = function () { this.setAttribute("open", ""); };
+    HTMLDialogElement.prototype.close = function () { this.removeAttribute("open"); };
+    const save = vi.fn().mockResolvedValue(response({ success: true }));
+    mockServer(session(), save);
+    await atResumedInputCommit(() => {
+      edit("Row set 1 reps", "10");
+      fireEvent.click(screen.getByRole("button", { name: "Finish Workout" }));
+    });
+    expect(await screen.findByRole("dialog", { name: "Finish with saved sets?" })).toBeVisible();
+    expect(save).not.toHaveBeenCalled();
+    expect(JSON.parse(localStorage.getItem("magni.planned-workout.32.draft.v1")!)[1].reps).toBe("10");
+  });
+
+  it.each(["removed", "retained", "changed"] as const)("uses the current %s draft and its original save baseline", async (state) => {
+    const key = "magni.planned-workout.32.draft.v1";
+    localStorage.setItem(key, JSON.stringify({ 1: { reps: "8", weight: "40", expectedActual: { reps: 9, weight: 40 } } }));
+    const save = vi.fn().mockResolvedValue(response({ success: true }));
+    mockServer(session(true), save);
+    await renderResumedWorkout();
+    if (state === "removed") localStorage.removeItem(key);
+    else localStorage.setItem(key, JSON.stringify({ 1: state === "retained"
+      ? { reps: "2", weight: "20", intent: "retained", expectedActual: { reps: null, weight: null } }
+      : { reps: "6", weight: "42.5", expectedActual: { reps: 8, weight: 40 } } }));
+    fireEvent.click(screen.getByRole("button", { name: "Save set 1" }));
+    await expectSetSaved(1);
+    expect(save).toHaveBeenCalledTimes(1);
+    expect(JSON.parse(save.mock.calls[0][1].body)).toEqual(state === "changed"
+      ? { setId: 1, actualReps: 6, actualWeight: 42.5, expectedActual: { reps: 8, weight: 40 } }
+      : { setId: 1, actualReps: 10, actualWeight: 40, expectedActual: { reps: 10, weight: 40 } });
+  });
+
+  it.each(["save", "finish"] as const)("blocks %s when an Undo draft arrives before its notification", async (command) => {
+    const save = vi.fn(); mockServer(session(true), save);
+    localStorage.setItem("magni.planned-workout.32.draft.v1", JSON.stringify({ 1: { reps: "8", weight: "40", expectedActual: { reps: 10, weight: 40 } } }));
+    await renderResumedWorkout();
+    localStorage.setItem("magni.planned-workout.32.draft.v1", JSON.stringify({ 1: { reps: "10", weight: "40", intent: "undo", expectedActual: { reps: 10, weight: 40 } } }));
+    fireEvent.click(screen.getByRole("button", { name: command === "save" ? "Save set 1" : "Finish Workout" }));
+    expect(save).not.toHaveBeenCalled();
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+    expect(JSON.parse(localStorage.getItem("magni.planned-workout.32.draft.v1")!)[1].intent).toBe("undo");
+  });
+
   it.each([
     { sessionUnit: "lb" as const, authoredUnit: "kg" as const, total: "84" },
     { sessionUnit: "kg" as const, authoredUnit: "lb" as const, total: "49" },
@@ -52,7 +135,7 @@ describe("custom workout set logging and draft recovery", () => {
     const accessory = { id: 4, exercise_name: "Curl", reps: 2, sets: 1, set_number: 1, rep_out_target: 2, calculated_weight: 20, actual_reps: null, actual_weight: null, superset_group: null, editor_json: null };
     const save = vi.fn<(url: string, init?: RequestInit) => Promise<Response>>().mockImplementation(async (url, init) => response(init?.method === "POST" && url.endsWith("/sets") ? { sets: [accessory] } : { success: true }));
     mockServer(body, save);
-    render(<WorkoutCard {...props} />);
+    await renderResumedWorkout();
     expect(await screen.findByRole("spinbutton", { name: `Row set 1 weight (${authoredUnit})` })).toHaveValue(10);
     fireEvent.click(screen.getByRole("button", { name: "Add exercise" }));
     expect(screen.getByRole("spinbutton", { name: "Weight" }).closest("label")).toHaveTextContent(`Weight (${sessionUnit})`);
@@ -80,7 +163,7 @@ describe("custom workout set logging and draft recovery", () => {
 
   it("shows independent editable ranges and context for identical sets without a legacy training-max editor", async () => {
     mockServer(session(false, "kg"));
-    render(<WorkoutCard {...props} />);
+    await renderResumedWorkout();
     expect(await screen.findByRole("spinbutton", { name: "Row set 1 reps" })).toHaveValue(12);
     expect(screen.getByRole("spinbutton", { name: "Row set 2 reps" })).toHaveValue(12);
     expect(screen.getByRole("spinbutton", { name: "Row set 3 weight (kg)" })).toHaveValue(40);
@@ -95,7 +178,7 @@ describe("custom workout set logging and draft recovery", () => {
   it("saves only one selected physical set and finishes partial with 400 lb", async () => {
     const save = vi.fn<(url: string, init?: RequestInit) => Promise<Response>>().mockImplementation(async () => response({ success: true }));
     mockServer(session(), save);
-    render(<WorkoutCard {...props} />);
+    await renderResumedWorkout();
     await screen.findByRole("spinbutton", { name: "Row set 1 reps" });
     edit("Row set 1 reps", "10");
     fireEvent.click(screen.getByRole("button", { name: "Save set 1" }));
@@ -109,14 +192,14 @@ describe("custom workout set logging and draft recovery", () => {
 
   it("marks a changed logged set unsaved and restores pending strings after remount", async () => {
     mockServer(session(true));
-    const first = render(<WorkoutCard {...props} />);
+    const first = await renderResumedWorkout();
     await screen.findByRole("spinbutton", { name: "Row set 1 reps" });
     edit("Row set 1 reps", "7");
     expect(screen.getByRole("button", { name: "Save set 1" })).toHaveAttribute("aria-pressed", "false");
     expect(screen.getByText("Unsaved")).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Finish Workout" })).toBeEnabled();
     first.unmount();
-    render(<WorkoutCard {...props} />);
+    await renderResumedWorkout();
     expect(await screen.findByRole("spinbutton", { name: "Row set 1 reps" })).toHaveValue(7);
     expect(screen.getByText("Unsaved")).toBeInTheDocument();
   });
@@ -127,7 +210,7 @@ describe("custom workout set logging and draft recovery", () => {
       .mockImplementationOnce(() => new Promise<Response>((done) => { resolve = done; }))
       .mockResolvedValue(response({ actual_reps: 8, actual_weight: 40 }));
     mockServer(session(true), save);
-    render(<WorkoutCard {...props} />);
+    await renderResumedWorkout();
     await screen.findByRole("spinbutton", { name: "Row set 1 reps" });
     edit("Row set 1 reps", "7");
     fireEvent.click(screen.getByRole("button", { name: "Save set 1" }));
@@ -145,14 +228,14 @@ describe("custom workout set logging and draft recovery", () => {
   it("preserves failed values and retries exactly the pending set", async () => {
     const save = vi.fn().mockRejectedValueOnce(new Error("Connection lost")).mockResolvedValue(response({ success: true }));
     mockServer(session(), save);
-    const first = render(<WorkoutCard {...props} />);
+    const first = await renderResumedWorkout();
     await screen.findByRole("spinbutton", { name: "Row set 2 reps" });
     edit("Row set 2 reps", "11");
     edit("Row set 2 weight (lb)", "42.5");
     fireEvent.click(screen.getByRole("button", { name: "Save set 2" }));
     expect(await screen.findByText("Save failed")).toBeInTheDocument();
     first.unmount();
-    render(<WorkoutCard {...props} />);
+    await renderResumedWorkout();
     expect(await screen.findByRole("spinbutton", { name: "Row set 2 reps" })).toHaveValue(11);
     fireEvent.click(screen.getByRole("button", { name: "Save set 2" }));
     await expectSetSaved(2);
@@ -162,7 +245,7 @@ describe("custom workout set logging and draft recovery", () => {
   it("never treats an empty input as a performed zero-rep set", async () => {
     const save = vi.fn();
     mockServer(session(), save);
-    render(<WorkoutCard {...props} />);
+    await renderResumedWorkout();
     await screen.findByRole("spinbutton", { name: "Row set 1 reps" });
     edit("Row set 1 reps", "");
     fireEvent.click(screen.getByRole("button", { name: "Save set 1" }));
@@ -173,10 +256,9 @@ describe("custom workout set logging and draft recovery", () => {
   it("can discard pending changes without logging an untouched set", async () => {
     const save = vi.fn();
     mockServer(session(), save);
-    render(<WorkoutCard {...props} />);
+    await renderResumedWorkout();
     await screen.findByRole("spinbutton", { name: "Row set 1 reps" });
     edit("Row set 1 reps", "9");
-    // The resumed session's external-store subscription can settle after its inputs mount.
     fireEvent.click(await screen.findByRole("button", { name: "Discard set 1 changes" }));
     expect(screen.getByRole("spinbutton", { name: "Row set 1 reps" })).toHaveValue(12);
     expect(screen.getByRole("button", { name: "Save set 1" })).toHaveAttribute("aria-pressed", "false");
@@ -190,7 +272,7 @@ describe("custom workout set logging and draft recovery", () => {
       editor_json: JSON.stringify({ ...JSON.parse(set.editor_json!), set: { ...JSON.parse(set.editor_json!).set, loadMode: "added", load: 5 } }),
     }));
     mockServer(body);
-    render(<WorkoutCard {...props} />);
+    await renderResumedWorkout();
     expect(await screen.findByText(/BW \+5 kg/)).toBeInTheDocument();
     expect(screen.getByRole("spinbutton", { name: "Pull-up set 1 weight (kg)" })).toHaveValue(5);
     edit("Pull-up set 1 reps", "10");
@@ -205,11 +287,11 @@ describe("custom workout set logging and draft recovery", () => {
     body.sets = body.sets.map((set) => ({ ...set, editor_json: null, training_max: null }));
     const save = vi.fn<(url: string, init?: RequestInit) => Promise<Response>>().mockImplementation(async () => response({ success: true }));
     mockServer(body, save);
-    const first = render(<WorkoutCard {...props} />);
+    const first = await renderResumedWorkout();
     await screen.findByRole("spinbutton", { name: "Row set 3 reps" });
     edit("Row set 3 reps", "9");
     first.unmount();
-    render(<WorkoutCard {...props} />);
+    await renderResumedWorkout();
     expect(await screen.findByRole("spinbutton", { name: "Row set 3 reps" })).toHaveValue(9);
     fireEvent.click(screen.getByRole("button", { name: "Save set 3" }));
     await screen.findByText("Saved");
@@ -221,12 +303,12 @@ describe("custom workout set logging and draft recovery", () => {
     vi.stubGlobal("localStorage", { getItem: () => { throw new Error("Storage unavailable"); }, setItem: () => { throw new Error("Storage unavailable"); }, removeItem: () => { throw new Error("Storage unavailable"); } });
     const body = session(); body.id = 123; body.sets = body.sets.slice(0, 1);
     mockServer(body);
-    const first = render(<WorkoutCard {...props} />);
+    const first = await renderResumedWorkout();
     await screen.findByRole("spinbutton", { name: "Row set 1 reps" });
     edit("Row set 1 reps", "10");
     expect(screen.getByText(/Device storage is unavailable/)).toBeInTheDocument();
     first.unmount();
-    render(<WorkoutCard {...props} />);
+    await renderResumedWorkout();
     expect(await screen.findByRole("spinbutton", { name: "Row set 1 reps" })).toHaveValue(10);
     expect(screen.getByText(/Device storage is unavailable/)).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "Save set 1" }));
@@ -235,7 +317,7 @@ describe("custom workout set logging and draft recovery", () => {
 
   it("does not acknowledge a truncated successful completion response", async () => {
     mockServer(session(true), async () => new Response("", { status: 200 }));
-    render(<WorkoutCard {...props} />);
+    await renderResumedWorkout();
     await screen.findByRole("spinbutton", { name: "Row set 1 reps" });
     fireEvent.click(screen.getByRole("button", { name: "Finish Workout" }));
     expect(await screen.findByRole("alert")).toHaveTextContent("Could not confirm completion");
@@ -247,7 +329,7 @@ describe("custom workout set logging and draft recovery", () => {
     body.sets = [body.sets[0], { ...body.sets[1], exercise_name: "Press" }];
     localStorage.setItem("magni.planned-workout.32.draft.v1", JSON.stringify({ 1: { reps: "7", weight: "40" } }));
     mockServer(body);
-    render(<WorkoutCard {...props} />);
+    await renderResumedWorkout();
     expect(await screen.findByRole("spinbutton", { name: "Row set 1 reps" })).toHaveValue(7);
   });
 
@@ -255,7 +337,7 @@ describe("custom workout set logging and draft recovery", () => {
     const body = session(true);
     body.sets = [{ ...body.sets[0], editor_json: null, training_max: null }];
     mockServer(body);
-    render(<WorkoutCard {...props} />);
+    await renderResumedWorkout();
     fireEvent.click(await screen.findByRole("button", { name: "Collapse Row" }));
     fireEvent.click(screen.getByRole("button", { name: "Expand Row" }));
     expect(screen.getByRole("region", { name: "Workout progress" })).toHaveTextContent("1 of 1 sets saved");
@@ -276,7 +358,7 @@ describe("custom workout set logging and draft recovery", () => {
       if (url === "/api/sessions/32") return response(latest);
       return response({ success: true });
     });
-    render(<WorkoutCard {...props} />);
+    await renderResumedWorkout();
     await screen.findByRole("spinbutton", { name: "Row set 1 reps" });
     fireEvent.click(screen.getByRole("button", { name: "Save set 1" }));
     expect(await screen.findByText("Saved elsewhere: 11 reps at 40 lb.")).toBeInTheDocument();
@@ -291,11 +373,32 @@ describe("custom workout set logging and draft recovery", () => {
     mockServer(session(true), async (url) => response(url.includes("complete-and-advance") ? {
       success: true, progressionDecisions: [{ progressionKey: "row-state", exerciseName: "Row", result: { explanation: "All work sets reached 12 reps. Next load: 42.5 lb." } }],
     } : { prs: [] }));
-    render(<WorkoutCard {...props} />);
+    await renderResumedWorkout();
     await screen.findByRole("spinbutton", { name: "Row set 1 reps" });
     fireEvent.click(screen.getByRole("button", { name: "Finish Workout" }));
     expect(await screen.findByText("Workout complete")).toBeInTheDocument();
     expect(screen.queryByText("Progression", { exact: true })).not.toBeInTheDocument();
     expect(screen.queryByText("All work sets reached 12 reps. Next load: 42.5 lb.")).not.toBeInTheDocument();
+  });
+
+  it("keeps the latest persisted edit when explicitly resolving a save conflict", async () => {
+    const body = session(true);
+    const saves: object[] = [];
+    mockServer(body, async (_url, init) => {
+      if (init?.method === "PUT") {
+        saves.push(JSON.parse(init.body as string));
+        return saves.length === 1 ? response({ error: "Changed elsewhere" }, 409) : response({ actual_reps: 7, actual_weight: 42.5 });
+      }
+      return response({ ...body, sets: body.sets.map(set => set.id === 1 ? { ...set, actual_reps: 11 } : set) });
+    });
+    await renderResumedWorkout();
+    edit("Row set 1 reps", "8");
+    fireEvent.click(screen.getByRole("button", { name: "Save set 1" }));
+    await screen.findByText("Saved elsewhere: 11 reps at 40 lb.");
+    localStorage.setItem("magni.planned-workout.32.draft.v1", JSON.stringify({ 1: { reps: "7", weight: "42.5", expectedActual: { reps: 10, weight: 40 } } }));
+    fireEvent.click(screen.getByRole("button", { name: "Keep my set 1 edits" }));
+    await expectSetSaved(1);
+    expect(saves).toHaveLength(2);
+    expect(saves[1]).toEqual({ setId: 1, actualReps: 7, actualWeight: 42.5, expectedActual: { reps: 11, weight: 40 } });
   });
 });

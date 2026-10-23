@@ -96,8 +96,8 @@ export function QuickWorkout({ initialSession, initialDate, todayOnly = false, t
     setSession((prev) => (prev ? { ...prev, revision: revision === undefined ? prev.revision : Math.max(revision, prev.revision ?? 0), sets: [...prev.sets, ...newSets.filter((set) => !prev.sets.some((existing) => existing.id === set.id))] } : prev));
   }
 
-  function inputValues(set: WorkoutSet): SetDraft {
-    const draft = drafts[set.id];
+  function inputValues(set: WorkoutSet, currentDrafts = drafts): SetDraft {
+    const draft = currentDrafts[set.id];
     // Retained inputs belong only to the acknowledged unlogged state. A newer
     // server log must display its own actuals and supply the next write baseline.
     return draft && !(draft.intent === "retained" && set.actual_reps != null) ? draft : valuesForSet(set);
@@ -116,7 +116,11 @@ export function QuickWorkout({ initialSession, initialDate, todayOnly = false, t
 
   async function logSet(set: WorkoutSet, undo = false) {
     if (!hydrated || !session || editorBusy || structureDraft || savingIds.has(set.id)) return;
-    const entered = inputValues(set);
+    // Read at the command boundary: a draft notification can still be waiting
+    // for React to commit while the user has already pressed the set check.
+    const current = parseDrafts(readDraftSnapshot(session.id));
+    if (!undo && current[set.id]?.intent === "undo") return;
+    const entered = inputValues(set, current);
     const submitted: SetDraft = { ...entered, base: entered.base ?? { reps: set.actual_reps, weight: set.actual_weight }, intent: undo ? "undo" : undefined };
     const actualReps = undo ? null : Number(submitted.reps);
     const actualWeight = undo ? null : Number(submitted.weight);
@@ -129,7 +133,7 @@ export function QuickWorkout({ initialSession, initialDate, todayOnly = false, t
       return;
     }
     // Persist even a default-value log before sending it, so a failed request is recoverable.
-    writeDrafts(session.id, { ...parseDrafts(readDraftSnapshot(session.id)), [set.id]: submitted });
+    writeDrafts(session.id, { ...current, [set.id]: submitted });
     setSavingIds((previous) => new Set(previous).add(set.id));
     setFailedIds((previous) => withoutId(previous, set.id));
     setError("");
@@ -182,8 +186,9 @@ export function QuickWorkout({ initialSession, initialDate, todayOnly = false, t
   }
 
   function requestFinish(trigger: HTMLButtonElement) {
-    if (finishBlocked) return;
-    if (session?.sets.some(set => isPending(drafts[set.id]))) {
+    const current = parseDrafts(readDraftSnapshot(session?.id));
+    if (finishBlocked || session?.sets.some(set => current[set.id]?.intent === "undo")) return;
+    if (session?.sets.some(set => isPending(current[set.id]))) {
       trigger.focus({ preventScroll: true });
       setError("");
       setConfirmingFinish(true);
@@ -191,7 +196,9 @@ export function QuickWorkout({ initialSession, initialDate, todayOnly = false, t
   }
 
   async function finish(useSavedSets = false): Promise<boolean> {
-    if (!session || finishBlocked || !useSavedSets && session.sets.some(set => isPending(drafts[set.id]))) return false;
+    const current = parseDrafts(readDraftSnapshot(session?.id));
+    if (!session || finishBlocked || session.sets.some(set => current[set.id]?.intent === "undo")
+      || !useSavedSets && session.sets.some(set => isPending(current[set.id]))) return false;
     setFinishing(true);
     setError("");
     try {
