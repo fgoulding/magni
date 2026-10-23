@@ -29,7 +29,9 @@ export function createE2EServerOptions({ cwd = process.cwd(), env = process.env 
       if (originalNextEnv === null) unlinkSync(nextEnvPath);
       else writeFileSync(nextEnvPath, originalNextEnv);
     },
-    args: [path.join(cwd, "node_modules/next/dist/bin/next"), "dev", "--webpack", "--hostname", "localhost", "--port", String(port)],
+    // In Linux containers, localhost can bind to ::1 while native fetch resolves
+    // it to IPv4. Keep the disposable server on the explicit IPv4 loopback.
+    args: [path.join(cwd, "node_modules/next/dist/bin/next"), "dev", "--webpack", "--hostname", "127.0.0.1", "--port", String(port)],
     env: {
       ...env,
       NODE_ENV: "development",

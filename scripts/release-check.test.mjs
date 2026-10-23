@@ -4,6 +4,7 @@ import os from "node:os";
 import path from "node:path";
 import test from "node:test";
 import { execFileSync } from "node:child_process";
+import { createServer } from "node:http";
 import { RELEASE_CHECKS, runReleaseChecks } from "./release-check.mjs";
 import { createE2EServerOptions } from "./release-check.e2e-server.mjs";
 import { assertAutomaticOptions, routeWarmupRequests, warmE2ERoutes } from "./release-check.e2e-warmup.mjs";
@@ -102,6 +103,30 @@ test("E2E runs always get separate disposable databases and isolated Next output
     assert.equal(JSON.parse(readFileSync(path.join(directory, first.env.NEXT_TSCONFIG_PATH), "utf8")).compilerOptions.baseUrl, directory);
     assert.throws(() => createE2EServerOptions({ cwd: directory, env: { E2E_PORT: "3108;echo unsafe" } }), /valid TCP port/);
   } finally { rmSync(directory, { recursive: true, force: true }); }
+});
+
+test("E2E server stays reachable through IPv4 loopback and the localhost URL", async () => {
+  const directory = mkdtempSync(path.join(os.tmpdir(), "magni-e2e-loopback-test-"));
+  const server = createServer((_request, response) => response.end("ready"));
+  try {
+    const { args } = createE2EServerOptions({ cwd: directory, env: {} });
+    const hostname = args[args.indexOf("--hostname") + 1];
+    await new Promise((resolve, reject) => {
+      server.once("error", reject);
+      server.listen(0, hostname, resolve);
+    });
+    const address = server.address();
+    assert.equal(address.address, "127.0.0.1");
+    for (const host of ["127.0.0.1", "localhost"]) {
+      const response = await fetch(`http://${host}:${address.port}`, { signal: AbortSignal.timeout(5_000) });
+      assert.equal(response.status, 200);
+      assert.equal(await response.text(), "ready");
+    }
+  } finally {
+    server.closeAllConnections();
+    if (server.listening) await new Promise(resolve => server.close(resolve));
+    rmSync(directory, { recursive: true, force: true });
+  }
 });
 
 test("E2E preparation compiles pages and API handlers without invoking write methods", async () => {
