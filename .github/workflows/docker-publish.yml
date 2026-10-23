@@ -97,6 +97,11 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      # checkout scopes its trust configuration to a temporary HOME. The
+      # container shell needs the same exact workspace exception for receipts.
+      - name: Trust the checked-out workspace
+        run: git config --global --add safe.directory "$GITHUB_WORKSPACE"
+
       - uses: actions/setup-node@v4
         with:
           node-version: "22"

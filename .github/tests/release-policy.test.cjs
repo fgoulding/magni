@@ -1,6 +1,8 @@
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
+const os = require('node:os');
 const path = require('node:path');
+const { execFileSync, spawnSync } = require('node:child_process');
 const test = require('node:test');
 const yaml = require('js-yaml');
 
@@ -87,6 +89,39 @@ test('browser dependencies are preinstalled in the matching immutable Playwright
   const shardRunner = fs.readFileSync(path.join(root, 'scripts/release-check.browser.mjs'), 'utf8');
   assert.match(shardRunner, /--fail-on-flaky-tests/);
   assert.match(shardRunner, /sourceIdentity\(cwd, process.env\), result.source/);
+});
+
+test('browser shell trusts only its checkout workspace before source checks', () => {
+  const steps = workflow.jobs.browser.steps;
+  const checkoutIndex = steps.findIndex(step => step.uses?.startsWith('actions/checkout@'));
+  const trustIndex = steps.findIndex(step => step.name === 'Trust the checked-out workspace');
+  const shardIndex = steps.findIndex(step => step.name === 'Run the assigned browser shard');
+  assert.ok(checkoutIndex < trustIndex && trustIndex < shardIndex, 'Trust the workspace after checkout and before sourceIdentity runs');
+  const command = 'git config --global --add safe.directory "$GITHUB_WORKSPACE"';
+  assert.deepEqual(steps[trustIndex], { name: 'Trust the checked-out workspace', run: command });
+  assert.deepEqual(steps.filter(step => step.run?.includes('safe.directory')).map(step => step.run), [command]);
+
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'magni-git-trust-'));
+  const workspace = path.join(directory, 'selected workspace');
+  const unrelated = path.join(directory, 'unrelated workspace');
+  const config = path.join(directory, 'global.gitconfig');
+  fs.writeFileSync(config, '');
+  const env = { ...process.env, GIT_CONFIG_GLOBAL: config, GIT_CONFIG_NOSYSTEM: '1', GIT_TEST_ASSUME_DIFFERENT_OWNER: '1', GITHUB_WORKSPACE: workspace };
+  const inspect = cwd => spawnSync('git', ['rev-parse', '--show-toplevel'], { cwd, env, encoding: 'utf8' });
+  try {
+    for (const cwd of [workspace, unrelated]) execFileSync('git', ['init', '--quiet', cwd], { env });
+    const before = inspect(workspace);
+    assert.equal(before.status, 128);
+    assert.match(before.stderr, /dubious ownership/);
+    execFileSync('bash', ['-c', steps[trustIndex].run], { env });
+    assert.equal(inspect(workspace).status, 0, 'The named workspace becomes readable');
+    const excluded = inspect(unrelated);
+    assert.equal(excluded.status, 128, 'Other workspaces remain protected');
+    assert.match(excluded.stderr, /dubious ownership/);
+    assert.equal(execFileSync('git', ['config', '--global', '--get-all', 'safe.directory'], { env, encoding: 'utf8' }).trim(), workspace);
+  } finally {
+    fs.rmSync(directory, { recursive: true, force: true });
+  }
 });
 
 test('release receipts remain small and compatible while diagnostics stay separately downloadable', () => {
